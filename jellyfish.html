@@ -1,0 +1,539 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Jellyfish</title>
+<style>
+  html, body { margin: 0; height: 100%; overflow: hidden; background: #020a18; }
+  canvas { display: block; }
+  #hint {
+    position: fixed; left: 14px; bottom: 12px; color: rgba(180, 210, 255, 0.55);
+    font: 12px/1.5 -apple-system, system-ui, sans-serif; pointer-events: none; user-select: none;
+  }
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<div id="hint">Move mouse: stir water &nbsp;·&nbsp; Click: swim here &nbsp;·&nbsp; D: show physics points &nbsp;·&nbsp; Space: pause</div>
+<script>
+const cv = document.getElementById('c');
+const out = cv.getContext('2d');
+let W, H, DPR;
+function resize() {
+  DPR = Math.min(2, window.devicePixelRatio || 1);
+  W = innerWidth; H = innerHeight;
+  cv.width = W * DPR; cv.height = H * DPR;
+  cv.style.width = W + 'px'; cv.style.height = H + 'px';
+}
+resize();
+addEventListener('resize', () => {
+  const ow = W, oh = H;
+  resize();
+  resizeLow();
+  for (const s of snow) { s.x *= W / ow; s.y *= H / oh; }
+  J.x = Math.min(Math.max(J.x, 0), W); J.y = Math.min(Math.max(J.y, 0), H);
+  pickTarget();
+});
+
+const S = Math.max(0.6, Math.min(W, H) / 900);   // world scale, fixed at start
+const STEP = 1 / 120;
+
+// ---------- Jellyfish body ----------
+const J = {
+  x: W * 0.5, y: H * 0.45, vx: 0, vy: 0,
+  a: 0,                 // heading; forward = (sin a, -cos a)
+  phase: 0, period: 1.7,
+  c: 0, rate: 0,        // contraction 0..1 and its rate (1/s)
+  bw0: 62 * S, bh0: 72 * S, bw: 62 * S, bh: 72 * S,
+  tx: W * 0.5, ty: H * 0.3, retarget: 6, thrustScale: 1,
+};
+let fx = 0, fy = -1, rx = 1, ry = 0; // forward and right unit vectors
+
+function contraction(p) {
+  // Fast power stroke (~30% of cycle), slow elastic recovery
+  if (p < 0.3) return 0.5 - 0.5 * Math.cos(Math.PI * p / 0.3);
+  const q = (p - 0.3) / 0.7;
+  return Math.pow(1 - q, 1.6) * (0.5 + 0.5 * Math.cos(Math.PI * q)) + 0 * q;
+}
+
+function localToWorld(lx, ly) {
+  // local -y is forward, +x is right
+  return [J.x + rx * lx - fx * ly, J.y + ry * lx - fy * ly];
+}
+
+// ---------- Tentacles ----------
+const tentacles = [];
+function makeStrand(kind, count, segLen, anchorFn, opts) {
+  const pts = [];
+  const [ax, ay] = anchorFn();
+  for (let i = 0; i < count; i++) {
+    const x = ax + (Math.random() - 0.5) * 0.5, y = ay + i * segLen;
+    pts.push({ x, y, px: x, py: y });
+  }
+  tentacles.push(Object.assign({ kind, pts, L: segLen, anchorFn }, opts));
+}
+
+const NT = 18;
+for (let i = 0; i < NT; i++) {
+  // Rim is a circle seen edge-on: project angle around the rim onto the side view
+  const th = (i + 0.5) / NT * Math.PI * 2;
+  const len = 46 + Math.floor(Math.random() * 14);
+  makeStrand('tentacle', len, 7.5 * S, () => {
+    const lx = J.bw * 0.94 * Math.cos(th);
+    const ly = J.bh * 0.05 * Math.sin(th);
+    return localToWorld(lx, ly);
+  }, {
+    drag: 3.2, sink: 10 * S, stiff: 0.85, bendMin: 0.78, bendK: 0.3,
+    width: 1.8 * S, depth: Math.sin(th), hue: 18 + Math.random() * 14,
+  });
+}
+const NA = 4;
+for (let i = 0; i < NA; i++) {
+  const off = (i / (NA - 1) - 0.5) * 0.5;
+  makeStrand('arm', 34, 7 * S, () => localToWorld(J.bw * off, -J.bh * 0.12), {
+    drag: 2.2, sink: 16 * S, stiff: 1, bendMin: 0.8, bendK: 0.2,
+    width: 9 * S, armPhase: Math.random() * 6.28,
+  });
+}
+
+// ---------- Water flow ----------
+const mouse = { x: -1e4, y: -1e4, vx: 0, vy: 0, has: false };
+let time = 0;
+
+function flow(x, y, out) {
+  const t = time;
+  // gentle ambient current
+  let ux = 7 * S * Math.sin(y * 0.004 / S + t * 0.3) + 4 * S * Math.sin((x + y) * 0.007 / S - t * 0.5);
+  let uy = 5 * S * Math.cos(x * 0.005 / S + t * 0.25) + 3 * S * Math.sin((x - y) * 0.006 / S + t * 0.4);
+
+  // bell wake: jet behind on power stroke, refill inflow on recovery
+  const dx = x - J.x, dy = y - J.y;
+  const al = dx * fx + dy * fy;       // along heading (negative = behind)
+  const lat = dx * rx + dy * ry;      // sideways
+  if (al < J.bh * 0.3) {
+    const behind = Math.max(0, -al);
+    const g = Math.exp(-(lat * lat) / (J.bw * J.bw * 1.8)) * Math.exp(-behind / (J.bh * 3.2));
+    if (J.rate > 0) {
+      const s = -J.rate * 55 * S * g;
+      ux += fx * s; uy += fy * s;
+      // spreading of the jet / starting vortex ring
+      const sp = J.rate * 18 * S * g * Math.sign(lat);
+      ux += rx * sp; uy += ry * sp;
+    } else {
+      const s = -J.rate * 22 * S * g;
+      ux += fx * s; uy += fy * s;
+      const sp = -s * 0.8 * Math.sign(lat) * Math.min(1, Math.abs(lat) / J.bw);
+      ux += rx * sp; uy += ry * sp;
+    }
+  }
+
+  // mouse stirring
+  if (mouse.has) {
+    const mx = x - mouse.x, my = y - mouse.y;
+    const r = 110 * S;
+    const g = Math.exp(-(mx * mx + my * my) / (r * r));
+    ux += mouse.vx * g * 0.9; uy += mouse.vy * g * 0.9;
+  }
+  out[0] = ux; out[1] = uy;
+}
+
+// ---------- Simulation ----------
+const tmp = [0, 0];
+function wrapAngle(a) { while (a > Math.PI) a -= 2 * Math.PI; while (a < -Math.PI) a += 2 * Math.PI; return a; }
+
+function pickTarget() {
+  J.tx = W * (0.18 + Math.random() * 0.64);
+  J.ty = H * (0.15 + Math.random() * 0.6);
+  J.retarget = 7 + Math.random() * 6;
+}
+
+function stepBody(dt) {
+  J.phase += dt / J.period;
+  if (J.phase >= 1) { J.phase -= 1; J.period = 1.5 + Math.random() * 0.6; }
+  const c = contraction(J.phase);
+  J.rate = (c - J.c) / dt;
+  J.c = c;
+  J.bw = J.bw0 * (1 - 0.3 * c);
+  J.bh = J.bh0 * (1 + 0.12 * c);
+
+  // steering: jellyfish turn mainly while pulsing (asymmetric contraction)
+  J.retarget -= dt;
+  const dxT = J.tx - J.x, dyT = J.ty - J.y;
+  if (J.retarget < 0 || dxT * dxT + dyT * dyT < (60 * S) ** 2) pickTarget();
+  // real jellies swim mostly upward/sideways; to go down they pulse less and sink
+  const want = Math.max(-1.15, Math.min(1.15, Math.atan2(dxT, -dyT)));
+  const below = dyT > 40 * S && Math.abs(dxT) < dyT * 1.5;
+  J.thrustScale += ((below ? 0.15 : 1) - J.thrustScale) * dt * 0.8;
+  if (below) J.vy += 28 * S * dt;
+  const diff = wrapAngle(want - J.a);
+  const turnGain = 0.5 + Math.max(0, J.rate) * 1.0;
+  J.a += Math.max(-1, Math.min(1, diff)) * turnGain * dt;
+
+  // soft walls so it never leaves the view
+  const m = 90 * S;
+  if (J.x < m) J.vx += (m - J.x) * 2 * dt;
+  if (J.x > W - m) J.vx -= (J.x - (W - m)) * 2 * dt;
+  if (J.y < m) J.vy += (m - J.y) * 2 * dt;
+  if (J.y > H - m) J.vy -= (J.y - (H - m)) * 2 * dt;
+
+  fx = Math.sin(J.a); fy = -Math.cos(J.a);
+  rx = Math.cos(J.a); ry = Math.sin(J.a);
+
+  if (J.rate > 0) {
+    const k = 135 * S * J.rate * J.thrustScale * dt;
+    J.vx += fx * k; J.vy += fy * k;
+  }
+  J.vy += 5 * S * dt; // slightly negatively buoyant
+  const d = Math.exp(-1.5 * dt);
+  J.vx *= d; J.vy *= d;
+
+  flow(J.x, J.y, tmp);
+  const ax = tmp[0] * 0.4, ay = tmp[1] * 0.4; // body only partially carried by ambient current
+  J.x += (J.vx + ax) * dt;
+  J.y += (J.vy + ay) * dt;
+}
+
+function stepStrands(dt) {
+  for (const T of tentacles) {
+    const pts = T.pts, n = pts.length;
+    const df = Math.exp(-T.drag * dt);
+    const g = T.sink * dt * dt;
+
+    const [ax, ay] = T.anchorFn();
+    pts[0].px = pts[0].x; pts[0].py = pts[0].y;
+    pts[0].x = ax; pts[0].y = ay;
+
+    // Verlet integrate with drag relative to local water velocity
+    for (let i = 1; i < n; i++) {
+      const p = pts[i];
+      flow(p.x, p.y, tmp);
+      const wx = tmp[0] * dt, wy = tmp[1] * dt;
+      // thinner tips respond to water faster
+      const tipDf = Math.pow(df, 1 + 0.8 * i / n);
+      const vx = wx + (p.x - p.px - wx) * tipDf;
+      const vy = wy + (p.y - p.py - wy) * tipDf;
+      p.px = p.x; p.py = p.y;
+      p.x += vx; p.y += vy + g;
+    }
+
+    // constraints
+    const L = T.L;
+    for (let it = 0; it < 5; it++) {
+      for (let i = 0; i < n - 1; i++) {
+        const a = pts[i], b = pts[i + 1];
+        const dx = b.x - a.x, dy = b.y - a.y;
+        const dist = Math.sqrt(dx * dx + dy * dy) || 1e-6;
+        const k = (dist - L) / dist * T.stiff;
+        if (i === 0) { b.x -= dx * k; b.y -= dy * k; }
+        else { a.x += dx * k * 0.5; a.y += dy * k * 0.5; b.x -= dx * k * 0.5; b.y -= dy * k * 0.5; }
+      }
+      // soft one-sided bending: resist only sharp kinks, allow natural curls
+      const minD = L * 2 * T.bendMin;
+      for (let i = 0; i < n - 2; i++) {
+        const a = pts[i], b = pts[i + 2];
+        const dx = b.x - a.x, dy = b.y - a.y;
+        const dist = Math.sqrt(dx * dx + dy * dy) || 1e-6;
+        if (dist < minD) {
+          const k = (dist - minD) / dist * T.bendK;
+          if (i === 0) { b.x -= dx * k; b.y -= dy * k; }
+          else { a.x += dx * k * 0.5; a.y += dy * k * 0.5; b.x -= dx * k * 0.5; b.y -= dy * k * 0.5; }
+        }
+      }
+    }
+
+    // tentacle tension tugs the body slightly (drag feedback)
+    const p0 = pts[0], p1 = pts[1];
+    const dx = p1.x - p0.x, dy = p1.y - p0.y;
+    const dist = Math.sqrt(dx * dx + dy * dy) || 1e-6;
+    const stretch = dist - L;
+    if (stretch > 0) {
+      const k = stretch * (T.kind === 'arm' ? 30 : 14) * dt / dist;
+      J.vx += dx * k; J.vy += dy * k;
+    }
+  }
+}
+
+// ---------- Marine snow (shows water motion) ----------
+const snow = [];
+for (let i = 0; i < 160; i++) {
+  snow.push({ x: Math.random() * W, y: Math.random() * H, r: (0.4 + Math.random() * 1.4) * S, z: 0.3 + Math.random() * 0.7 });
+}
+function stepSnow(dt) {
+  for (const s of snow) {
+    flow(s.x, s.y, tmp);
+    s.x += tmp[0] * dt * s.z;
+    s.y += (tmp[1] + 3 * S) * dt * s.z;
+    if (s.x < -10) s.x = W + 10; if (s.x > W + 10) s.x = -10;
+    if (s.y < -10) s.y = H + 10; if (s.y > H + 10) s.y = -10;
+  }
+}
+
+// ---------- Rendering (pixel art) ----------
+let debug = false, paused = false;
+const PX = Math.max(3, Math.round(4 * S));       // screen pixels per art pixel
+const low = document.createElement('canvas');
+const ctx = low.getContext('2d', { willReadFrequently: true });
+let LW, LH;
+function resizeLow() { LW = Math.ceil(W / PX); LH = Math.ceil(H / PX); low.width = LW; low.height = LH; }
+resizeLow();
+
+const PALETTE = [
+  '#020611', '#06122a', '#0b1f3e', '#12305a', '#1d4675', '#2a5f8f', '#8fb8e8',
+  '#3a1d3d', '#6b2f5a', '#a2467a', '#d06a8e', '#f19ab0', '#ffd0dc', '#fff2f4',
+  '#e0864a', '#ffb46a',
+].map(h => [parseInt(h.slice(1, 3), 16), parseInt(h.slice(3, 5), 16), parseInt(h.slice(5, 7), 16)]);
+const BAYER = [0, 8, 2, 10, 12, 4, 14, 6, 3, 11, 1, 9, 15, 7, 13, 5];
+
+function quantize() {
+  const img = ctx.getImageData(0, 0, LW, LH), d = img.data;
+  for (let y = 0; y < LH; y++) {
+    for (let x = 0; x < LW; x++) {
+      const i = (y * LW + x) * 4;
+      const t = (BAYER[(y & 3) * 4 + (x & 3)] / 16 - 0.47) * 26;
+      const r = d[i] + t, g = d[i + 1] + t, b = d[i + 2] + t;
+      let best = 0, bd = 1e12;
+      for (let k = 0; k < PALETTE.length; k++) {
+        const p = PALETTE[k];
+        const dr = r - p[0], dg = g - p[1], db = b - p[2];
+        const dd = dr * dr * 0.3 + dg * dg * 0.59 + db * db * 0.11;
+        if (dd < bd) { bd = dd; best = k; }
+      }
+      const p = PALETTE[best];
+      d[i] = p[0]; d[i + 1] = p[1]; d[i + 2] = p[2]; d[i + 3] = 255;
+    }
+  }
+  ctx.putImageData(img, 0, 0);
+}
+
+function worldSpace() { ctx.setTransform(1 / PX, 0, 0, 1 / PX, 0, 0); }
+function pixelSpace() { ctx.setTransform(1, 0, 0, 1, 0, 0); }
+
+function plotLine(x0, y0, x1, y1) {
+  x0 = Math.floor(x0 / PX); y0 = Math.floor(y0 / PX);
+  x1 = Math.floor(x1 / PX); y1 = Math.floor(y1 / PX);
+  const dx = Math.abs(x1 - x0), dy = -Math.abs(y1 - y0);
+  const sx = x0 < x1 ? 1 : -1, sy = y0 < y1 ? 1 : -1;
+  let err = dx + dy;
+  for (;;) {
+    ctx.fillRect(x0, y0, 1, 1);
+    if (x0 === x1 && y0 === y1) break;
+    const e2 = 2 * err;
+    if (e2 >= dy) { err += dy; x0 += sx; }
+    if (e2 <= dx) { err += dx; y0 += sy; }
+  }
+}
+
+function drawBackground() {
+  worldSpace();
+  const g = ctx.createLinearGradient(0, 0, 0, H);
+  g.addColorStop(0, '#12305a');
+  g.addColorStop(0.5, '#06122a');
+  g.addColorStop(1, '#020611');
+  ctx.fillStyle = g;
+  ctx.fillRect(0, 0, W, H);
+
+  // light shafts
+  ctx.globalCompositeOperation = 'lighter';
+  for (let i = 0; i < 5; i++) {
+    const x = W * (0.1 + i * 0.22) + Math.sin(time * 0.15 + i * 1.7) * 60 * S;
+    const w = (60 + 40 * Math.sin(time * 0.2 + i)) * S;
+    const lg = ctx.createLinearGradient(0, 0, 0, H * 0.8);
+    lg.addColorStop(0, 'rgba(60,110,170,0.22)');
+    lg.addColorStop(1, 'rgba(60,110,170,0)');
+    ctx.fillStyle = lg;
+    ctx.beginPath();
+    ctx.moveTo(x - w * 0.5, 0);
+    ctx.lineTo(x + w * 0.5, 0);
+    ctx.lineTo(x + w * 1.6 + 120 * S, H * 0.8);
+    ctx.lineTo(x - w * 0.2 + 120 * S, H * 0.8);
+    ctx.fill();
+  }
+  ctx.globalCompositeOperation = 'source-over';
+
+  pixelSpace();
+  for (const s of snow) {
+    ctx.fillStyle = s.z > 0.75 ? '#8fb8e8' : '#2a5f8f';
+    ctx.fillRect(Math.floor(s.x / PX), Math.floor(s.y / PX), 1, 1);
+  }
+}
+
+const FRONT_COLORS = ['#ffd0dc', '#ffb46a', '#ffb46a', '#e0864a', '#d06a8e', '#a2467a'];
+const BACK_COLORS = ['#d06a8e', '#a2467a', '#a2467a', '#6b2f5a', '#6b2f5a', '#3a1d3d'];
+
+function drawTentacle(T, back) {
+  if ((T.depth > 0) !== back) return;
+  pixelSpace();
+  const pts = T.pts, n = pts.length;
+  const cols = back ? BACK_COLORS : FRONT_COLORS;
+  for (let i = 0; i < n - 1; i++) {
+    ctx.fillStyle = cols[Math.min(cols.length - 1, Math.floor(i / (n - 1) * cols.length))];
+    plotLine(pts[i].x, pts[i].y, pts[i + 1].x, pts[i + 1].y);
+  }
+}
+
+function drawArm(T) {
+  worldSpace();
+  const pts = T.pts, n = pts.length;
+  const left = [], right = [];
+  for (let i = 0; i < n; i++) {
+    const a = pts[Math.max(0, i - 1)], b = pts[Math.min(n - 1, i + 1)];
+    let tx = b.x - a.x, ty = b.y - a.y;
+    const l = Math.hypot(tx, ty) || 1; tx /= l; ty /= l;
+    const u = i / (n - 1);
+    const frill = 1 + 0.45 * Math.sin(i * 1.25 + time * 2.2 + T.armPhase);
+    const w = T.width * Math.pow(1 - u, 0.8) * frill * 0.5 + 0.6 * S;
+    left.push([pts[i].x - ty * w, pts[i].y + tx * w]);
+    right.push([pts[i].x + ty * w, pts[i].y - tx * w]);
+  }
+  ctx.beginPath();
+  ctx.moveTo(left[0][0], left[0][1]);
+  for (let i = 1; i < n; i++) ctx.lineTo(left[i][0], left[i][1]);
+  for (let i = n - 1; i >= 0; i--) ctx.lineTo(right[i][0], right[i][1]);
+  ctx.closePath();
+  ctx.fillStyle = 'rgba(208,106,142,0.55)';
+  ctx.fill();
+  ctx.lineWidth = PX;
+  ctx.strokeStyle = 'rgba(241,154,176,0.8)';
+  ctx.stroke();
+}
+
+function drawBell() {
+  worldSpace();
+  const bw = J.bw, bh = J.bh, c = J.c;
+  ctx.translate(J.x, J.y);
+  ctx.rotate(J.a);
+
+  ctx.globalCompositeOperation = 'lighter';
+  const glow = ctx.createRadialGradient(0, -bh * 0.5, 0, 0, -bh * 0.5, bw * 2.2);
+  glow.addColorStop(0, 'rgba(160,60,110,0.35)');
+  glow.addColorStop(1, 'rgba(160,60,110,0)');
+  ctx.fillStyle = glow;
+  ctx.beginPath(); ctx.arc(0, -bh * 0.5, bw * 2.2, 0, 6.283); ctx.fill();
+  ctx.globalCompositeOperation = 'source-over';
+
+  const flare = (1 - c) * 0.08;
+  const sub = bh * (0.22 + 0.1 * c);
+  ctx.beginPath();
+  ctx.moveTo(-bw * (1 + flare), bh * 0.04);
+  ctx.bezierCurveTo(-bw * 1.04, -bh * 0.72, -bw * 0.62, -bh, 0, -bh);
+  ctx.bezierCurveTo(bw * 0.62, -bh, bw * 1.04, -bh * 0.72, bw * (1 + flare), bh * 0.04);
+  ctx.quadraticCurveTo(0, -sub, -bw * (1 + flare), bh * 0.04);
+  ctx.closePath();
+  const g = ctx.createRadialGradient(-bw * 0.3, -bh * 0.8, bw * 0.05, 0, -bh * 0.4, bw * 1.2);
+  g.addColorStop(0, 'rgba(255,242,244,0.95)');
+  g.addColorStop(0.35, 'rgba(241,154,176,0.85)');
+  g.addColorStop(0.75, 'rgba(208,106,142,0.75)');
+  g.addColorStop(1, 'rgba(162,70,122,0.7)');
+  ctx.fillStyle = g;
+  ctx.fill();
+  ctx.lineWidth = PX;
+  ctx.strokeStyle = '#ffd0dc';
+  ctx.stroke();
+
+  ctx.save();
+  ctx.clip();
+  ctx.strokeStyle = 'rgba(162,70,122,0.6)';
+  ctx.lineWidth = PX;
+  for (let i = -3; i <= 3; i++) {
+    const t = i / 3.4;
+    ctx.beginPath();
+    ctx.moveTo(t * bw * 0.25, -bh * 0.98);
+    ctx.quadraticCurveTo(t * bw * 0.9, -bh * 0.6, t * bw * 1.05, 0);
+    ctx.stroke();
+  }
+  ctx.fillStyle = 'rgba(255,208,220,0.7)';
+  for (let i = -1; i <= 1; i += 2) {
+    ctx.beginPath();
+    ctx.ellipse(i * bw * 0.28, -bh * 0.42, bw * 0.2, bh * 0.15, i * 0.4, 0, 6.283);
+    ctx.fill();
+  }
+  ctx.restore();
+
+  ctx.strokeStyle = '#fff2f4';
+  ctx.lineWidth = PX;
+  ctx.beginPath();
+  const lobes = 10;
+  for (let i = 0; i <= lobes; i++) {
+    const u = i / lobes, x = (-1 + 2 * u) * bw * (1 + flare);
+    const y = bh * 0.04 - Math.sin(u * Math.PI) * sub * 0.95 + (i % 2) * PX;
+    i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
+  }
+  ctx.stroke();
+}
+
+function drawDebug() {
+  out.setTransform(DPR, 0, 0, DPR, 0, 0);
+  out.fillStyle = 'rgba(120,255,200,0.8)';
+  for (const T of tentacles) for (const p of T.pts) out.fillRect(p.x - 1, p.y - 1, 2, 2);
+  out.strokeStyle = 'rgba(255,255,120,0.6)';
+  out.beginPath(); out.arc(J.tx, J.ty, 6, 0, 6.283); out.stroke();
+  out.fillStyle = 'rgba(220,240,255,0.8)';
+  out.font = '12px monospace';
+  out.fillText(`contraction ${J.c.toFixed(2)}  speed ${Math.hypot(J.vx, J.vy).toFixed(0)}px/s`, 14, 20);
+}
+
+function render() {
+  drawBackground();
+  for (const T of tentacles) if (T.kind === 'tentacle') drawTentacle(T, true);
+  for (const T of tentacles) if (T.kind === 'arm') drawArm(T);
+  drawBell();
+  for (const T of tentacles) if (T.kind === 'tentacle') drawTentacle(T, false);
+  pixelSpace();
+  quantize();
+
+  out.setTransform(1, 0, 0, 1, 0, 0);
+  out.imageSmoothingEnabled = false;
+  out.drawImage(low, 0, 0, LW * PX * DPR, LH * PX * DPR);
+  if (debug) drawDebug();
+}
+
+// ---------- Loop ----------
+let last = performance.now(), acc = 0;
+function frame(now) {
+  let dt = Math.min(0.05, (now - last) / 1000);
+  last = now;
+  if (!paused) {
+    acc += dt;
+    while (acc >= STEP) {
+      time += STEP;
+      stepBody(STEP);
+      stepStrands(STEP);
+      stepSnow(STEP);
+      acc -= STEP;
+    }
+  }
+  const md = Math.exp(-6 * dt);
+  mouse.vx *= md; mouse.vy *= md;
+  render();
+  requestAnimationFrame(frame);
+}
+
+// warm up so tentacles start settled
+for (let i = 0; i < 240; i++) { time += STEP; stepBody(STEP); stepStrands(STEP); }
+requestAnimationFrame(frame);
+
+// ---------- Input ----------
+let lastMove = 0;
+addEventListener('pointermove', (e) => {
+  const now = performance.now();
+  const dt = Math.max(0.008, (now - lastMove) / 1000);
+  if (mouse.has && now - lastMove < 100) {
+    const k = 0.5;
+    mouse.vx = mouse.vx * (1 - k) + ((e.clientX - mouse.x) / dt) * k;
+    mouse.vy = mouse.vy * (1 - k) + ((e.clientY - mouse.y) / dt) * k;
+    const sp = Math.hypot(mouse.vx, mouse.vy), max = 900 * S;
+    if (sp > max) { mouse.vx *= max / sp; mouse.vy *= max / sp; }
+  }
+  mouse.x = e.clientX; mouse.y = e.clientY; mouse.has = true;
+  lastMove = now;
+});
+addEventListener('pointerleave', () => { mouse.has = false; });
+addEventListener('pointerdown', (e) => { J.tx = e.clientX; J.ty = e.clientY; J.retarget = 12; });
+addEventListener('keydown', (e) => {
+  if (e.key === 'd' || e.key === 'D') debug = !debug;
+  if (e.code === 'Space') { paused = !paused; e.preventDefault(); }
+});
+</script>
+</body>
+</html>
