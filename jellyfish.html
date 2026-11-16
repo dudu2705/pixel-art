@@ -3,19 +3,14 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Jellyfish</title>
+<title>Space Jelly</title>
 <style>
-  html, body { margin: 0; height: 100%; overflow: hidden; background: #020a18; }
+  html, body { margin: 0; height: 100%; overflow: hidden; background: #02030a; }
   canvas { display: block; }
-  #hint {
-    position: fixed; left: 14px; bottom: 12px; color: rgba(180, 210, 255, 0.55);
-    font: 12px/1.5 -apple-system, system-ui, sans-serif; pointer-events: none; user-select: none;
-  }
 </style>
 </head>
 <body>
 <canvas id="c"></canvas>
-<div id="hint">Move mouse: stir water &nbsp;·&nbsp; Click: swim here &nbsp;·&nbsp; D: show physics points &nbsp;·&nbsp; Space: pause</div>
 <script>
 const cv = document.getElementById('c');
 const out = cv.getContext('2d');
@@ -31,7 +26,7 @@ addEventListener('resize', () => {
   const ow = W, oh = H;
   resize();
   resizeLow();
-  for (const s of snow) { s.x *= W / ow; s.y *= H / oh; }
+  for (const s of dust) { s.x *= W / ow; s.y *= H / oh; }
   J.x = Math.min(Math.max(J.x, 0), W); J.y = Math.min(Math.max(J.y, 0), H);
   pickTarget();
 });
@@ -39,14 +34,14 @@ addEventListener('resize', () => {
 const S = Math.max(0.6, Math.min(W, H) / 900);   // world scale, fixed at start
 const STEP = 1 / 120;
 
-// ---------- Jellyfish body ----------
+// ---------- Creature body (mushroom cap = jelly bell) ----------
 const J = {
   x: W * 0.5, y: H * 0.45, vx: 0, vy: 0,
   a: 0,                 // heading; forward = (sin a, -cos a)
   phase: 0, period: 1.7,
   c: 0, rate: 0,        // contraction 0..1 and its rate (1/s)
   bw0: 62 * S, bh0: 72 * S, bw: 62 * S, bh: 72 * S,
-  tx: W * 0.5, ty: H * 0.3, retarget: 6, thrustScale: 1,
+  tx: W * 0.5, ty: H * 0.3, retarget: 6,
 };
 let fx = 0, fy = -1, rx = 1, ry = 0; // forward and right unit vectors
 
@@ -54,7 +49,7 @@ function contraction(p) {
   // Fast power stroke (~30% of cycle), slow elastic recovery
   if (p < 0.3) return 0.5 - 0.5 * Math.cos(Math.PI * p / 0.3);
   const q = (p - 0.3) / 0.7;
-  return Math.pow(1 - q, 1.6) * (0.5 + 0.5 * Math.cos(Math.PI * q)) + 0 * q;
+  return Math.pow(1 - q, 1.6) * (0.5 + 0.5 * Math.cos(Math.PI * q));
 }
 
 function localToWorld(lx, ly) {
@@ -84,26 +79,26 @@ for (let i = 0; i < NT; i++) {
     const ly = J.bh * 0.05 * Math.sin(th);
     return localToWorld(lx, ly);
   }, {
-    drag: 3.2, sink: 10 * S, stiff: 0.85, bendMin: 0.78, bendK: 0.3,
-    width: 1.8 * S, depth: Math.sin(th), hue: 18 + Math.random() * 14,
+    drag: 3.2, stiff: 0.85, bendMin: 0.78, bendK: 0.3,
+    depth: Math.sin(th), glow: Math.random() * 6.28,
   });
 }
-const NA = 4;
+const NA = 5;
 for (let i = 0; i < NA; i++) {
-  const off = (i / (NA - 1) - 0.5) * 0.5;
-  makeStrand('arm', 34, 7 * S, () => localToWorld(J.bw * off, -J.bh * 0.12), {
-    drag: 2.2, sink: 16 * S, stiff: 1, bendMin: 0.8, bendK: 0.2,
-    width: 9 * S, armPhase: Math.random() * 6.28,
+  const off = (i / (NA - 1) - 0.5) * 0.35;
+  // root-like arms hang from the bottom of the stem
+  makeStrand('arm', 30, 7 * S, () => localToWorld(J.bw * off, J.bh * 0.55), {
+    drag: 2.4, stiff: 1, bendMin: 0.8, bendK: 0.2,
+    width: 6 * S, armPhase: Math.random() * 6.28,
   });
 }
 
-// ---------- Water flow ----------
-const mouse = { x: -1e4, y: -1e4, vx: 0, vy: 0, has: false };
+// ---------- Ether flow ----------
 let time = 0;
 
 function flow(x, y, out) {
   const t = time;
-  // gentle ambient current
+  // gentle drifting cosmic current
   let ux = 7 * S * Math.sin(y * 0.004 / S + t * 0.3) + 4 * S * Math.sin((x + y) * 0.007 / S - t * 0.5);
   let uy = 5 * S * Math.cos(x * 0.005 / S + t * 0.25) + 3 * S * Math.sin((x - y) * 0.006 / S + t * 0.4);
 
@@ -117,7 +112,6 @@ function flow(x, y, out) {
     if (J.rate > 0) {
       const s = -J.rate * 55 * S * g;
       ux += fx * s; uy += fy * s;
-      // spreading of the jet / starting vortex ring
       const sp = J.rate * 18 * S * g * Math.sign(lat);
       ux += rx * sp; uy += ry * sp;
     } else {
@@ -127,14 +121,6 @@ function flow(x, y, out) {
       ux += rx * sp; uy += ry * sp;
     }
   }
-
-  // mouse stirring
-  if (mouse.has) {
-    const mx = x - mouse.x, my = y - mouse.y;
-    const r = 110 * S;
-    const g = Math.exp(-(mx * mx + my * my) / (r * r));
-    ux += mouse.vx * g * 0.9; uy += mouse.vy * g * 0.9;
-  }
   out[0] = ux; out[1] = uy;
 }
 
@@ -143,9 +129,9 @@ const tmp = [0, 0];
 function wrapAngle(a) { while (a > Math.PI) a -= 2 * Math.PI; while (a < -Math.PI) a += 2 * Math.PI; return a; }
 
 function pickTarget() {
-  J.tx = W * (0.18 + Math.random() * 0.64);
-  J.ty = H * (0.15 + Math.random() * 0.6);
-  J.retarget = 7 + Math.random() * 6;
+  J.tx = W * (0.15 + Math.random() * 0.7);
+  J.ty = H * (0.15 + Math.random() * 0.7);
+  J.retarget = 6 + Math.random() * 5;
 }
 
 function stepBody(dt) {
@@ -157,15 +143,11 @@ function stepBody(dt) {
   J.bw = J.bw0 * (1 - 0.3 * c);
   J.bh = J.bh0 * (1 + 0.12 * c);
 
-  // steering: jellyfish turn mainly while pulsing (asymmetric contraction)
+  // steering toward a random wander target, turning mostly while pulsing
   J.retarget -= dt;
   const dxT = J.tx - J.x, dyT = J.ty - J.y;
   if (J.retarget < 0 || dxT * dxT + dyT * dyT < (60 * S) ** 2) pickTarget();
-  // real jellies swim mostly upward/sideways; to go down they pulse less and sink
-  const want = Math.max(-1.15, Math.min(1.15, Math.atan2(dxT, -dyT)));
-  const below = dyT > 40 * S && Math.abs(dxT) < dyT * 1.5;
-  J.thrustScale += ((below ? 0.15 : 1) - J.thrustScale) * dt * 0.8;
-  if (below) J.vy += 28 * S * dt;
+  const want = Math.atan2(dxT, -dyT);
   const diff = wrapAngle(want - J.a);
   const turnGain = 0.5 + Math.max(0, J.rate) * 1.0;
   J.a += Math.max(-1, Math.min(1, diff)) * turnGain * dt;
@@ -181,43 +163,45 @@ function stepBody(dt) {
   rx = Math.cos(J.a); ry = Math.sin(J.a);
 
   if (J.rate > 0) {
-    const k = 135 * S * J.rate * J.thrustScale * dt;
+    const k = 135 * S * J.rate * dt;
     J.vx += fx * k; J.vy += fy * k;
   }
-  J.vy += 5 * S * dt; // slightly negatively buoyant
   const d = Math.exp(-1.5 * dt);
   J.vx *= d; J.vy *= d;
 
   flow(J.x, J.y, tmp);
-  const ax = tmp[0] * 0.4, ay = tmp[1] * 0.4; // body only partially carried by ambient current
-  J.x += (J.vx + ax) * dt;
-  J.y += (J.vy + ay) * dt;
+  J.x += (J.vx + tmp[0] * 0.4) * dt;
+  J.y += (J.vy + tmp[1] * 0.4) * dt;
+
+  // release glowing spores from the gills on each power stroke
+  if (J.rate > 0.5 && Math.random() < dt * 10) {
+    const [sx, sy] = localToWorld((Math.random() - 0.5) * J.bw * 1.4, -J.bh * 0.05);
+    const sp = (15 + Math.random() * 20) * S;
+    spores.push({ x: sx, y: sy, vx: -fx * sp + (Math.random() - 0.5) * 10 * S, vy: -fy * sp + (Math.random() - 0.5) * 10 * S, life: 0, max: 3 + Math.random() * 3 });
+  }
 }
 
 function stepStrands(dt) {
   for (const T of tentacles) {
     const pts = T.pts, n = pts.length;
     const df = Math.exp(-T.drag * dt);
-    const g = T.sink * dt * dt;
 
     const [ax, ay] = T.anchorFn();
     pts[0].px = pts[0].x; pts[0].py = pts[0].y;
     pts[0].x = ax; pts[0].y = ay;
 
-    // Verlet integrate with drag relative to local water velocity
+    // Verlet integrate with drag relative to the local flow
     for (let i = 1; i < n; i++) {
       const p = pts[i];
       flow(p.x, p.y, tmp);
       const wx = tmp[0] * dt, wy = tmp[1] * dt;
-      // thinner tips respond to water faster
       const tipDf = Math.pow(df, 1 + 0.8 * i / n);
       const vx = wx + (p.x - p.px - wx) * tipDf;
       const vy = wy + (p.y - p.py - wy) * tipDf;
       p.px = p.x; p.py = p.y;
-      p.x += vx; p.y += vy + g;
+      p.x += vx; p.y += vy;
     }
 
-    // constraints
     const L = T.L;
     for (let it = 0; it < 5; it++) {
       for (let i = 0; i < n - 1; i++) {
@@ -254,23 +238,46 @@ function stepStrands(dt) {
   }
 }
 
-// ---------- Marine snow (shows water motion) ----------
-const snow = [];
-for (let i = 0; i < 160; i++) {
-  snow.push({ x: Math.random() * W, y: Math.random() * H, r: (0.4 + Math.random() * 1.4) * S, z: 0.3 + Math.random() * 0.7 });
-}
-function stepSnow(dt) {
-  for (const s of snow) {
+// ---------- Space dust, spores, stars ----------
+const dust = [];
+for (let i = 0; i < 110; i++) dust.push({ x: Math.random() * W, y: Math.random() * H, z: 0.3 + Math.random() * 0.7 });
+function stepDust(dt) {
+  for (const s of dust) {
     flow(s.x, s.y, tmp);
-    s.x += tmp[0] * dt * s.z;
-    s.y += (tmp[1] + 3 * S) * dt * s.z;
+    s.x += (tmp[0] + 4 * S) * dt * s.z;
+    s.y += tmp[1] * dt * s.z;
     if (s.x < -10) s.x = W + 10; if (s.x > W + 10) s.x = -10;
     if (s.y < -10) s.y = H + 10; if (s.y > H + 10) s.y = -10;
   }
 }
 
+const spores = [];
+function stepSpores(dt) {
+  for (let i = spores.length - 1; i >= 0; i--) {
+    const s = spores[i];
+    s.life += dt;
+    if (s.life > s.max) { spores.splice(i, 1); continue; }
+    flow(s.x, s.y, tmp);
+    const d = Math.exp(-1.2 * dt);
+    s.vx = tmp[0] + (s.vx - tmp[0]) * d;
+    s.vy = tmp[1] + (s.vy - tmp[1]) * d;
+    s.x += s.vx * dt; s.y += s.vy * dt;
+  }
+}
+
+const stars = [];
+for (let i = 0; i < 260; i++) {
+  stars.push({ u: Math.random(), v: Math.random(), b: Math.random(), sp: 0.5 + Math.random() * 2.5, ph: Math.random() * 6.28, big: Math.random() < 0.05 });
+}
+
+const planets = [
+  { u: 0.84, v: 0.8, r: 0.24, dark: '#3b2160', mid: '#6a3a9a', light: '#a066d0', ring: true, bands: true, tilt: -0.32 },
+  { u: 0.13, v: 0.18, r: 0.075, dark: '#5a2a1a', mid: '#b4582a', light: '#f09a4a', craters: true },
+  { u: 0.27, v: 0.88, r: 0.04, dark: '#1d5b5a', mid: '#3fa39a', light: '#9fe3d6' },
+  { u: 0.64, v: 0.1, r: 0.018, dark: '#1b3a8a', mid: '#6fb8ff', light: '#e6f6ff' },
+];
+
 // ---------- Rendering (pixel art) ----------
-let debug = false, paused = false;
 const PX = Math.max(3, Math.round(4 * S));       // screen pixels per art pixel
 const low = document.createElement('canvas');
 const ctx = low.getContext('2d', { willReadFrequently: true });
@@ -279,9 +286,11 @@ function resizeLow() { LW = Math.ceil(W / PX); LH = Math.ceil(H / PX); low.width
 resizeLow();
 
 const PALETTE = [
-  '#020611', '#06122a', '#0b1f3e', '#12305a', '#1d4675', '#2a5f8f', '#8fb8e8',
-  '#3a1d3d', '#6b2f5a', '#a2467a', '#d06a8e', '#f19ab0', '#ffd0dc', '#fff2f4',
-  '#e0864a', '#ffb46a',
+  '#02030a', '#070a1c', '#0e1430', '#1a1f4a',
+  '#1b3a8a', '#2a5fd0', '#3f8cff', '#6fb8ff', '#a8dcff', '#e6f6ff', '#4fe3ff',
+  '#3b2160', '#6a3a9a', '#a066d0',
+  '#5a2a1a', '#b4582a', '#f09a4a',
+  '#1d5b5a', '#3fa39a', '#9fe3d6',
 ].map(h => [parseInt(h.slice(1, 3), 16), parseInt(h.slice(3, 5), 16), parseInt(h.slice(5, 7), 16)]);
 const BAYER = [0, 8, 2, 10, 12, 4, 14, 6, 3, 11, 1, 9, 15, 7, 13, 5];
 
@@ -290,7 +299,7 @@ function quantize() {
   for (let y = 0; y < LH; y++) {
     for (let x = 0; x < LW; x++) {
       const i = (y * LW + x) * 4;
-      const t = (BAYER[(y & 3) * 4 + (x & 3)] / 16 - 0.47) * 26;
+      const t = (BAYER[(y & 3) * 4 + (x & 3)] / 16 - 0.47) * 24;
       const r = d[i] + t, g = d[i + 1] + t, b = d[i + 2] + t;
       let best = 0, bd = 1e12;
       for (let k = 0; k < PALETTE.length; k++) {
@@ -324,42 +333,126 @@ function plotLine(x0, y0, x1, y1) {
   }
 }
 
-function drawBackground() {
+function drawSpace() {
   worldSpace();
-  const g = ctx.createLinearGradient(0, 0, 0, H);
-  g.addColorStop(0, '#12305a');
-  g.addColorStop(0.5, '#06122a');
-  g.addColorStop(1, '#020611');
-  ctx.fillStyle = g;
+  ctx.fillStyle = '#04061a';
   ctx.fillRect(0, 0, W, H);
 
-  // light shafts
-  ctx.globalCompositeOperation = 'lighter';
-  for (let i = 0; i < 5; i++) {
-    const x = W * (0.1 + i * 0.22) + Math.sin(time * 0.15 + i * 1.7) * 60 * S;
-    const w = (60 + 40 * Math.sin(time * 0.2 + i)) * S;
-    const lg = ctx.createLinearGradient(0, 0, 0, H * 0.8);
-    lg.addColorStop(0, 'rgba(60,110,170,0.22)');
-    lg.addColorStop(1, 'rgba(60,110,170,0)');
-    ctx.fillStyle = lg;
-    ctx.beginPath();
-    ctx.moveTo(x - w * 0.5, 0);
-    ctx.lineTo(x + w * 0.5, 0);
-    ctx.lineTo(x + w * 1.6 + 120 * S, H * 0.8);
-    ctx.lineTo(x - w * 0.2 + 120 * S, H * 0.8);
-    ctx.fill();
+  // nebula haze
+  const neb = [
+    [0.3, 0.4, 0.55, 'rgba(42,95,208,0.20)'],
+    [0.7, 0.3, 0.45, 'rgba(106,58,154,0.16)'],
+    [0.5, 0.75, 0.4, 'rgba(27,58,138,0.18)'],
+  ];
+  for (const [u, v, r, col] of neb) {
+    const R = r * Math.max(W, H);
+    const x = u * W + Math.sin(time * 0.03 + u * 9) * 20 * S, y = v * H;
+    const g = ctx.createRadialGradient(x, y, 0, x, y, R);
+    g.addColorStop(0, col);
+    g.addColorStop(1, 'rgba(0,0,0,0)');
+    ctx.fillStyle = g;
+    ctx.fillRect(0, 0, W, H);
   }
-  ctx.globalCompositeOperation = 'source-over';
 
   pixelSpace();
-  for (const s of snow) {
-    ctx.fillStyle = s.z > 0.75 ? '#8fb8e8' : '#2a5f8f';
+  for (const s of stars) {
+    const b = s.b * 0.75 + 0.25 * Math.sin(time * s.sp + s.ph);
+    if (b < 0.15) continue;
+    const x = Math.floor(s.u * LW), y = Math.floor(s.v * LH);
+    ctx.fillStyle = b > 0.8 ? '#e6f6ff' : b > 0.55 ? '#a8dcff' : b > 0.35 ? '#6fb8ff' : '#2a5fd0';
+    ctx.fillRect(x, y, 1, 1);
+    if (s.big && b > 0.6) {
+      ctx.fillStyle = '#6fb8ff';
+      ctx.fillRect(x - 1, y, 1, 1); ctx.fillRect(x + 1, y, 1, 1);
+      ctx.fillRect(x, y - 1, 1, 1); ctx.fillRect(x, y + 1, 1, 1);
+    }
+  }
+}
+
+function drawRing(P, cx, cy, R, front) {
+  ctx.save();
+  ctx.translate(cx, cy);
+  ctx.rotate(P.tilt);
+  ctx.lineWidth = R * 0.14;
+  ctx.strokeStyle = 'rgba(160,102,208,0.85)';
+  ctx.beginPath();
+  ctx.ellipse(0, 0, R * 1.85, R * 0.42, 0, front ? 0 : Math.PI, front ? Math.PI : Math.PI * 2);
+  ctx.stroke();
+  ctx.lineWidth = R * 0.05;
+  ctx.strokeStyle = 'rgba(230,246,255,0.5)';
+  ctx.beginPath();
+  ctx.ellipse(0, 0, R * 1.55, R * 0.34, 0, front ? 0 : Math.PI, front ? Math.PI : Math.PI * 2);
+  ctx.stroke();
+  ctx.restore();
+}
+
+function drawPlanet(P) {
+  worldSpace();
+  const m = Math.min(W, H);
+  const cx = P.u * W, cy = P.v * H, R = P.r * m;
+  if (P.ring) drawRing(P, cx, cy, R, false);
+
+  // atmosphere glow
+  ctx.globalCompositeOperation = 'lighter';
+  const ag = ctx.createRadialGradient(cx, cy, R * 0.9, cx, cy, R * 1.35);
+  ag.addColorStop(0, 'rgba(111,184,255,0.18)');
+  ag.addColorStop(1, 'rgba(111,184,255,0)');
+  ctx.fillStyle = ag;
+  ctx.beginPath(); ctx.arc(cx, cy, R * 1.35, 0, 6.283); ctx.fill();
+  ctx.globalCompositeOperation = 'source-over';
+
+  // body, lit from upper-left
+  const g = ctx.createRadialGradient(cx - R * 0.45, cy - R * 0.45, R * 0.05, cx - R * 0.1, cy - R * 0.1, R * 1.25);
+  g.addColorStop(0, P.light);
+  g.addColorStop(0.45, P.mid);
+  g.addColorStop(0.85, P.dark);
+  g.addColorStop(1, '#070a1c');
+  ctx.fillStyle = g;
+  ctx.beginPath(); ctx.arc(cx, cy, R, 0, 6.283); ctx.fill();
+
+  ctx.save();
+  ctx.beginPath(); ctx.arc(cx, cy, R, 0, 6.283); ctx.clip();
+  if (P.bands) {
+    for (let i = 0; i < 7; i++) {
+      const y = cy - R + (i + 0.5) * R * 2 / 7 + Math.sin(time * 0.2 + i) * R * 0.03;
+      ctx.fillStyle = i % 2 ? 'rgba(59,33,96,0.35)' : 'rgba(160,102,208,0.22)';
+      ctx.beginPath();
+      ctx.ellipse(cx, y, R * 1.1, R * 0.09, 0, 0, 6.283);
+      ctx.fill();
+    }
+  }
+  if (P.craters) {
+    ctx.fillStyle = 'rgba(90,42,26,0.55)';
+    for (const [u, v, r] of [[-0.3, -0.2, 0.18], [0.25, 0.3, 0.14], [0.1, -0.45, 0.1], [-0.4, 0.35, 0.09]]) {
+      ctx.beginPath(); ctx.arc(cx + u * R, cy + v * R, r * R, 0, 6.283); ctx.fill();
+    }
+  }
+  // night side shadow
+  const sh = ctx.createRadialGradient(cx - R * 0.6, cy - R * 0.6, R * 0.6, cx - R * 0.6, cy - R * 0.6, R * 2.2);
+  sh.addColorStop(0, 'rgba(4,6,26,0)');
+  sh.addColorStop(1, 'rgba(4,6,26,0.85)');
+  ctx.fillStyle = sh;
+  ctx.fillRect(cx - R, cy - R, R * 2, R * 2);
+  ctx.restore();
+
+  if (P.ring) drawRing(P, cx, cy, R, true);
+}
+
+function drawParticles() {
+  pixelSpace();
+  for (const s of dust) {
+    ctx.fillStyle = s.z > 0.8 ? '#3f8cff' : '#1b3a8a';
+    ctx.fillRect(Math.floor(s.x / PX), Math.floor(s.y / PX), 1, 1);
+  }
+  for (const s of spores) {
+    const f = s.life / s.max;
+    ctx.fillStyle = f < 0.3 ? '#e6f6ff' : f < 0.6 ? '#4fe3ff' : f < 0.85 ? '#3f8cff' : '#1b3a8a';
     ctx.fillRect(Math.floor(s.x / PX), Math.floor(s.y / PX), 1, 1);
   }
 }
 
-const FRONT_COLORS = ['#ffd0dc', '#ffb46a', '#ffb46a', '#e0864a', '#d06a8e', '#a2467a'];
-const BACK_COLORS = ['#d06a8e', '#a2467a', '#a2467a', '#6b2f5a', '#6b2f5a', '#3a1d3d'];
+const FRONT_COLORS = ['#e6f6ff', '#a8dcff', '#6fb8ff', '#3f8cff', '#2a5fd0', '#1b3a8a'];
+const BACK_COLORS = ['#3f8cff', '#2a5fd0', '#2a5fd0', '#1b3a8a', '#1b3a8a', '#1a1f4a'];
 
 function drawTentacle(T, back) {
   if ((T.depth > 0) !== back) return;
@@ -369,6 +462,12 @@ function drawTentacle(T, back) {
   for (let i = 0; i < n - 1; i++) {
     ctx.fillStyle = cols[Math.min(cols.length - 1, Math.floor(i / (n - 1) * cols.length))];
     plotLine(pts[i].x, pts[i].y, pts[i + 1].x, pts[i + 1].y);
+  }
+  // bioluminescent tip
+  if (Math.sin(time * 2.2 + T.glow) > -0.2) {
+    const tip = pts[n - 1];
+    ctx.fillStyle = back ? '#3f8cff' : '#4fe3ff';
+    ctx.fillRect(Math.floor(tip.x / PX), Math.floor(tip.y / PX), 1, 1);
   }
 }
 
@@ -381,8 +480,8 @@ function drawArm(T) {
     let tx = b.x - a.x, ty = b.y - a.y;
     const l = Math.hypot(tx, ty) || 1; tx /= l; ty /= l;
     const u = i / (n - 1);
-    const frill = 1 + 0.45 * Math.sin(i * 1.25 + time * 2.2 + T.armPhase);
-    const w = T.width * Math.pow(1 - u, 0.8) * frill * 0.5 + 0.6 * S;
+    const frill = 1 + 0.4 * Math.sin(i * 1.25 + time * 2.2 + T.armPhase);
+    const w = T.width * Math.pow(1 - u, 0.9) * frill * 0.5 + 0.5 * S;
     left.push([pts[i].x - ty * w, pts[i].y + tx * w]);
     right.push([pts[i].x + ty * w, pts[i].y - tx * w]);
   }
@@ -391,93 +490,137 @@ function drawArm(T) {
   for (let i = 1; i < n; i++) ctx.lineTo(left[i][0], left[i][1]);
   for (let i = n - 1; i >= 0; i--) ctx.lineTo(right[i][0], right[i][1]);
   ctx.closePath();
-  ctx.fillStyle = 'rgba(208,106,142,0.55)';
+  ctx.fillStyle = 'rgba(42,95,208,0.75)';
   ctx.fill();
   ctx.lineWidth = PX;
-  ctx.strokeStyle = 'rgba(241,154,176,0.8)';
+  ctx.strokeStyle = 'rgba(111,184,255,0.85)';
   ctx.stroke();
 }
 
-function drawBell() {
+const SPOTS = [[-0.45, -0.72, 0.13], [0.1, -0.88, 0.11], [0.52, -0.58, 0.12], [-0.12, -0.5, 0.09], [0.25, -0.3, 0.08], [-0.68, -0.32, 0.08], [0.75, -0.2, 0.06], [-0.3, -0.18, 0.06]];
+
+function drawCreature() {
   worldSpace();
   const bw = J.bw, bh = J.bh, c = J.c;
   ctx.translate(J.x, J.y);
   ctx.rotate(J.a);
 
+  // glow aura
   ctx.globalCompositeOperation = 'lighter';
-  const glow = ctx.createRadialGradient(0, -bh * 0.5, 0, 0, -bh * 0.5, bw * 2.2);
-  glow.addColorStop(0, 'rgba(160,60,110,0.35)');
-  glow.addColorStop(1, 'rgba(160,60,110,0)');
+  const glow = ctx.createRadialGradient(0, -bh * 0.4, 0, 0, -bh * 0.4, bw * 2.4);
+  glow.addColorStop(0, `rgba(63,140,255,${0.28 + 0.12 * c})`);
+  glow.addColorStop(1, 'rgba(63,140,255,0)');
   ctx.fillStyle = glow;
-  ctx.beginPath(); ctx.arc(0, -bh * 0.5, bw * 2.2, 0, 6.283); ctx.fill();
+  ctx.beginPath(); ctx.arc(0, -bh * 0.4, bw * 2.4, 0, 6.283); ctx.fill();
   ctx.globalCompositeOperation = 'source-over';
 
   const flare = (1 - c) * 0.08;
   const sub = bh * (0.22 + 0.1 * c);
+  const rimX = bw * (1 + flare), rimY = bh * 0.04;
+
+  // stem with ring (annulus), behind the cap's underside
+  const stemTop = -sub * 0.5, stemBot = bh * 0.55;
+  const sw = bw * 0.16;
+  const sg = ctx.createLinearGradient(-sw, 0, sw, 0);
+  sg.addColorStop(0, '#a8dcff');
+  sg.addColorStop(0.5, '#6fb8ff');
+  sg.addColorStop(1, '#2a5fd0');
+  ctx.fillStyle = sg;
   ctx.beginPath();
-  ctx.moveTo(-bw * (1 + flare), bh * 0.04);
-  ctx.bezierCurveTo(-bw * 1.04, -bh * 0.72, -bw * 0.62, -bh, 0, -bh);
-  ctx.bezierCurveTo(bw * 0.62, -bh, bw * 1.04, -bh * 0.72, bw * (1 + flare), bh * 0.04);
-  ctx.quadraticCurveTo(0, -sub, -bw * (1 + flare), bh * 0.04);
+  ctx.moveTo(-sw * 0.8, stemTop);
+  ctx.quadraticCurveTo(-sw * 1.1, (stemTop + stemBot) * 0.5, -sw * 1.25, stemBot);
+  ctx.quadraticCurveTo(0, stemBot + bh * 0.1, sw * 1.25, stemBot);
+  ctx.quadraticCurveTo(sw * 1.1, (stemTop + stemBot) * 0.5, sw * 0.8, stemTop);
   ctx.closePath();
-  const g = ctx.createRadialGradient(-bw * 0.3, -bh * 0.8, bw * 0.05, 0, -bh * 0.4, bw * 1.2);
-  g.addColorStop(0, 'rgba(255,242,244,0.95)');
-  g.addColorStop(0.35, 'rgba(241,154,176,0.85)');
-  g.addColorStop(0.75, 'rgba(208,106,142,0.75)');
-  g.addColorStop(1, 'rgba(162,70,122,0.7)');
-  ctx.fillStyle = g;
   ctx.fill();
   ctx.lineWidth = PX;
-  ctx.strokeStyle = '#ffd0dc';
+  ctx.strokeStyle = '#1b3a8a';
+  ctx.stroke();
+  // ring skirt
+  const ry0 = bh * 0.12;
+  ctx.fillStyle = '#a8dcff';
+  ctx.beginPath();
+  ctx.moveTo(-sw * 1.05, ry0);
+  ctx.quadraticCurveTo(-sw * 2.1, ry0 + bh * 0.12, -sw * 1.7, ry0 + bh * 0.16);
+  for (let i = 0; i <= 6; i++) {
+    const x = -sw * 1.7 + (i / 6) * sw * 3.4;
+    ctx.lineTo(x, ry0 + bh * (0.16 + (i % 2) * 0.035));
+  }
+  ctx.quadraticCurveTo(sw * 2.1, ry0 + bh * 0.12, sw * 1.05, ry0);
+  ctx.closePath();
+  ctx.fill();
+  ctx.strokeStyle = '#2a5fd0';
+  ctx.stroke();
+
+  // gills: underside of the cap
+  ctx.beginPath();
+  ctx.moveTo(-rimX, rimY);
+  ctx.quadraticCurveTo(0, -sub, rimX, rimY);
+  ctx.quadraticCurveTo(0, rimY + bh * 0.05, -rimX, rimY);
+  ctx.closePath();
+  ctx.fillStyle = '#1b3a8a';
+  ctx.fill();
+  ctx.save();
+  ctx.clip();
+  ctx.strokeStyle = '#6fb8ff';
+  ctx.lineWidth = PX * 0.8;
+  for (let i = 0; i <= 12; i++) {
+    const x = (-1 + i / 6) * rimX;
+    ctx.beginPath(); ctx.moveTo(0, -sub * 0.6); ctx.lineTo(x, rimY + bh * 0.05); ctx.stroke();
+  }
+  ctx.restore();
+
+  // cap
+  ctx.beginPath();
+  ctx.moveTo(-rimX, rimY);
+  ctx.bezierCurveTo(-bw * 1.04, -bh * 0.72, -bw * 0.62, -bh, 0, -bh);
+  ctx.bezierCurveTo(bw * 0.62, -bh, bw * 1.04, -bh * 0.72, rimX, rimY);
+  ctx.quadraticCurveTo(0, -sub, -rimX, rimY);
+  ctx.closePath();
+  const g = ctx.createRadialGradient(-bw * 0.35, -bh * 0.8, bw * 0.05, 0, -bh * 0.4, bw * 1.25);
+  g.addColorStop(0, '#e6f6ff');
+  g.addColorStop(0.3, '#6fb8ff');
+  g.addColorStop(0.65, '#3f8cff');
+  g.addColorStop(1, '#1b3a8a');
+  ctx.fillStyle = g;
+  ctx.globalAlpha = 0.93;
+  ctx.fill();
+  ctx.globalAlpha = 1;
+  ctx.lineWidth = PX;
+  ctx.strokeStyle = '#a8dcff';
   ctx.stroke();
 
   ctx.save();
   ctx.clip();
-  ctx.strokeStyle = 'rgba(162,70,122,0.6)';
-  ctx.lineWidth = PX;
-  for (let i = -3; i <= 3; i++) {
-    const t = i / 3.4;
+  const pulse = 0.75 + 0.25 * Math.sin(time * 1.5);
+  for (const [u, v, r] of SPOTS) {
+    ctx.fillStyle = `rgba(230,246,255,${0.9 * pulse})`;
     ctx.beginPath();
-    ctx.moveTo(t * bw * 0.25, -bh * 0.98);
-    ctx.quadraticCurveTo(t * bw * 0.9, -bh * 0.6, t * bw * 1.05, 0);
-    ctx.stroke();
-  }
-  ctx.fillStyle = 'rgba(255,208,220,0.7)';
-  for (let i = -1; i <= 1; i += 2) {
-    ctx.beginPath();
-    ctx.ellipse(i * bw * 0.28, -bh * 0.42, bw * 0.2, bh * 0.15, i * 0.4, 0, 6.283);
+    ctx.ellipse(u * bw, v * bh, r * bw * 1.1, r * bw * 0.9, 0, 0, 6.283);
     ctx.fill();
   }
   ctx.restore();
 
-  ctx.strokeStyle = '#fff2f4';
+  // wavy rim edge
+  ctx.strokeStyle = '#e6f6ff';
   ctx.lineWidth = PX;
   ctx.beginPath();
   const lobes = 10;
   for (let i = 0; i <= lobes; i++) {
-    const u = i / lobes, x = (-1 + 2 * u) * bw * (1 + flare);
-    const y = bh * 0.04 - Math.sin(u * Math.PI) * sub * 0.95 + (i % 2) * PX;
+    const u = i / lobes, x = (-1 + 2 * u) * rimX;
+    const y = rimY - Math.sin(u * Math.PI) * sub * 0.95 + (i % 2) * PX;
     i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
   }
   ctx.stroke();
 }
 
-function drawDebug() {
-  out.setTransform(DPR, 0, 0, DPR, 0, 0);
-  out.fillStyle = 'rgba(120,255,200,0.8)';
-  for (const T of tentacles) for (const p of T.pts) out.fillRect(p.x - 1, p.y - 1, 2, 2);
-  out.strokeStyle = 'rgba(255,255,120,0.6)';
-  out.beginPath(); out.arc(J.tx, J.ty, 6, 0, 6.283); out.stroke();
-  out.fillStyle = 'rgba(220,240,255,0.8)';
-  out.font = '12px monospace';
-  out.fillText(`contraction ${J.c.toFixed(2)}  speed ${Math.hypot(J.vx, J.vy).toFixed(0)}px/s`, 14, 20);
-}
-
 function render() {
-  drawBackground();
+  drawSpace();
+  for (const P of planets) drawPlanet(P);
+  drawParticles();
   for (const T of tentacles) if (T.kind === 'tentacle') drawTentacle(T, true);
   for (const T of tentacles) if (T.kind === 'arm') drawArm(T);
-  drawBell();
+  drawCreature();
   for (const T of tentacles) if (T.kind === 'tentacle') drawTentacle(T, false);
   pixelSpace();
   quantize();
@@ -485,26 +628,21 @@ function render() {
   out.setTransform(1, 0, 0, 1, 0, 0);
   out.imageSmoothingEnabled = false;
   out.drawImage(low, 0, 0, LW * PX * DPR, LH * PX * DPR);
-  if (debug) drawDebug();
 }
 
 // ---------- Loop ----------
 let last = performance.now(), acc = 0;
 function frame(now) {
-  let dt = Math.min(0.05, (now - last) / 1000);
+  acc += Math.min(0.05, (now - last) / 1000);
   last = now;
-  if (!paused) {
-    acc += dt;
-    while (acc >= STEP) {
-      time += STEP;
-      stepBody(STEP);
-      stepStrands(STEP);
-      stepSnow(STEP);
-      acc -= STEP;
-    }
+  while (acc >= STEP) {
+    time += STEP;
+    stepBody(STEP);
+    stepStrands(STEP);
+    stepDust(STEP);
+    stepSpores(STEP);
+    acc -= STEP;
   }
-  const md = Math.exp(-6 * dt);
-  mouse.vx *= md; mouse.vy *= md;
   render();
   requestAnimationFrame(frame);
 }
@@ -512,28 +650,6 @@ function frame(now) {
 // warm up so tentacles start settled
 for (let i = 0; i < 240; i++) { time += STEP; stepBody(STEP); stepStrands(STEP); }
 requestAnimationFrame(frame);
-
-// ---------- Input ----------
-let lastMove = 0;
-addEventListener('pointermove', (e) => {
-  const now = performance.now();
-  const dt = Math.max(0.008, (now - lastMove) / 1000);
-  if (mouse.has && now - lastMove < 100) {
-    const k = 0.5;
-    mouse.vx = mouse.vx * (1 - k) + ((e.clientX - mouse.x) / dt) * k;
-    mouse.vy = mouse.vy * (1 - k) + ((e.clientY - mouse.y) / dt) * k;
-    const sp = Math.hypot(mouse.vx, mouse.vy), max = 900 * S;
-    if (sp > max) { mouse.vx *= max / sp; mouse.vy *= max / sp; }
-  }
-  mouse.x = e.clientX; mouse.y = e.clientY; mouse.has = true;
-  lastMove = now;
-});
-addEventListener('pointerleave', () => { mouse.has = false; });
-addEventListener('pointerdown', (e) => { J.tx = e.clientX; J.ty = e.clientY; J.retarget = 12; });
-addEventListener('keydown', (e) => {
-  if (e.key === 'd' || e.key === 'D') debug = !debug;
-  if (e.code === 'Space') { paused = !paused; e.preventDefault(); }
-});
 </script>
 </body>
 </html>
