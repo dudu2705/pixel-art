@@ -23,26 +23,24 @@ function resize() {
 }
 resize();
 addEventListener('resize', () => {
-  const ow = W, oh = H;
   resize();
   resizeLow();
-  for (const s of dust) { s.x *= W / ow; s.y *= H / oh; }
-  J.x = Math.min(Math.max(J.x, 0), W); J.y = Math.min(Math.max(J.y, 0), H);
-  pickTarget();
 });
 
 const S = Math.max(0.6, Math.min(W, H) / 900);   // world scale, fixed at start
 const STEP = 1 / 120;
+const SIZE = 1.6;   // creature scale
 
 // ---------- Creature body (mushroom cap = jelly bell) ----------
 const J = {
   x: W * 0.5, y: H * 0.45, vx: 0, vy: 0,
   a: 0,                 // heading; forward = (sin a, -cos a)
-  phase: 0, period: 1.7,
+  phase: 0, period: 1.2,
   c: 0, rate: 0,        // contraction 0..1 and its rate (1/s)
-  bw0: 62 * S, bh0: 72 * S, bw: 62 * S, bh: 72 * S,
-  tx: W * 0.5, ty: H * 0.3, retarget: 6,
+  bw0: 62 * S * SIZE, bh0: 72 * S * SIZE, bw: 62 * S * SIZE, bh: 72 * S * SIZE,
+  wantA: 0, retarget: 4,
 };
+const cam = { x: J.x - W / 2, y: J.y - H / 2 };   // camera follows the creature through open space
 let fx = 0, fy = -1, rx = 1, ry = 0; // forward and right unit vectors
 
 function contraction(p) {
@@ -74,7 +72,7 @@ for (let i = 0; i < NT; i++) {
   // Rim is a circle seen edge-on: project angle around the rim onto the side view
   const th = (i + 0.5) / NT * Math.PI * 2;
   const len = 46 + Math.floor(Math.random() * 14);
-  makeStrand('tentacle', len, 7.5 * S, () => {
+  makeStrand('tentacle', len, 7.5 * S * SIZE, () => {
     const lx = J.bw * 0.94 * Math.cos(th);
     const ly = J.bh * 0.05 * Math.sin(th);
     return localToWorld(lx, ly);
@@ -87,9 +85,9 @@ const NA = 5;
 for (let i = 0; i < NA; i++) {
   const off = (i / (NA - 1) - 0.5) * 0.35;
   // root-like arms hang from the bottom of the stem
-  makeStrand('arm', 30, 7 * S, () => localToWorld(J.bw * off, J.bh * 0.55), {
+  makeStrand('arm', 30, 7 * S * SIZE, () => localToWorld(J.bw * off, J.bh * 0.55), {
     drag: 2.4, stiff: 1, bendMin: 0.8, bendK: 0.2,
-    width: 6 * S, armPhase: Math.random() * 6.28,
+    width: 6 * S * SIZE, armPhase: Math.random() * 6.28,
   });
 }
 
@@ -110,7 +108,7 @@ function flow(x, y, out) {
     const behind = Math.max(0, -al);
     const g = Math.exp(-(lat * lat) / (J.bw * J.bw * 1.8)) * Math.exp(-behind / (J.bh * 3.2));
     if (J.rate > 0) {
-      const s = -J.rate * 55 * S * g;
+      const s = -J.rate * 90 * S * g;
       ux += fx * s; uy += fy * s;
       const sp = J.rate * 18 * S * g * Math.sign(lat);
       ux += rx * sp; uy += ry * sp;
@@ -128,42 +126,47 @@ function flow(x, y, out) {
 const tmp = [0, 0];
 function wrapAngle(a) { while (a > Math.PI) a -= 2 * Math.PI; while (a < -Math.PI) a += 2 * Math.PI; return a; }
 
-function pickTarget() {
-  J.tx = W * (0.15 + Math.random() * 0.7);
-  J.ty = H * (0.15 + Math.random() * 0.7);
-  J.retarget = 6 + Math.random() * 5;
+// Tentacles are long, so turns must be wide: the turn radius is never smaller
+// than about half a tentacle length, which keeps the tail trailing behind.
+const TLEN = 53 * 7.5 * S * SIZE;
+function wander() {
+  J.wantA = J.a + (Math.random() * 2 - 1) * 0.9;
+  J.retarget = 3 + Math.random() * 3;
+}
+
+function stepCamera(dt) {
+  const lead = 120 * S * SIZE;
+  const k = 1 - Math.exp(-0.8 * dt);
+  cam.x += (J.x + fx * lead - W / 2 - cam.x) * k;
+  cam.y += (J.y + fy * lead - H / 2 - cam.y) * k;
+  const m = Math.min(W, H) * 0.2;
+  if (J.x - cam.x < m) cam.x = J.x - m;
+  if (J.x - cam.x > W - m) cam.x = J.x - (W - m);
+  if (J.y - cam.y < m) cam.y = J.y - m;
+  if (J.y - cam.y > H - m) cam.y = J.y - (H - m);
 }
 
 function stepBody(dt) {
   J.phase += dt / J.period;
-  if (J.phase >= 1) { J.phase -= 1; J.period = 1.5 + Math.random() * 0.6; }
+  if (J.phase >= 1) { J.phase -= 1; J.period = 1.0 + Math.random() * 0.4; }
   const c = contraction(J.phase);
   J.rate = (c - J.c) / dt;
   J.c = c;
   J.bw = J.bw0 * (1 - 0.3 * c);
   J.bh = J.bh0 * (1 + 0.12 * c);
 
-  // steering toward a random wander target, turning mostly while pulsing
+  // wander in a random direction, never sharper than the tail allows
   J.retarget -= dt;
-  const dxT = J.tx - J.x, dyT = J.ty - J.y;
-  if (J.retarget < 0 || dxT * dxT + dyT * dyT < (60 * S) ** 2) pickTarget();
-  const want = Math.atan2(dxT, -dyT);
-  const diff = wrapAngle(want - J.a);
-  const turnGain = 0.5 + Math.max(0, J.rate) * 1.0;
-  J.a += Math.max(-1, Math.min(1, diff)) * turnGain * dt;
-
-  // soft walls so it never leaves the view
-  const m = 90 * S;
-  if (J.x < m) J.vx += (m - J.x) * 2 * dt;
-  if (J.x > W - m) J.vx -= (J.x - (W - m)) * 2 * dt;
-  if (J.y < m) J.vy += (m - J.y) * 2 * dt;
-  if (J.y > H - m) J.vy -= (J.y - (H - m)) * 2 * dt;
+  if (J.retarget < 0) wander();
+  const diff = wrapAngle(J.wantA - J.a);
+  const maxTurn = 0.05 + Math.hypot(J.vx, J.vy) / (TLEN * 0.55);
+  J.a += Math.max(-maxTurn, Math.min(maxTurn, diff * 1.2)) * dt;
 
   fx = Math.sin(J.a); fy = -Math.cos(J.a);
   rx = Math.cos(J.a); ry = Math.sin(J.a);
 
   if (J.rate > 0) {
-    const k = 135 * S * J.rate * dt;
+    const k = 300 * S * J.rate * dt;
     J.vx += fx * k; J.vy += fy * k;
   }
   const d = Math.exp(-1.5 * dt);
@@ -246,8 +249,8 @@ function stepDust(dt) {
     flow(s.x, s.y, tmp);
     s.x += (tmp[0] + 4 * S) * dt * s.z;
     s.y += tmp[1] * dt * s.z;
-    if (s.x < -10) s.x = W + 10; if (s.x > W + 10) s.x = -10;
-    if (s.y < -10) s.y = H + 10; if (s.y > H + 10) s.y = -10;
+    if (s.x - cam.x < -10) s.x += W + 20; if (s.x - cam.x > W + 10) s.x -= W + 20;
+    if (s.y - cam.y < -10) s.y += H + 20; if (s.y - cam.y > H + 10) s.y -= H + 20;
   }
 }
 
@@ -271,10 +274,10 @@ for (let i = 0; i < 260; i++) {
 }
 
 const planets = [
-  { u: 0.84, v: 0.8, r: 0.24, dark: '#3b2160', mid: '#6a3a9a', light: '#a066d0', ring: true, bands: true, tilt: -0.32 },
-  { u: 0.13, v: 0.18, r: 0.075, dark: '#5a2a1a', mid: '#b4582a', light: '#f09a4a', craters: true },
-  { u: 0.27, v: 0.88, r: 0.04, dark: '#1d5b5a', mid: '#3fa39a', light: '#9fe3d6' },
-  { u: 0.64, v: 0.1, r: 0.018, dark: '#1b3a8a', mid: '#6fb8ff', light: '#e6f6ff' },
+  { u: 0.84, v: 0.8, r: 0.24, dark: '#3b2160', mid: '#6a3a9a', light: '#a066d0', ring: true, bands: true, tilt: -0.32, p: 0.35 },
+  { u: 0.13, v: 0.18, r: 0.075, dark: '#5a2a1a', mid: '#b4582a', light: '#f09a4a', craters: true, p: 0.2 },
+  { u: 0.27, v: 0.88, r: 0.04, dark: '#1d5b5a', mid: '#3fa39a', light: '#9fe3d6', p: 0.25 },
+  { u: 0.64, v: 0.1, r: 0.018, dark: '#1b3a8a', mid: '#6fb8ff', light: '#e6f6ff', p: 0.08 },
 ];
 
 // ---------- Rendering (pixel art) ----------
@@ -315,12 +318,15 @@ function quantize() {
   ctx.putImageData(img, 0, 0);
 }
 
-function worldSpace() { ctx.setTransform(1 / PX, 0, 0, 1 / PX, 0, 0); }
+let CX = 0, CY = 0;   // camera snapped to whole art pixels (no shimmer)
+function mod(a, b) { return ((a % b) + b) % b; }
+function screenSpace() { ctx.setTransform(1 / PX, 0, 0, 1 / PX, 0, 0); }
+function worldSpace() { ctx.setTransform(1 / PX, 0, 0, 1 / PX, -CX / PX, -CY / PX); }
 function pixelSpace() { ctx.setTransform(1, 0, 0, 1, 0, 0); }
 
 function plotLine(x0, y0, x1, y1) {
-  x0 = Math.floor(x0 / PX); y0 = Math.floor(y0 / PX);
-  x1 = Math.floor(x1 / PX); y1 = Math.floor(y1 / PX);
+  x0 = Math.floor((x0 - CX) / PX); y0 = Math.floor((y0 - CY) / PX);
+  x1 = Math.floor((x1 - CX) / PX); y1 = Math.floor((y1 - CY) / PX);
   const dx = Math.abs(x1 - x0), dy = -Math.abs(y1 - y0);
   const sx = x0 < x1 ? 1 : -1, sy = y0 < y1 ? 1 : -1;
   let err = dx + dy;
@@ -334,7 +340,7 @@ function plotLine(x0, y0, x1, y1) {
 }
 
 function drawSpace() {
-  worldSpace();
+  screenSpace();
   ctx.fillStyle = '#04061a';
   ctx.fillRect(0, 0, W, H);
 
@@ -346,7 +352,7 @@ function drawSpace() {
   ];
   for (const [u, v, r, col] of neb) {
     const R = r * Math.max(W, H);
-    const x = u * W + Math.sin(time * 0.03 + u * 9) * 20 * S, y = v * H;
+    const x = mod(u * W - CX * 0.02, W * 1.6) - W * 0.3, y = mod(v * H - CY * 0.02, H * 1.6) - H * 0.3;
     const g = ctx.createRadialGradient(x, y, 0, x, y, R);
     g.addColorStop(0, col);
     g.addColorStop(1, 'rgba(0,0,0,0)');
@@ -358,7 +364,8 @@ function drawSpace() {
   for (const s of stars) {
     const b = s.b * 0.75 + 0.25 * Math.sin(time * s.sp + s.ph);
     if (b < 0.15) continue;
-    const x = Math.floor(s.u * LW), y = Math.floor(s.v * LH);
+    const p = 0.03 + s.b * 0.12;   // parallax: brighter stars feel closer
+    const x = Math.floor(mod(s.u * LW - CX / PX * p, LW)), y = Math.floor(mod(s.v * LH - CY / PX * p, LH));
     ctx.fillStyle = b > 0.8 ? '#e6f6ff' : b > 0.55 ? '#a8dcff' : b > 0.35 ? '#6fb8ff' : '#2a5fd0';
     ctx.fillRect(x, y, 1, 1);
     if (s.big && b > 0.6) {
@@ -387,9 +394,12 @@ function drawRing(P, cx, cy, R, front) {
 }
 
 function drawPlanet(P) {
-  worldSpace();
-  const m = Math.min(W, H);
-  const cx = P.u * W, cy = P.v * H, R = P.r * m;
+  screenSpace();
+  const R = P.r * Math.min(W, H);
+  // parallax scroll, wrapping so planets drift by again as it travels
+  const pad = R * 2.2;
+  const cx = mod(P.u * W - CX * P.p + pad, W * 1.7 + pad * 2) - pad;
+  const cy = mod(P.v * H - CY * P.p + pad, H * 1.7 + pad * 2) - pad;
   if (P.ring) drawRing(P, cx, cy, R, false);
 
   // atmosphere glow
@@ -442,12 +452,12 @@ function drawParticles() {
   pixelSpace();
   for (const s of dust) {
     ctx.fillStyle = s.z > 0.8 ? '#3f8cff' : '#1b3a8a';
-    ctx.fillRect(Math.floor(s.x / PX), Math.floor(s.y / PX), 1, 1);
+    ctx.fillRect(Math.floor((s.x - CX) / PX), Math.floor((s.y - CY) / PX), 1, 1);
   }
   for (const s of spores) {
     const f = s.life / s.max;
     ctx.fillStyle = f < 0.3 ? '#e6f6ff' : f < 0.6 ? '#4fe3ff' : f < 0.85 ? '#3f8cff' : '#1b3a8a';
-    ctx.fillRect(Math.floor(s.x / PX), Math.floor(s.y / PX), 1, 1);
+    ctx.fillRect(Math.floor((s.x - CX) / PX), Math.floor((s.y - CY) / PX), 1, 1);
   }
 }
 
@@ -467,7 +477,7 @@ function drawTentacle(T, back) {
   if (Math.sin(time * 2.2 + T.glow) > -0.2) {
     const tip = pts[n - 1];
     ctx.fillStyle = back ? '#3f8cff' : '#4fe3ff';
-    ctx.fillRect(Math.floor(tip.x / PX), Math.floor(tip.y / PX), 1, 1);
+    ctx.fillRect(Math.floor((tip.x - CX) / PX), Math.floor((tip.y - CY) / PX), 1, 1);
   }
 }
 
@@ -615,6 +625,7 @@ function drawCreature() {
 }
 
 function render() {
+  CX = Math.round(cam.x / PX) * PX; CY = Math.round(cam.y / PX) * PX;
   drawSpace();
   for (const P of planets) drawPlanet(P);
   drawParticles();
@@ -641,6 +652,7 @@ function frame(now) {
     stepStrands(STEP);
     stepDust(STEP);
     stepSpores(STEP);
+    stepCamera(STEP);
     acc -= STEP;
   }
   render();
@@ -648,7 +660,7 @@ function frame(now) {
 }
 
 // warm up so tentacles start settled
-for (let i = 0; i < 240; i++) { time += STEP; stepBody(STEP); stepStrands(STEP); }
+for (let i = 0; i < 240; i++) { time += STEP; stepBody(STEP); stepStrands(STEP); stepCamera(STEP); }
 requestAnimationFrame(frame);
 </script>
 </body>
