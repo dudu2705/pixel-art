@@ -11,18 +11,18 @@
     position: fixed; left: 50%; bottom: 18px; transform: translateX(-50%);
     font: 13px ui-monospace, Menlo, monospace; color: #ff9a6a; letter-spacing: 1px;
     background: rgba(10, 6, 8, 0.7); padding: 6px 12px; border: 1px solid #5a2418;
-    transition: opacity 1.5s; pointer-events: none;
+    transition: opacity 1.5s; pointer-events: none; white-space: nowrap;
   }
 </style>
 </head>
 <body>
 <canvas id="c"></canvas>
-<div id="hint">&larr; &rarr; steer &nbsp;&middot;&nbsp; &uarr; &darr; pitch &nbsp;&middot;&nbsp; F faster &nbsp;&middot;&nbsp; S slower &nbsp;&middot;&nbsp; A autopilot</div>
+<div id="hint">&larr; &rarr; steer &nbsp;&middot;&nbsp; &uarr; &darr; pitch &nbsp;&middot;&nbsp; F faster &nbsp;&middot;&nbsp; S slower &nbsp;&middot;&nbsp; A autopilot &nbsp;&middot;&nbsp; SPACE laser</div>
 <script>
 // Everything is drawn into a W x H pixel buffer, then scaled up with nearest-neighbour.
 const W = 384, H = 216, CX = 192, CY = 96;
 const NW = 1280, NH = 640, F = NW / (2 * Math.PI);   // equirectangular sky; F = focal length in px
-const MAXV = 1200;
+const MAXV = 2000;
 
 const cv = document.getElementById('c');
 const out = cv.getContext('2d');
@@ -121,7 +121,7 @@ const GLYPH = {
   '0': '111101101101111', '1': '010110010010111', '2': '111001111100111', '3': '111001111001111',
   '4': '101101111001001', '5': '111100111001111', '6': '111100111101111', '7': '111001001001001',
   '8': '111101111101111', '9': '111101111001111', 'S': '011100010001110', 'P': '110101110100100',
-  'D': '110101101101110', 'A': '010101111101101', 'U': '101101101101111', 'T': '111010010010010', 'O': '111101101101111', 'H': '101101111101101', 'G': '011100101101011', ' ': '000000000000000',
+  'D': '110101101101110', 'L': '100100100100111', 'R': '110101110101101', 'A': '010101111101101', 'U': '101101101101111', 'T': '111010010010010', 'O': '111101101101111', 'H': '101101111101101', 'G': '011100101101011', ' ': '000000000000000',
 };
 function text(str, x, y, col, a) {
   for (const ch of str) {
@@ -138,6 +138,7 @@ function text(str, x, y, col, a) {
 const M = ['#07030c', '#110820', '#1b0d30', '#271443', '#371d5c', '#4c2a7c', '#6b3fa6'].map(hex);   // hull, dark -> light
 const OR = { glow: hex('#ffb070'), hi: hex('#ff6a3d'), mid: hex('#c4442a') };                       // fire / sleeve accent
 const UI = { bg: hex('#03140f'), edge: hex('#12634c'), dim: hex('#1f7a55'), mid: hex('#3fd68a'), hi: hex('#a6ff6a'), glow: hex('#e0ffb0') };
+const BLUE = hex('#2a6bff'), BLUE_L = hex('#7fd4ff'), WHITE = hex('#ffffff');
 const TEAL = hex('#5ff0e0'), TEAL_D = hex('#1f8a8a'), MAG = hex('#ff4fd8'), MAG_D = hex('#7a1d6e'), LIME = hex('#b6ff4a'), LIME_D = hex('#3d6a1a');
 
 // ---------- nebula / far sky (wraps horizontally over 360 deg) ----------
@@ -291,6 +292,11 @@ function pod(cx, cy, a, b) {   // raised organic console with a grid of glowing 
 
   // dashboard screens and orb pods
   roundPanel(...SCR_L); roundPanel(...SCR_R);
+  for (const [ex, ey] of [[106, 148], [278, 148]]) for (let j = -3; j <= 4; j++) for (let i = -6; i <= 6; i++) {
+    const e = (i / 6) ** 2 + ((j - 1) / 3.5) ** 2;
+    if (e > 1) continue;
+    ck[(ey + j) * W + ex + i] = e > 0.7 ? M[0] : j < 0 ? M[6] : M[4];
+  }
   pod(26, 198, 36, 24); pod(W - 26, 198, 36, 24);
 
   // drop vein pixels that panels were drawn over
@@ -319,7 +325,7 @@ for (let k = 0; k < 700; k++) { const s = {}; spawnStar(s, true); stars.push(s);
 
 const planets = [];
 function spawnPlanet(p, anyZ) {
-  p.z = anyZ ? 700 + Math.random() * 3500 : 3800 + Math.random() * 1800;
+  p.z = anyZ ? 700 + Math.random() * 3500 : 3800 + Math.random() * 1800 + ship.v;
   p.r = 50 + Math.random() * 260;
   const side = Math.random() < 0.5 ? -1 : 1;
   p.x = side * (p.r * 1.4 + Math.random() * p.z * 0.5);
@@ -332,6 +338,8 @@ function spawnPlanet(p, anyZ) {
   p.freq = 6 + Math.random() * 10;
   p.seed = (Math.random() * 1000) | 0;
   p.spin = (Math.random() - 0.5) * 0.2;
+  p.hp = 2.5 + p.r / 50;    // seconds of laser to destroy (hidden; cracks show the damage)
+  p.dmg = 0;
 }
 for (let k = 0; k < 4; k++) { const p = {}; spawnPlanet(p, true); planets.push(p); }
 
@@ -344,6 +352,7 @@ addEventListener('keydown', e => {
   keys[k] = true;
   if (k === 'a' && !e.repeat) auto = !auto;
   if (k.startsWith('Arrow')) { auto = false; e.preventDefault(); }
+  if (k === ' ') e.preventDefault();
   document.getElementById('hint').style.opacity = 0;
 });
 addEventListener('keyup', e => { keys[e.key.length === 1 ? e.key.toLowerCase() : e.key] = false; });
@@ -365,19 +374,24 @@ function startCrash() {
 function restart() {
   crash = null;
   Object.assign(ship, { v: 220, steer: 0, pitch: 0 });
+  energy = 1; overheated = false;
   for (const s of stars) spawnStar(s, true);
   for (const p of planets) spawnPlanet(p, true);
 }
 
-// wander gently; if a planet sits on our flight path, slow down and turn away from it
+// wander gently; dodge a planet on our flight path only at the last moment, just enough to skim past it
 function autopilot(dt) {
-  let threat = null;
+  let threat = null, urgent = false;
   for (const p of planets) {
-    if (p.z < -p.r || p.z > 1500 + ship.v * 2.5) continue;
-    if (Math.hypot(p.x, p.y) < p.r * 1.6 + 60 && (!threat || p.z < threat.z)) threat = p;
+    if (p.z < -p.r) continue;
+    const lat = Math.hypot(p.x, p.y), clear = p.r * 1.08 + 25;
+    if (lat >= clear) continue;
+    const tti = (p.z - p.r) / ship.v;                            // seconds until we reach its surface
+    const need = (clear - lat) / (Math.max(p.z, 1) * 0.6) + 0.35; // seconds to turn it out of our path
+    if (tti < need * 1.5 && (!threat || p.z < threat.z)) { threat = p; urgent = tti < need; }
   }
   if (!threat) return [0.45 * Math.sin(time * 0.13) + 0.25 * Math.sin(time * 0.37), 0.3 * Math.sin(time * 0.11 + 1)];
-  if (ship.v > 400) ship.v = Math.max(400, ship.v - 900 * dt);
+  if (urgent) ship.v = Math.max(300, ship.v - 900 * dt);
   const lat = Math.hypot(threat.x, threat.y);
   const ax = lat < 1 ? 1 : threat.x / lat, ay = lat < 1 ? 0 : threat.y / lat;
   return [-Math.sign(ax) * Math.min(1, Math.abs(ax) * 2), Math.sign(ay) * Math.min(1, Math.abs(ay) * 2)];
@@ -385,6 +399,7 @@ function autopilot(dt) {
 
 function step(dt) {
   if (crash) {
+    laserOn = false; laserTarget = null;
     crash.t += dt;
     for (const p of crash.parts) { p.x += p.vx * dt; p.y += p.vy * dt; p.vx *= 0.98; p.vy *= 0.98; }
     if (crash.t > 2.8) restart();
@@ -394,7 +409,7 @@ function step(dt) {
     : [(keys.ArrowRight ? 1 : 0) - (keys.ArrowLeft ? 1 : 0), (keys.ArrowUp ? 1 : 0) - (keys.ArrowDown ? 1 : 0)];
   ship.steer += clamp(want - ship.steer, -3 * dt, 3 * dt);
   ship.pitch += clamp(wantP - ship.pitch, -3 * dt, 3 * dt);
-  if (keys.f) ship.v = Math.min(MAXV, ship.v + 450 * dt);
+  if (keys.f) ship.v = Math.min(MAXV, ship.v + 600 * dt);
   if (keys.s) ship.v = Math.max(20, ship.v - 600 * dt);
   ship.bank = -ship.steer * 0.12;
 
@@ -425,7 +440,99 @@ function step(dt) {
     move(p);
     const dist = Math.hypot(p.x, p.y, p.z);
     if (dist < p.r) { startCrash(); return; }
-    if (p.z < -p.r || dist > 7000) spawnPlanet(p, false);
+    if (p.z < -p.r || dist > 9000) spawnPlanet(p, false);
+  }
+
+  // laser: hits the nearest planet whose disc covers the crosshair
+  // firing drains energy in 4s; recharging takes 10s; once empty the laser stays locked until 35%
+  laserOn = !!keys[' '] && !overheated;
+  if (laserOn) {
+    energy -= dt / 4;
+    if (energy <= 0) { energy = 0; overheated = true; laserOn = false; }
+  } else energy = Math.min(1, energy + dt / 10);
+  if (overheated && energy >= 0.35) overheated = false;
+  laserTarget = null;
+  if (laserOn) for (const p of planets)
+    if (p.z > 0 && Math.hypot(p.x, p.y) < p.r && (!laserTarget || p.z < laserTarget.z)) laserTarget = p;
+  if (laserTarget) {
+    laserTarget.dmg += dt / laserTarget.hp;
+    if (laserTarget.dmg >= 1) { explodePlanet(laserTarget); laserTarget = null; }
+  }
+
+  for (const o of debris) { move(o); o.x += o.vx * dt; o.y += o.vy * dt; o.z += o.vz * dt; o.life -= dt; }
+  for (let k = debris.length - 1; k >= 0; k--) if (debris[k].life <= 0 || debris[k].z < 2) debris.splice(k, 1);
+  for (const w of waves) { move(w); w.t += dt; }
+  for (let k = waves.length - 1; k >= 0; k--) if (waves[k].t > 1.2) waves.splice(k, 1);
+}
+
+const debris = [], waves = [];
+let laserOn = false, laserTarget = null, flash = 0, energy = 1, overheated = false;
+function explodePlanet(p) {
+  for (let k = 0; k < 240; k++) {
+    let dx = Math.random() - 0.5, dy = Math.random() - 0.5, dz = Math.random() - 0.5;
+    const l = Math.hypot(dx, dy, dz) || 1, s = 0.3 + Math.random() * 0.7, sp = p.r * (0.6 + Math.random() * 2);
+    dx /= l; dy /= l; dz /= l;
+    debris.push({ x: p.x + dx * p.r * s, y: p.y + dy * p.r * s, z: p.z + dz * p.r * s,
+      vx: dx * sp, vy: dy * sp, vz: dz * sp, c: p.pal[1 + ((Math.random() * 4) | 0)],
+      size: p.r * (0.03 + Math.random() * 0.07), life: 1.6 + Math.random() * 1.6 });
+  }
+  waves.push({ x: p.x, y: p.y, z: p.z, r: p.r, t: 0, c: p.pal[4] });
+  flash = 0.55;
+  spawnPlanet(p, false);
+}
+
+const EMIT = [[106, 148], [278, 148]];
+function drawLaser() {
+  if (!laserOn) return;
+  const ring = (cx, cy, rad, col, a) => {
+    for (let j = -Math.ceil(rad); j <= rad; j++) for (let i = -Math.ceil(rad); i <= rad; i++) {
+      const x = (cx + i) | 0, y = (cy + j) | 0, d = Math.hypot(i, j);
+      if (x < 0 || x >= W || y < 0 || y >= H || d > rad) continue;
+      if (d < rad * 0.35) fb[y * W + x] = WHITE; else blend(y * W + x, col, a * (1 - d / rad));
+    }
+  };
+  for (const [ex, ey] of EMIT) {
+    const n = Math.ceil(Math.hypot(CX - ex, CY - ey));
+    for (let k = 0; k <= n; k++) {
+      const u = k / n, x = ex + (CX - ex) * u, y = ey + (CY - ey) * u;
+      const w = 2.4 * (1 - u) + 0.7 + (Math.random() - 0.5) * 0.7;
+      for (let j = -4; j <= 4; j++) for (let i = -4; i <= 4; i++) {
+        const xx = (x + i) | 0, yy = (y + j) | 0, d = Math.hypot(i, j);
+        if (xx < 0 || xx >= W || yy < 0 || yy >= H || d > w + 1.5) continue;
+        const idx = yy * W + xx;
+        if (d < w * 0.4) fb[idx] = WHITE; else if (d < w) fb[idx] = BLUE_L; else blend(idx, BLUE, 0.45);
+      }
+    }
+    ring(ex, ey, 5 + Math.random() * 2, BLUE_L, 0.8);
+  }
+  if (laserTarget) {
+    ring(CX, CY, 6 + Math.random() * 4, BLUE_L, 0.9);
+    for (let k = 0; k < 8; k++) {
+      const a = Math.random() * Math.PI * 2, l = 4 + Math.random() * 10;
+      line(fb, CX, CY, CX + Math.cos(a) * l, CY + Math.sin(a) * l, Math.random() < 0.5 ? WHITE : BLUE_L);
+    }
+  } else ring(CX, CY, 3 + Math.random() * 2, BLUE_L, 0.7);
+}
+
+function drawDebris() {
+  for (const w of waves) {
+    if (w.z < 5) continue;
+    const [sx, sy] = project(w.x, w.y, w.z), pr = w.r * (1 + w.t * 5) / w.z * F, a = 1 - w.t / 1.2;
+    const n = Math.ceil(Math.PI * 2 * pr);
+    for (let k = 0; k < n; k++) {
+      const ang = k / n * Math.PI * 2;
+      for (const dr of [0, 1, 2]) {
+        const x = (sx + Math.cos(ang) * (pr - dr)) | 0, y = (sy + Math.sin(ang) * (pr - dr)) | 0;
+        if (x < 0 || x >= W || y < 0 || y >= H || ck[y * W + x]) continue;
+        blend(y * W + x, dr === 0 ? WHITE : w.c, a * (dr === 0 ? 0.9 : 0.5));
+      }
+    }
+  }
+  for (const o of debris) {
+    if (o.z < 5) continue;
+    const [x, y] = project(o.x, o.y, o.z), s = clamp(Math.round(o.size / o.z * F), 1, 6);
+    if (o.life < 0.6 && bay(x | 0, y | 0) > o.life / 0.6) continue;
+    for (let j = 0; j < s; j++) for (let i = 0; i < s; i++) plot(x + i, y + j, i + j === 0 && s > 1 ? WHITE : o.c, o.z);
   }
 }
 
@@ -509,6 +616,10 @@ function drawPlanet(p, t, L) {
         : fbm(u * 2 + 10, ry * 2, p.seed, 4);
       const lv = clamp(l, 0, 1) * 0.85 + 0.1;
       col = p.pal[clamp(Math.floor(lv * 4.2 + (tx - 0.5) * 1.6 + bay(x, y) - 0.5), 0, 4)];
+      if (p.dmg > 0) {   // glowing cracks spread as the laser damages it
+        const cr = Math.abs(vnoise(u * 5 + 50, ry * 5, p.seed + 7) - 0.5);
+        if (cr < 0.06 * p.dmg + 0.004) col = cr < 0.025 * p.dmg ? WHITE : BLUE_L;
+      }
     } else if (!col && d2 < 1.14) {
       const l = rx * L[0] + ry * L[1];
       if (l > 0.1 && bay(x, y) < 0.6) blend(i, p.pal[4], 0.35 * l);
@@ -546,6 +657,18 @@ function drawHUD(t) {
   const sp = String(Math.round(ship.v)).padStart(4, '0');
   text('SPD ' + sp, CX - 16, 36, UI.hi, 0.55);
   if (auto && t % 1 < 0.7) text('AUTO', CX - 8, 43, LIME, 0.7);
+
+  // laser energy gauge on the glass; blinks magenta while locked and recharging
+  const gx = CX - 32, gy = 147, gw = 64, fill = Math.round(gw * energy);
+  text('LSR', gx - 14, gy - 1, overheated ? MAG : BLUE_L, 0.85);
+  for (let j = 0; j < 3; j++) for (let i = 0; i < gw; i++) {
+    if (i % 4 === 3) continue;
+    const idx = (gy + j) * W + gx + i;
+    if (i >= fill) blend(idx, BLUE, 0.3);
+    else if (!overheated) fb[idx] = j === 0 ? WHITE : BLUE_L;
+    else if (t % 0.5 < 0.3) blend(idx, MAG, 0.85);
+    else blend(idx, MAG_D, 0.6);
+  }
   // reticle
   for (const [dx, dy] of [[-6, 0], [-5, 0], [5, 0], [6, 0], [0, -5], [0, 5]]) blend((CY + dy) * W + CX + dx, UI.hi, 0.45);
 
@@ -706,9 +829,11 @@ function frame(now) {
   drawSky();
   planets.sort((a, b) => b.z - a.z);
   for (const p of planets) drawPlanet(p, time, L);
+  drawDebris();
   drawStars();
   drawLights(time);
   drawHUD(time);
+  drawLaser();
 
   const a = ship.steer * 0.9;
   const wy = WY + Math.round(ship.pitch * 4) + (Math.random() < (ship.v - 700) / 1500 ? 1 : 0);
@@ -716,6 +841,7 @@ function frame(now) {
   drawArm(-1, a, wy); drawArm(1, a, wy);
   drawGlove(-1, a, wy); drawGlove(1, a, wy);
   if (crash) drawCrash();
+  if (flash > 0) { for (let i = 0; i < W * H; i++) blend(i, WHITE, flash); flash = Math.max(0, flash - dt * 1.8); }
 
   lc.putImageData(img, 0, 0);
   out.imageSmoothingEnabled = false;
