@@ -121,11 +121,12 @@ const GLYPH = {
   '0': '111101101101111', '1': '010110010010111', '2': '111001111100111', '3': '111001111001111',
   '4': '101101111001001', '5': '111100111001111', '6': '111100111101111', '7': '111001001001001',
   '8': '111101111101111', '9': '111101111001111', 'S': '011100010001110', 'P': '110101110100100',
-  'D': '110101101101110', 'L': '100100100100111', 'R': '110101110101101', 'A': '010101111101101', 'U': '101101101101111', 'T': '111010010010010', 'O': '111101101101111', 'H': '101101111101101', 'G': '011100101101011', ' ': '000000000000000',
+  'D': '110101101101110', 'E': '111100111100111', 'Y': '101101010010010', 'L': '100100100100111', 'R': '110101110101101', 'A': '010101111101101', 'U': '101101101101111', 'T': '111010010010010', 'O': '111101101101111', 'H': '101101111101101', 'G': '011100101101011', ' ': '000000000000000',
 };
 function text(str, x, y, col, a) {
   for (const ch of str) {
     const g = GLYPH[ch];
+    if (!g) { x += 4; continue; }
     for (let k = 0; k < 15; k++) if (g[k] === '1') {
       const px = x + (k % 3), py = y + ((k / 3) | 0);
       if (px >= 0 && px < W && py >= 0 && py < H) { if (a) blend(py * W + px, col, a); else fb[py * W + px] = col; }
@@ -182,7 +183,7 @@ const SUN_U = 980, SUN_V = 290;
 })();
 
 // ---------- cockpit (static layer): organic alien hull ----------
-const SCR_L = [72, 164, 64, 24], SCR_R = [248, 164, 64, 24];
+const SCR_L = [72, 164, 64, 24], SCR_R = [248, 164, 64, 24], SCR_YRS = [6, 186, 46, 18];
 const CORE = [192, 13];
 const blinkers = [];
 let veinIdx, veinPh, rimIdx;
@@ -214,13 +215,14 @@ function glyphs(x, y, w, h) {   // rows of made-up alien script
       for (let k = 0; k < 9; k++) if (rnd() < 0.45) ck[(j + ((k / 3) | 0)) * W + i + (k % 3)] = c;
     }
 }
-function pod(cx, cy, a, b) {   // raised organic console with a grid of glowing orbs
+function pod(cx, cy, a, b, orbs = true) {   // raised organic console, optionally with a grid of glowing orbs
   for (let y = cy - b - 1; y <= cy + b + 1; y++) for (let x = cx - a - 1; x <= cx + a + 1; x++) {
     if (x < 0 || x >= W || y < 0 || y >= H) continue;
     const e = ((x - cx) / a) ** 2 + ((y - cy) / b) ** 2;
     if (e > 1.08) continue;
     ck[y * W + x] = e > 1 ? M[0] : e > 0.86 && y < cy ? M[6] : M[clamp(Math.floor((0.7 - (y - cy) / b * 0.3) * 4 + bay(x, y)), 2, 5)];
   }
+  if (!orbs) return;
   const cols = [[TEAL, TEAL_D], [MAG, MAG_D], [LIME, LIME_D]];
   for (let y = cy - b + 7; y < cy + b - 3; y += 6) for (let x = cx - a + 8; x < cx + a - 6; x += 7) {
     if (((x - cx) / a) ** 2 + ((y - cy) / b) ** 2 > 0.6) continue;
@@ -297,7 +299,8 @@ function pod(cx, cy, a, b) {   // raised organic console with a grid of glowing 
     if (e > 1) continue;
     ck[(ey + j) * W + ex + i] = e > 0.7 ? M[0] : j < 0 ? M[6] : M[4];
   }
-  pod(26, 198, 36, 24); pod(W - 26, 198, 36, 24);
+  pod(26, 198, 36, 24, false); pod(W - 26, 198, 36, 24);
+  roundPanel(...SCR_YRS);
 
   // drop vein pixels that panels were drawn over
   const keep = [], ph = [];
@@ -328,8 +331,13 @@ function spawnPlanet(p, anyZ) {
   p.z = anyZ ? 700 + Math.random() * 3500 : 3800 + Math.random() * 1800 + ship.v;
   p.r = 50 + Math.random() * 260;
   const side = Math.random() < 0.5 ? -1 : 1;
-  p.x = side * (p.r * 1.4 + Math.random() * p.z * 0.5);
-  p.y = (Math.random() - 0.5) * p.z * 0.4;
+  if (!anyZ && Math.random() < 0.33) {   // dead ahead: something to dodge or shoot
+    p.x = (Math.random() - 0.5) * p.r * 1.2;
+    p.y = (Math.random() - 0.5) * p.r * 1.2;
+  } else {
+    p.x = side * (p.r * 1.4 + Math.random() * p.z * 0.5);
+    p.y = (Math.random() - 0.5) * p.z * 0.4;
+  }
   p.pal = PAL[(Math.random() * PAL.length) | 0];
   p.kind = Math.random() < 0.55 ? 0 : 1;          // 0 gas bands, 1 rocky
   p.ring = Math.random() < 0.4;
@@ -345,7 +353,7 @@ for (let k = 0; k < 4; k++) { const p = {}; spawnPlanet(p, true); planets.push(p
 
 // camera axes in world space (x right, y down, z forward)
 const ship = { v: 220, heading: 0, steer: 0, pitch: 0, bank: 0, r: [1, 0, 0], d: [0, 1, 0], f: [0, 0, 1] };
-let crash = null, auto = false;
+let crash = null, auto = false, flight = 0;   // flight: seconds flown this run
 const keys = {};
 addEventListener('keydown', e => {
   const k = e.key.length === 1 ? e.key.toLowerCase() : e.key;
@@ -374,24 +382,25 @@ function startCrash() {
 function restart() {
   crash = null;
   Object.assign(ship, { v: 220, steer: 0, pitch: 0 });
-  energy = 1; overheated = false;
+  energy = 1; overheated = false; flight = 0;
   for (const s of stars) spawnStar(s, true);
   for (const p of planets) spawnPlanet(p, true);
 }
 
-// wander gently; dodge a planet on our flight path only at the last moment, just enough to skim past it
-function autopilot(dt) {
-  let threat = null, urgent = false;
+// fly straight; dodge a planet on our flight path only at the last moment, just enough to skim past it
+function autopilot() {
+  let threat = null;
   for (const p of planets) {
     if (p.z < -p.r) continue;
-    const lat = Math.hypot(p.x, p.y), clear = p.r * 1.08 + 25;
-    if (lat >= clear) continue;
-    const tti = (p.z - p.r) / ship.v;                            // seconds until we reach its surface
-    const need = (clear - lat) / (Math.max(p.z, 1) * 0.6) + 0.35; // seconds to turn it out of our path
-    if (tti < need * 1.5 && (!threat || p.z < threat.z)) { threat = p; urgent = tti < need; }
+    const lat = Math.hypot(p.x, p.y), clear = p.r * 1.03 + 12;
+    if (lat >= clear) continue;   // flying straight already misses it
+    const dist = Math.hypot(lat, p.z);
+    // turn needed so its centre sits far enough off our nose that the flight path clears it
+    const turn = Math.asin(Math.min(1, clear / dist)) - Math.atan2(lat, p.z);
+    const tti = (dist - p.r) / ship.v;    // seconds until we reach its surface
+    if (tti < (turn / 0.6 + 0.4) * 1.3 && (!threat || p.z < threat.z)) threat = p;
   }
-  if (!threat) return [0.45 * Math.sin(time * 0.13) + 0.25 * Math.sin(time * 0.37), 0.3 * Math.sin(time * 0.11 + 1)];
-  if (urgent) ship.v = Math.max(300, ship.v - 900 * dt);
+  if (!threat) return [0, 0];
   const lat = Math.hypot(threat.x, threat.y);
   const ax = lat < 1 ? 1 : threat.x / lat, ay = lat < 1 ? 0 : threat.y / lat;
   return [-Math.sign(ax) * Math.min(1, Math.abs(ax) * 2), Math.sign(ay) * Math.min(1, Math.abs(ay) * 2)];
@@ -405,8 +414,9 @@ function step(dt) {
     if (crash.t > 2.8) restart();
     return;
   }
-  const [want, wantP] = auto ? autopilot(dt)
+  const [want, wantP] = auto ? autopilot()
     : [(keys.ArrowRight ? 1 : 0) - (keys.ArrowLeft ? 1 : 0), (keys.ArrowUp ? 1 : 0) - (keys.ArrowDown ? 1 : 0)];
+  flight += dt;
   ship.steer += clamp(want - ship.steer, -3 * dt, 3 * dt);
   ship.pitch += clamp(wantP - ship.pitch, -3 * dt, 3 * dt);
   if (keys.f) ship.v = Math.min(MAXV, ship.v + 600 * dt);
@@ -655,8 +665,13 @@ function drawStars() {
 
 function drawHUD(t) {
   const sp = String(Math.round(ship.v)).padStart(4, '0');
-  text('SPD ' + sp, CX - 16, 36, UI.hi, 0.55);
-  if (auto && t % 1 < 0.7) text('AUTO', CX - 8, 43, LIME, 0.7);
+  if (auto && t % 1 < 0.7) text('AUTO', CX - 8, 36, LIME, 0.7);
+
+  // earth years on the left console: 2.4 s of flight = 1 earth year
+  const [yx, yy] = SCR_YRS;
+  text('EARTH YRS', yx + 5, yy + 3, UI.mid);
+  const yrs = String(Math.floor(flight / 2.4)).padStart(5, '0');
+  text(yrs, yx + 13, yy + 10, UI.hi);
 
   // laser energy gauge on the glass; blinks magenta while locked and recharging
   const gx = CX - 32, gy = 147, gw = 64, fill = Math.round(gw * energy);
@@ -815,7 +830,7 @@ function drawGlove(side, a, wy) {
 // ---------- loop ----------
 let last = performance.now(), time = 0;
 function frame(now) {
-  const dt = Math.min(0.05, (now - last) / 1000);
+  const dt = clamp((now - last) / 1000, 0, 0.05);   // first rAF timestamp can predate `last`
   last = now; time += dt;
   step(dt);
   cb = Math.cos(ship.bank); sb = Math.sin(ship.bank);
