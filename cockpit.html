@@ -354,6 +354,7 @@ for (let k = 0; k < 4; k++) { const p = {}; spawnPlanet(p, true); planets.push(p
 // camera axes in world space (x right, y down, z forward)
 const ship = { v: 220, heading: 0, steer: 0, pitch: 0, bank: 0, r: [1, 0, 0], d: [0, 1, 0], f: [0, 0, 1] };
 let crash = null, auto = false, flight = 0;   // flight: seconds flown this run
+const START_YEAR = new Date().getFullYear();
 const keys = {};
 addEventListener('keydown', e => {
   const k = e.key.length === 1 ? e.key.toLowerCase() : e.key;
@@ -670,8 +671,8 @@ function drawHUD(t) {
   // earth years on the left console: 2.4 s of flight = 1 earth year
   const [yx, yy] = SCR_YRS;
   text('EARTH YRS', yx + 5, yy + 3, UI.mid);
-  const yrs = String(Math.floor(flight / 2.4)).padStart(5, '0');
-  text(yrs, yx + 13, yy + 10, UI.hi);
+  const yrs = String(START_YEAR + Math.floor(flight / 12));
+  text(yrs, yx + 23 - yrs.length * 2, yy + 10, UI.hi);
 
   // laser energy gauge on the glass; blinks magenta while locked and recharging
   const gx = CX - 32, gy = 147, gw = 64, fill = Math.round(gw * energy);
