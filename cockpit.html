@@ -1,0 +1,734 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Cockpit</title>
+<style>
+  html, body { margin: 0; height: 100%; overflow: hidden; background: #02030a; }
+  canvas { display: block; }
+  #hint {
+    position: fixed; left: 50%; bottom: 18px; transform: translateX(-50%);
+    font: 13px ui-monospace, Menlo, monospace; color: #ff9a6a; letter-spacing: 1px;
+    background: rgba(10, 6, 8, 0.7); padding: 6px 12px; border: 1px solid #5a2418;
+    transition: opacity 1.5s; pointer-events: none;
+  }
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<div id="hint">&larr; &rarr; steer &nbsp;&middot;&nbsp; &uarr; &darr; pitch &nbsp;&middot;&nbsp; F faster &nbsp;&middot;&nbsp; S slower &nbsp;&middot;&nbsp; A autopilot</div>
+<script>
+// Everything is drawn into a W x H pixel buffer, then scaled up with nearest-neighbour.
+const W = 384, H = 216, CX = 192, CY = 96;
+const NW = 1280, NH = 640, F = NW / (2 * Math.PI);   // equirectangular sky; F = focal length in px
+const MAXV = 1200;
+
+const cv = document.getElementById('c');
+const out = cv.getContext('2d');
+function resize() {
+  const dpr = Math.min(2, devicePixelRatio || 1);
+  cv.width = innerWidth * dpr; cv.height = innerHeight * dpr;
+  cv.style.width = innerWidth + 'px'; cv.style.height = innerHeight + 'px';
+}
+resize();
+addEventListener('resize', resize);
+
+const low = document.createElement('canvas');
+low.width = W; low.height = H;
+const lc = low.getContext('2d');
+const img = lc.createImageData(W, H);
+const fb = new Uint32Array(img.data.buffer);   // frame buffer
+const ck = new Uint32Array(W * H);             // cockpit layer, 0 = window glass
+const zb = new Float32Array(W * H);            // depth for planets vs stars
+
+// ---------- helpers ----------
+function rgb(r, g, b) { return ((255 << 24) | (b << 16) | (g << 8) | r) >>> 0; }
+function hex(s) { const n = parseInt(s.slice(1), 16); return rgb(n >> 16, (n >> 8) & 255, n & 255); }
+const BAYER = [0, 8, 2, 10, 12, 4, 14, 6, 3, 11, 1, 9, 15, 7, 13, 5].map(v => (v + 0.5) / 16);
+function bay(x, y) { return BAYER[(y & 3) * 4 + (x & 3)]; }
+function clamp(v, a, b) { return v < a ? a : v > b ? b : v; }
+
+function hash(x, y, s) {
+  let h = (x * 374761393 + y * 668265263 + s * 1442695041) | 0;
+  h = Math.imul(h ^ (h >>> 13), 1274126177);
+  h ^= h >>> 16;
+  return (h >>> 0) / 4294967296;
+}
+function vnoise(x, y, s, px) {   // px: period in cells along x, 0 = no wrap
+  const ix = Math.floor(x), iy = Math.floor(y), fx = x - ix, fy = y - iy;
+  let x0 = ix, x1 = ix + 1;
+  if (px) { x0 = ((x0 % px) + px) % px; x1 = ((x1 % px) + px) % px; }
+  const a = hash(x0, iy, s), b = hash(x1, iy, s), c = hash(x0, iy + 1, s), d = hash(x1, iy + 1, s);
+  const ux = fx * fx * (3 - 2 * fx), uy = fy * fy * (3 - 2 * fy);
+  return a + (b - a) * ux + (c - a) * uy + (a - b - c + d) * ux * uy;
+}
+function fbm(x, y, s, oct, px) {
+  let v = 0, amp = 0.5, f = 1, norm = 0;
+  for (let o = 0; o < oct; o++) {
+    v += amp * vnoise(x * f, y * f, s + o, px ? px * f : 0);
+    norm += amp; amp *= 0.5; f *= 2;
+  }
+  return v / norm;
+}
+function mulberry(a) {
+  return () => { a |= 0; a = (a + 0x6D2B79F5) | 0; let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t; return ((t ^ (t >>> 14)) >>> 0) / 4294967296; };
+}
+const rnd = mulberry(7);
+
+function inside(pts, x, y) {
+  let c = false;
+  for (let i = 0, j = pts.length - 1; i < pts.length; j = i++) {
+    const [xi, yi] = pts[i], [xj, yj] = pts[j];
+    if ((yi > y) !== (yj > y) && x < (xj - xi) * (y - yi) / (yj - yi) + xi) c = !c;
+  }
+  return c;
+}
+function fillPoly(buf, pts, col) {
+  let x0 = W, x1 = 0, y0 = H, y1 = 0;
+  for (const [x, y] of pts) { x0 = Math.min(x0, x); x1 = Math.max(x1, x); y0 = Math.min(y0, y); y1 = Math.max(y1, y); }
+  for (let y = Math.max(0, Math.floor(y0)); y < Math.min(H, Math.ceil(y1)); y++)
+    for (let x = Math.max(0, Math.floor(x0)); x < Math.min(W, Math.ceil(x1)); x++)
+      if (inside(pts, x + 0.5, y + 0.5)) buf[y * W + x] = typeof col === 'function' ? col(x, y) : col;
+}
+function rect(buf, x, y, w, h, col) {
+  for (let j = y; j < y + h; j++) for (let i = x; i < x + w; i++)
+    if (i >= 0 && i < W && j >= 0 && j < H) buf[j * W + i] = col;
+}
+function line(buf, x0, y0, x1, y1, col) {
+  x0 |= 0; y0 |= 0; x1 |= 0; y1 |= 0;
+  const dx = Math.abs(x1 - x0), dy = -Math.abs(y1 - y0), sx = x0 < x1 ? 1 : -1, sy = y0 < y1 ? 1 : -1;
+  let err = dx + dy;
+  for (;;) {
+    if (x0 >= 0 && x0 < W && y0 >= 0 && y0 < H) buf[y0 * W + x0] = col;
+    if (x0 === x1 && y0 === y1) break;
+    const e2 = 2 * err;
+    if (e2 >= dy) { err += dy; x0 += sx; }
+    if (e2 <= dx) { err += dx; y0 += sy; }
+  }
+}
+function blend(i, c, a) {
+  const d = fb[i];
+  const r = (d & 255) * (1 - a) + (c & 255) * a;
+  const g = ((d >> 8) & 255) * (1 - a) + ((c >> 8) & 255) * a;
+  const b = ((d >> 16) & 255) * (1 - a) + ((c >> 16) & 255) * a;
+  fb[i] = rgb(r | 0, g | 0, b | 0);
+}
+
+// 3x5 pixel font
+const GLYPH = {
+  '0': '111101101101111', '1': '010110010010111', '2': '111001111100111', '3': '111001111001111',
+  '4': '101101111001001', '5': '111100111001111', '6': '111100111101111', '7': '111001001001001',
+  '8': '111101111101111', '9': '111101111001111', 'S': '011100010001110', 'P': '110101110100100',
+  'D': '110101101101110', 'A': '010101111101101', 'U': '101101101101111', 'T': '111010010010010', 'O': '111101101101111', 'H': '101101111101101', 'G': '011100101101011', ' ': '000000000000000',
+};
+function text(str, x, y, col, a) {
+  for (const ch of str) {
+    const g = GLYPH[ch];
+    for (let k = 0; k < 15; k++) if (g[k] === '1') {
+      const px = x + (k % 3), py = y + ((k / 3) | 0);
+      if (px >= 0 && px < W && py >= 0 && py < H) { if (a) blend(py * W + px, col, a); else fb[py * W + px] = col; }
+    }
+    x += 4;
+  }
+}
+
+// ---------- palettes ----------
+const M = ['#07030c', '#110820', '#1b0d30', '#271443', '#371d5c', '#4c2a7c', '#6b3fa6'].map(hex);   // hull, dark -> light
+const OR = { glow: hex('#ffb070'), hi: hex('#ff6a3d'), mid: hex('#c4442a') };                       // fire / sleeve accent
+const UI = { bg: hex('#03140f'), edge: hex('#12634c'), dim: hex('#1f7a55'), mid: hex('#3fd68a'), hi: hex('#a6ff6a'), glow: hex('#e0ffb0') };
+const TEAL = hex('#5ff0e0'), TEAL_D = hex('#1f8a8a'), MAG = hex('#ff4fd8'), MAG_D = hex('#7a1d6e'), LIME = hex('#b6ff4a'), LIME_D = hex('#3d6a1a');
+
+// ---------- nebula / far sky (wraps horizontally over 360 deg) ----------
+const neb = new Uint32Array(NW * NH);
+const SUN_U = 980, SUN_V = 290;
+(function buildSky() {
+  const ST = 10;
+  for (let v = 0; v < NH; v++) for (let u = 0; u < NW; u++) {
+    const x = u / 160, y = v / 160;
+    const n = fbm(x, y, 1, 5, 8), m = fbm(x + 3.1, y + 7.7, 9, 4, 8);
+    const bandC = NH * 0.5 + Math.sin(u / NW * Math.PI * 4) * 55;
+    const band = Math.exp(-(((v - bandC) / 60) ** 2));
+    const d = clamp(n * 1.7 - 0.6, 0, 1) * (0.3 + 0.7 * band) * Math.sqrt(Math.sin(Math.PI * v / NH));
+    let r = 3 + d * (30 + 50 * m) + 90 * d ** 3;
+    let g = 5 + d * (60 + 30 * (1 - m)) + 110 * d ** 3;
+    let b = 16 + d * (120 - 20 * m) + 150 * d ** 3;
+    let du = Math.abs(u - SUN_U); du = Math.min(du, NW - du);
+    const dist = Math.hypot(du, v - SUN_V);
+    const glow = Math.exp(-dist / 26) * 0.9 + Math.exp(-dist / 70) * 0.25;
+    r += 70 * glow; g += 160 * glow; b += 120 * glow;
+    if (dist < 7) { r = 255; g = 214; b = 110; }
+    if (dist < 5) { r = 255; g = 244; b = 200; }
+    const t = bay(u, v);
+    neb[v * NW + u] = rgb(clamp(Math.floor(r / ST + t) * ST, 0, 255),
+      clamp(Math.floor(g / ST + t) * ST, 0, 255), clamp(Math.floor(b / ST + t) * ST, 0, 255));
+  }
+  // baked far stars: they only rotate with heading, never approach
+  for (let k = 0; k < 3200; k++) {
+    const u = (rnd() * NW) | 0, v = (rnd() * NH) | 0;
+    const bandC = NH * 0.5 + Math.sin(u / NW * Math.PI * 4) * 55;
+    if (rnd() > 0.35 + 0.65 * Math.exp(-(((v - bandC) / 60) ** 2)) || rnd() > Math.sin(Math.PI * v / NH)) continue;
+    const br = 90 + rnd() ** 3 * 165, tint = rnd();
+    const c = tint < 0.15 ? rgb(br, br * 0.7, br * 0.5) : tint < 0.35 ? rgb(br * 0.7, br * 0.85, br) : rgb(br, br, br);
+    neb[v * NW + u] = c;
+    if (br > 235 && v > 1 && v < NH - 2) {   // sparkle cross
+      const dim = rgb(br * 0.5, br * 0.5, br * 0.6);
+      neb[(v - 1) * NW + u] = dim; neb[(v + 1) * NW + u] = dim;
+      neb[v * NW + (u + 1) % NW] = dim; neb[v * NW + (u + NW - 1) % NW] = dim;
+    }
+  }
+})();
+
+// ---------- cockpit (static layer): organic alien hull ----------
+const SCR_L = [72, 164, 64, 24], SCR_R = [248, 164, 64, 24];
+const CORE = [192, 13];
+const blinkers = [];
+let veinIdx, veinPh, rimIdx;
+
+function winMain(x, y) {   // < 1 inside; a wobbly superellipse
+  const dx = (x - 192) / 132, dy = (y - 92) / 68;
+  return (Math.abs(dx) ** 2.4 + Math.abs(dy) ** 2.4) * (1 + 0.035 * Math.sin(Math.atan2(dy, dx) * 6));
+}
+function winSide(x, y) {   // teardrop, wider at the bottom
+  const sx = x < CX ? x : W - x, dy = (y - 100) / 52;
+  const dx = (sx - 14) / (24 * (1 + 0.35 * dy));
+  return dx * dx + dy * dy;
+}
+function dashTop(x) { return 156 - 16 * ((x - CX) / CX) ** 2; }
+
+function roundPanel(x, y, w, h) {
+  for (let j = -1; j <= h; j++) for (let i = -1; i <= w; i++) {
+    const cx = Math.min(i + 1, w - i), cy = Math.min(j + 1, h - j);
+    if (cx + cy < 3) continue;   // clipped corners
+    const edge = i < 1 || j < 1 || i >= w - 1 || j >= h - 1;
+    ck[(y + j) * W + x + i] = i < 0 || j < 0 || i === w || j === h ? M[0] : edge ? UI.edge : UI.bg;
+  }
+}
+function glyphs(x, y, w, h) {   // rows of made-up alien script
+  for (let j = y + 2; j + 3 <= y + h - 1; j += 4)
+    for (let i = x + 2; i + 3 <= x + w - 2; i += 4) {
+      if (rnd() < 0.15) continue;
+      const c = rnd() < 0.2 ? UI.hi : UI.dim;
+      for (let k = 0; k < 9; k++) if (rnd() < 0.45) ck[(j + ((k / 3) | 0)) * W + i + (k % 3)] = c;
+    }
+}
+function pod(cx, cy, a, b) {   // raised organic console with a grid of glowing orbs
+  for (let y = cy - b - 1; y <= cy + b + 1; y++) for (let x = cx - a - 1; x <= cx + a + 1; x++) {
+    if (x < 0 || x >= W || y < 0 || y >= H) continue;
+    const e = ((x - cx) / a) ** 2 + ((y - cy) / b) ** 2;
+    if (e > 1.08) continue;
+    ck[y * W + x] = e > 1 ? M[0] : e > 0.86 && y < cy ? M[6] : M[clamp(Math.floor((0.7 - (y - cy) / b * 0.3) * 4 + bay(x, y)), 2, 5)];
+  }
+  const cols = [[TEAL, TEAL_D], [MAG, MAG_D], [LIME, LIME_D]];
+  for (let y = cy - b + 7; y < cy + b - 3; y += 6) for (let x = cx - a + 8; x < cx + a - 6; x += 7) {
+    if (((x - cx) / a) ** 2 + ((y - cy) / b) ** 2 > 0.6) continue;
+    const [c, d] = cols[(hash(x, y, 9) * 3) | 0];
+    for (const [i, j] of [[-1, -1], [0, -1], [1, -1], [-1, 0], [1, 0], [-1, 1], [0, 1], [1, 1], [0, -2], [0, 2], [-2, 0], [2, 0]])
+      ck[(y + j) * W + x + i] = M[0];
+    for (const [i, j] of [[0, 0], [1, 0], [-1, 0], [0, 1], [0, -1]]) ck[(y + j) * W + x + i] = d;
+    blinkers.push({ x, y, c, p: 0.6 + hash(x, y, 3) * 2.2, o: hash(x, y, 4) * 6 });
+  }
+}
+
+(function buildCockpit() {
+  // hull: bumpy plating with ribs that ring the main window
+  for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
+    const i = y * W + x, dt = dashTop(x);
+    const em = winMain(x + 0.5, y + 0.5), es = winSide(x + 0.5, y + 0.5);
+    if (y < dt && (em < 1 || es < 1)) { ck[i] = 0; continue; }
+    let s;
+    if (y >= dt) {
+      const d = y - dt;
+      s = d < 4 ? 0.8 : 0.5 - (y - 150) / 110 + 0.25 * fbm(x / 14, y / 14, 33, 3);
+      const rib = ((d - 4) / 9) % 1;
+      if (d >= 4 && rib < 0.15) s += 0.18;
+    } else {
+      const m = em ** (1 / 2.4), rib = ((m - 1) * 13) % 1;
+      s = 0.32 + 0.3 * fbm(x / 18, y / 18, 21, 3) - 0.1 * Math.abs(x - CX) / CX;
+      if (m < 1.7) s += rib < 0.2 ? 0.28 : rib > 0.82 ? -0.18 : 0.05;
+      if (es < 2.2) s += 0.12 * (2.2 - es);
+    }
+    ck[i] = M[clamp(Math.floor(s * 6 + bay(x, y) - 0.5), 1, 6)];
+  }
+
+  // glowing lip around every window
+  const src = ck.slice(), rims = [];
+  for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
+    if (!src[y * W + x]) continue;
+    let best = 99;
+    for (let j = -4; j <= 4; j++) for (let i = -4; i <= 4; i++) {
+      const xx = x + i, yy = y + j;
+      if (xx < 0 || xx >= W || yy < 0 || yy >= H || src[yy * W + xx]) continue;
+      best = Math.min(best, Math.hypot(i, j));
+    }
+    if (best <= 1.5) { ck[y * W + x] = TEAL_D; rims.push(y * W + x); }
+    else if (best <= 2.5) ck[y * W + x] = M[0];
+    else if (best <= 3.6) ck[y * W + x] = M[6];
+  }
+  rimIdx = Int32Array.from(rims);
+
+  // magenta veins; a pulse travels outward from the ceiling core
+  const vi = [], vp = [];
+  for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
+    const i = y * W + x;
+    if (!ck[i] || ck[i] === TEAL_D || ck[i] === M[0] || ck[i] === M[6]) continue;
+    if (Math.abs(fbm(x / 26, y / 26, 51, 3) - 0.5) < 0.012) {
+      ck[i] = MAG_D; vi.push(i); vp.push(Math.hypot(x - CORE[0], y - CORE[1]) / 14);
+    }
+  }
+  veinIdx = Int32Array.from(vi); veinPh = Float32Array.from(vp);
+
+  // ceiling: socket for the pulsing core, glyph panels
+  for (let y = 0; y < 28; y++) for (let x = CORE[0] - 16; x <= CORE[0] + 16; x++) {
+    const d = Math.hypot(x - CORE[0], y - CORE[1]);
+    if (d < 12) ck[y * W + x] = M[0];
+    else if (d < 14) ck[y * W + x] = M[6];
+    else if (d < 15.5) ck[y * W + x] = M[2];
+  }
+  roundPanel(110, 6, 62, 15); glyphs(110, 6, 62, 15);
+  roundPanel(212, 6, 62, 15); glyphs(212, 6, 62, 15);
+
+  // dashboard screens and orb pods
+  roundPanel(...SCR_L); roundPanel(...SCR_R);
+  pod(26, 198, 36, 24); pod(W - 26, 198, 36, 24);
+
+  // drop vein pixels that panels were drawn over
+  const keep = [], ph = [];
+  veinIdx.forEach((i, k) => { if (ck[i] === MAG_D) { keep.push(i); ph.push(veinPh[k]); } });
+  veinIdx = Int32Array.from(keep); veinPh = Float32Array.from(ph);
+})();
+
+// ---------- world ----------
+const PAL = [
+  ['#2a0f14', '#5c1f1e', '#a3402a', '#e07a3c', '#ffc070'],
+  ['#081a24', '#12404d', '#1f7a7a', '#4fc4b0', '#b8f0d8'],
+  ['#140c26', '#2e1a4f', '#563186', '#8d5cc2', '#d1a8f0'],
+  ['#1a1414', '#3d2b26', '#6e4a3a', '#a8785a', '#e0c09a'],
+  ['#0b1430', '#16306a', '#2d5cb0', '#5f98e0', '#c0e0ff'],
+].map(p => p.map(hex));
+
+const stars = [];
+function spawnStar(s, anyZ) {
+  s.z = anyZ ? 2 + Math.random() * 1600 : 1400 + Math.random() * 300;
+  s.x = (Math.random() * 2 - 1) * s.z * 1.1;
+  s.y = (Math.random() * 2 - 1) * s.z * 0.65;
+  s.c = Math.random();
+}
+for (let k = 0; k < 700; k++) { const s = {}; spawnStar(s, true); stars.push(s); }
+
+const planets = [];
+function spawnPlanet(p, anyZ) {
+  p.z = anyZ ? 700 + Math.random() * 3500 : 3800 + Math.random() * 1800;
+  p.r = 50 + Math.random() * 260;
+  const side = Math.random() < 0.5 ? -1 : 1;
+  p.x = side * (p.r * 1.4 + Math.random() * p.z * 0.5);
+  p.y = (Math.random() - 0.5) * p.z * 0.4;
+  p.pal = PAL[(Math.random() * PAL.length) | 0];
+  p.kind = Math.random() < 0.55 ? 0 : 1;          // 0 gas bands, 1 rocky
+  p.ring = Math.random() < 0.4;
+  p.tilt = 0.16 + Math.random() * 0.25;
+  p.slant = (Math.random() - 0.5) * 0.6;
+  p.freq = 6 + Math.random() * 10;
+  p.seed = (Math.random() * 1000) | 0;
+  p.spin = (Math.random() - 0.5) * 0.2;
+}
+for (let k = 0; k < 4; k++) { const p = {}; spawnPlanet(p, true); planets.push(p); }
+
+// camera axes in world space (x right, y down, z forward)
+const ship = { v: 220, heading: 0, steer: 0, pitch: 0, bank: 0, r: [1, 0, 0], d: [0, 1, 0], f: [0, 0, 1] };
+let crash = null, auto = false;
+const keys = {};
+addEventListener('keydown', e => {
+  const k = e.key.length === 1 ? e.key.toLowerCase() : e.key;
+  keys[k] = true;
+  if (k === 'a' && !e.repeat) auto = !auto;
+  if (k.startsWith('Arrow')) { auto = false; e.preventDefault(); }
+  document.getElementById('hint').style.opacity = 0;
+});
+addEventListener('keyup', e => { keys[e.key.length === 1 ? e.key.toLowerCase() : e.key] = false; });
+addEventListener('blur', () => { for (const k in keys) keys[k] = false; });
+
+function norm(a) { const l = Math.hypot(a[0], a[1], a[2]); return [a[0] / l, a[1] / l, a[2] / l]; }
+function cross(a, b) { return [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]]; }
+function mix(a, ka, b, kb) { return [a[0] * ka + b[0] * kb, a[1] * ka + b[1] * kb, a[2] * ka + b[2] * kb]; }
+
+function startCrash() {
+  const parts = [];
+  for (let k = 0; k < 160; k++) {
+    const a = Math.random() * Math.PI * 2, sp = 40 + Math.random() * 260;
+    parts.push({ x: CX, y: CY, vx: Math.cos(a) * sp, vy: Math.sin(a) * sp,
+      c: [OR.glow, OR.hi, OR.mid, M[5], M[6], hex('#fff4c0')][(Math.random() * 6) | 0] });
+  }
+  crash = { t: 0, parts };
+}
+function restart() {
+  crash = null;
+  Object.assign(ship, { v: 220, steer: 0, pitch: 0 });
+  for (const s of stars) spawnStar(s, true);
+  for (const p of planets) spawnPlanet(p, true);
+}
+
+// wander gently; if a planet sits on our flight path, slow down and turn away from it
+function autopilot(dt) {
+  let threat = null;
+  for (const p of planets) {
+    if (p.z < -p.r || p.z > 1500 + ship.v * 2.5) continue;
+    if (Math.hypot(p.x, p.y) < p.r * 1.6 + 60 && (!threat || p.z < threat.z)) threat = p;
+  }
+  if (!threat) return [0.45 * Math.sin(time * 0.13) + 0.25 * Math.sin(time * 0.37), 0.3 * Math.sin(time * 0.11 + 1)];
+  if (ship.v > 400) ship.v = Math.max(400, ship.v - 900 * dt);
+  const lat = Math.hypot(threat.x, threat.y);
+  const ax = lat < 1 ? 1 : threat.x / lat, ay = lat < 1 ? 0 : threat.y / lat;
+  return [-Math.sign(ax) * Math.min(1, Math.abs(ax) * 2), Math.sign(ay) * Math.min(1, Math.abs(ay) * 2)];
+}
+
+function step(dt) {
+  if (crash) {
+    crash.t += dt;
+    for (const p of crash.parts) { p.x += p.vx * dt; p.y += p.vy * dt; p.vx *= 0.98; p.vy *= 0.98; }
+    if (crash.t > 2.8) restart();
+    return;
+  }
+  const [want, wantP] = auto ? autopilot(dt)
+    : [(keys.ArrowRight ? 1 : 0) - (keys.ArrowLeft ? 1 : 0), (keys.ArrowUp ? 1 : 0) - (keys.ArrowDown ? 1 : 0)];
+  ship.steer += clamp(want - ship.steer, -3 * dt, 3 * dt);
+  ship.pitch += clamp(wantP - ship.pitch, -3 * dt, 3 * dt);
+  if (keys.f) ship.v = Math.min(MAXV, ship.v + 450 * dt);
+  if (keys.s) ship.v = Math.max(20, ship.v - 600 * dt);
+  ship.bank = -ship.steer * 0.12;
+
+  const dyaw = ship.steer * 0.8 * dt, dp = ship.pitch * 0.6 * dt;
+  const cy = Math.cos(dyaw), sy = Math.sin(dyaw), cp = Math.cos(dp), sp = Math.sin(dp), dz = ship.v * dt;
+
+  // turn the camera: yaw about its own y axis, then pitch (nose up) about its own x axis
+  let f = mix(ship.r, sy, ship.f, cy);
+  const r = mix(ship.r, cy, ship.f, -sy);
+  const d = mix(ship.d, cp, f, sp);
+  f = norm(mix(ship.d, -sp, f, cp));
+  ship.r = norm(cross(d, f));
+  ship.d = cross(f, ship.r);
+  ship.f = f;
+  ship.heading = Math.atan2(f[0], f[2]);
+
+  // everything is kept in camera space, so the world rotates the other way
+  function move(o) {
+    const x = o.x * cy - o.z * sy, z1 = o.x * sy + o.z * cy;
+    const y = o.y * cp + z1 * sp, z = -o.y * sp + z1 * cp - dz;
+    o.x = x; o.y = y; o.z = z;
+  }
+  for (const o of stars) {
+    move(o);
+    if (o.z < 1 || o.z > 1800 || Math.abs(o.x) > o.z * 3 + 50 || Math.abs(o.y) > o.z * 3 + 50) spawnStar(o, false);
+  }
+  for (const p of planets) {
+    move(p);
+    const dist = Math.hypot(p.x, p.y, p.z);
+    if (dist < p.r) { startCrash(); return; }
+    if (p.z < -p.r || dist > 7000) spawnPlanet(p, false);
+  }
+}
+
+function drawCrash() {
+  const t = crash.t, rad = t * 320;
+  for (let y = 0, i = 0; y < H; y++) for (let x = 0; x < W; x++, i++) {
+    const n = vnoise(x / 9, y / 9 + t * 3, 77);
+    const d = Math.hypot(x - CX, y - CY) / rad + (n - 0.5) * 0.5;
+    if (d < 1.05) {
+      const k = d + t * 0.35 + bay(x, y) * 0.12;
+      fb[i] = k < 0.45 ? hex('#fff4c0') : k < 0.65 ? OR.glow : k < 0.85 ? OR.hi : k < 1 ? OR.mid : hex('#3a1010');
+    }
+  }
+  for (const p of crash.parts) {
+    const x = p.x | 0, y = p.y | 0;
+    if (x >= 0 && x < W - 1 && y >= 0 && y < H - 1) { fb[y * W + x] = p.c; fb[y * W + x + 1] = p.c; }
+  }
+  if (t < 0.5) for (let i = 0; i < W * H; i++) blend(i, hex('#ffffff'), 1 - t / 0.5);
+  if (t > 1.4) for (let i = 0; i < W * H; i++) blend(i, hex('#02030a'), Math.min(1, (t - 1.4) / 1.1));
+}
+
+// ---------- rendering ----------
+let cb = 1, sb = 0;
+function project(x, y, z) {
+  const sx = x / z * F, sy = y / z * F;
+  return [CX + sx * cb - sy * sb, CY + sx * sb + sy * cb];
+}
+
+function drawSky() {
+  const [r0, r1, r2] = ship.r, [d0, d1, d2] = ship.d, [f0, f1, f2] = ship.f;
+  const KU = NW / (2 * Math.PI), KV = NH / Math.PI;
+  for (let y = 0, i = 0; y < H; y++) {
+    const dy = y - CY;
+    for (let x = 0; x < W; x++, i++) {
+      if (ck[i]) { fb[i] = ck[i]; continue; }
+      const dx = x - CX;
+      const ux = dx * cb + dy * sb, uy = -dx * sb + dy * cb;
+      const wx = ux * r0 + uy * d0 + F * f0, wy = ux * r1 + uy * d1 + F * f1, wz = ux * r2 + uy * d2 + F * f2;
+      let u = Math.floor(Math.atan2(wx, wz) * KU);
+      if (u < 0) u += NW; else if (u >= NW) u -= NW;
+      const v = Math.floor(Math.atan2(wy, Math.sqrt(wx * wx + wz * wz)) * KV + NH / 2);
+      fb[i] = neb[clamp(v, 0, NH - 1) * NW + u];
+    }
+  }
+}
+
+function drawPlanet(p, t, L) {
+  if (p.z < 5) return;
+  const pr = p.r / p.z * F;
+  const [sx, sy] = project(p.x, p.y, p.z);
+  if (pr < 1.2) {
+    const x = sx | 0, y = sy | 0, i = y * W + x;
+    if (x >= 0 && x < W && y >= 0 && y < H && !ck[i]) { fb[i] = p.pal[3]; zb[i] = p.z; }
+    return;
+  }
+  const ext = pr * (p.ring ? 2.3 : 1.15);
+  const x0 = Math.max(0, Math.floor(sx - ext)), x1 = Math.min(W - 1, Math.ceil(sx + ext));
+  const y0 = Math.max(0, Math.floor(sy - ext)), y1 = Math.min(H - 1, Math.ceil(sy + ext));
+  const cs = Math.cos(p.slant), ss = Math.sin(p.slant);
+  for (let y = y0; y <= y1; y++) for (let x = x0; x <= x1; x++) {
+    const i = y * W + x;
+    if (ck[i]) continue;
+    const dx = (x + 0.5 - sx) / pr, dy = (y + 0.5 - sy) / pr;
+    const rx = dx * cb + dy * sb, ry = -dx * sb + dy * cb;   // undo bank: planet-aligned coords
+    const d2 = rx * rx + ry * ry;
+    let col = 0;
+    if (p.ring) {
+      const qx = rx * cs + ry * ss, qy = (-rx * ss + ry * cs) / p.tilt;
+      const rr = Math.sqrt(qx * qx + qy * qy);
+      if (rr > 1.35 && rr < 2.2 && (qy > 0 || d2 > 1)) {
+        const band = vnoise(rr * 12, 0.5, p.seed);
+        if (band > 0.3) col = p.pal[clamp(Math.floor(band * 3 + bay(x, y)) + 1, 1, 4)];
+      }
+    }
+    if (!col && d2 < 1) {
+      const nz = Math.sqrt(1 - d2);
+      const l = rx * L[0] + ry * L[1] - nz * L[2];
+      const u = Math.atan2(rx, nz) + p.spin * t;
+      const tx = p.kind === 0
+        ? Math.sin(ry * p.freq + fbm(u * 1.5, ry * 3, p.seed, 3) * 4) * 0.5 + 0.5
+        : fbm(u * 2 + 10, ry * 2, p.seed, 4);
+      const lv = clamp(l, 0, 1) * 0.85 + 0.1;
+      col = p.pal[clamp(Math.floor(lv * 4.2 + (tx - 0.5) * 1.6 + bay(x, y) - 0.5), 0, 4)];
+    } else if (!col && d2 < 1.14) {
+      const l = rx * L[0] + ry * L[1];
+      if (l > 0.1 && bay(x, y) < 0.6) blend(i, p.pal[4], 0.35 * l);
+      continue;
+    }
+    if (col) { fb[i] = col; zb[i] = p.z; }
+  }
+}
+
+function plot(x, y, col, z) {
+  x |= 0; y |= 0;
+  if (x < 0 || x >= W || y < 0 || y >= H) return;
+  const i = y * W + x;
+  if (ck[i] || zb[i] < z) return;
+  fb[i] = col;
+}
+function drawStars() {
+  const streak = clamp((ship.v - 300) / 900, 0, 1);
+  for (const s of stars) {
+    const b = clamp(1.15 - s.z / 1500, 0.15, 1) * 255;
+    const col = s.c < 0.12 ? rgb(b, b * 0.7, b * 0.45) : s.c < 0.3 ? rgb(b * 0.7, b * 0.85, b) : rgb(b, b, b);
+    const [x, y] = project(s.x, s.y, s.z);
+    if (streak > 0) {
+      const [x2, y2] = project(s.x, s.y, s.z + ship.v * 0.06 * streak);
+      const dim = rgb(b * 0.4, b * 0.45, b * 0.6);
+      const n = Math.ceil(Math.hypot(x - x2, y - y2));
+      for (let k = 1; k <= n; k++) plot(x2 + (x - x2) * k / n, y2 + (y - y2) * k / n, dim, s.z);
+    }
+    plot(x, y, col, s.z);
+    if (s.z < 250) { plot(x + 1, y, col, s.z); plot(x, y + 1, col, s.z); plot(x + 1, y + 1, col, s.z); }
+  }
+}
+
+function drawHUD(t) {
+  const sp = String(Math.round(ship.v)).padStart(4, '0');
+  text('SPD ' + sp, CX - 16, 36, UI.hi, 0.55);
+  if (auto && t % 1 < 0.7) text('AUTO', CX - 8, 43, LIME, 0.7);
+  // reticle
+  for (const [dx, dy] of [[-6, 0], [-5, 0], [5, 0], [6, 0], [0, -5], [0, 5]]) blend((CY + dy) * W + CX + dx, UI.hi, 0.45);
+
+  // left screen: speed, waveform, throttle bar
+  const [lx, ly, lw] = SCR_L;
+  rect(fb, lx + 1, ly + 1, lw - 2, SCR_L[3] - 2, UI.bg);
+  text('SPD', lx + 3, ly + 3, UI.mid); text(sp, lx + 19, ly + 3, UI.hi);
+  for (let i = 0; i < lw - 6; i++) {
+    const a = Math.sin((i + t * ship.v * 0.05) * 0.35) * Math.sin((i - t * 20) * 0.07);
+    fb[(ly + 13 + Math.round(a * 3)) * W + lx + 3 + i] = UI.mid;
+  }
+  rect(fb, lx + 3, ly + 19, lw - 6, 2, UI.dim);
+  rect(fb, lx + 3, ly + 19, Math.round((lw - 6) * ship.v / MAXV), 2, UI.hi);
+
+  // right screen: heading + radar of planets
+  const [rx, ry, rw, rh] = SCR_R;
+  rect(fb, rx + 1, ry + 1, rw - 2, rh - 2, UI.bg);
+  const hdg = ((Math.round(ship.heading * 180 / Math.PI) % 360) + 360) % 360;
+  text('HDG', rx + 3, ry + 3, UI.mid); text(String(hdg).padStart(3, '0'), rx + 19, ry + 3, UI.hi);
+  const ox = rx + rw / 2 + 12, oy = ry + rh - 3;
+  line(fb, ox, oy, ox - 14, oy - 18, UI.dim); line(fb, ox, oy, ox + 14, oy - 18, UI.dim);
+  for (const p of planets) {
+    const px = Math.round(ox + p.x / 6000 * 18), py = Math.round(oy - p.z / 6000 * 19);
+    if (px > rx + 1 && px < rx + rw - 2 && py > ry + 9 && py < ry + rh - 1) {
+      fb[py * W + px] = UI.glow;
+      if (p.r > 180) fb[py * W + px + 1] = UI.glow;
+    }
+  }
+  fb[oy * W + ox] = TEAL;
+
+  for (const b of blinkers) {
+    if ((t + b.o) % b.p > b.p * 0.6) continue;
+    for (let j = -3; j <= 3; j++) for (let i = -3; i <= 3; i++) {
+      const d = Math.hypot(i, j), k = (b.y + j) * W + b.x + i;
+      if (d < 1.2) fb[k] = b.c; else if (d < 3.2) blend(k, b.c, 0.35 * (1 - d / 3.2));
+    }
+    fb[(b.y - 1) * W + b.x - 1] = hex('#ffffff');
+  }
+}
+
+function drawLights(t) {
+  for (let k = 0; k < veinIdx.length; k++) {
+    const p = Math.sin(t * 3 - veinPh[k]);
+    if (p > 0.2) blend(veinIdx[k], MAG, (p - 0.2) * 0.9);
+  }
+  const rp = 0.3 + 0.25 * Math.sin(t * 1.7);
+  for (const i of rimIdx) blend(i, TEAL, rp);
+  // ceiling core: a glowing orb that breathes
+  const cp = 0.65 + 0.35 * Math.sin(t * 2.2), [ox, oy] = CORE;
+  for (let y = 0; y < 30; y++) for (let x = ox - 18; x <= ox + 18; x++) {
+    const d = Math.hypot(x - ox, y - oy), i = y * W + x;
+    if (d < 10) {
+      const l = (1 - d / 10) * cp + (Math.hypot(x - ox + 3, y - oy + 3) < 3 ? 0.4 : 0) + bay(x, y) * 0.2;
+      fb[i] = l > 0.85 ? hex('#ffe0fa') : l > 0.6 ? hex('#ff8ae6') : l > 0.35 ? MAG : MAG_D;
+    } else if (d < 18 && ck[i]) blend(i, MAG, 0.4 * cp * (1 - (d - 10) / 8));
+  }
+}
+
+// ---------- steering wheel, arms, gloves ----------
+const WX = CX, WY = 214, R = 50;
+const RIM = ['#120a1a', '#24142f', '#3a2350', '#5a3a78', '#8a64b0'].map(hex);
+const SLEEVE = ['#0e1326', '#1b2440', '#2a3a60', '#3e5486'].map(hex);
+const GLOVE = ['#221c19', '#43362e', '#6a5646', '#957b63', '#c2a586'].map(hex);
+
+function drawWheel(a, wy) {
+  const ca = Math.cos(a), sa = Math.sin(a);
+  for (let y = Math.max(0, wy - R - 2); y < H; y++) for (let x = WX - R - 2; x <= WX + R + 2; x++) {
+    const dx = x + 0.5 - WX, dy = y + 0.5 - wy;
+    const lx = dx * ca + dy * sa, ly = -dx * sa + dy * ca;
+    const r = Math.hypot(lx, ly);
+    let col = 0;
+    if (r >= R - 7 && r <= R + 1) {
+      const ny = dy / r;   // screen-space normal: light stays on top while the wheel turns
+      let k = Math.floor((0.35 - ny * 0.35 + (r - R + 7) / 8 * 0.35) * 4.6 + bay(x, y) - 0.5);
+      const ang = Math.atan2(lx, -ly);
+      if (Math.abs(ang) < 0.07) col = MAG;
+      else {
+        if (((ang * R / 3) & 1) && r > R - 6 && r < R) k--;
+        if (r > R) k = 0;
+        col = RIM[clamp(k, 0, 4)];
+      }
+    } else if (r < 12) {
+      col = r > 10 ? RIM[3] : r < 2.5 ? TEAL : r < 4 ? TEAL_D : RIM[dy < 0 ? 2 : 1];
+    } else {
+      const hw = 3.5 - (Math.abs(lx) - 12) / (R - 17) * 1.2;
+      if (Math.abs(ly) < hw && Math.abs(lx) < R - 6) col = RIM[ly < -hw + 1.2 ? 3 : ly > hw - 1.2 ? 0 : 2];
+      else if (ly > 0 && ly < R - 6) {
+        const hw2 = 4.5 - ly / R * 1.5;
+        if (Math.abs(lx) < hw2) col = RIM[lx < -hw2 + 1.2 ? 3 : lx > hw2 - 1.2 ? 0 : 2];
+      }
+    }
+    if (col && x >= 0 && x < W) fb[y * W + x] = col;
+  }
+}
+
+function handPos(side, a, wy) {
+  const th = side * 1.0 + a;
+  return [WX + R * Math.sin(th), wy - R * Math.cos(th), th];
+}
+
+function drawArm(side, a, wy) {
+  const [hx, hy, th] = handPos(side, a, wy);
+  const wx = hx + Math.sin(th) * 7, wyy = hy - Math.cos(th) * 7 + 5;
+  const ex = WX + side * 130, ey = H + 40;
+  const len = Math.hypot(ex - wx, ey - wyy), ux = (ex - wx) / len, uy = (ey - wyy) / len;
+  const px = -uy, py = ux, w0 = 9, w1 = 18;
+  const x0 = Math.max(0, Math.floor(Math.min(wx, ex) - w1)), x1 = Math.min(W - 1, Math.ceil(Math.max(wx, ex) + w1));
+  const y0 = Math.max(0, Math.floor(wyy - w1));
+  for (let y = y0; y < H; y++) for (let x = x0; x <= x1; x++) {
+    const rx = x + 0.5 - wx, ry = y + 0.5 - wyy;
+    const s = rx * ux + ry * uy;
+    if (s < -2 || s > len) continue;
+    const hw = w0 + (w1 - w0) * Math.max(0, s) / len;
+    const t = (rx * px + ry * py) / hw;
+    if (Math.abs(t) > 1) continue;
+    const up = py < 0 ? t : -t;
+    let k = Math.floor((0.45 + up * 0.4) * 3.99 + bay(x, y) - 0.5);
+    if (Math.abs((((s + t * 4) % 15) + 15) % 15 - 7.5) < 0.6 && s > 10) k--;
+    if (Math.abs(t) > 0.86) k = 0;
+    fb[y * W + x] = s > 1 && s < 4 ? OR.mid : SLEEVE[clamp(k, 0, 3)];
+  }
+}
+
+function drawGlove(side, a, wy) {
+  const [hx, hy, th] = handPos(side, a, wy);
+  const tx = Math.cos(th), ty = Math.sin(th), nx = Math.sin(th), ny = -Math.cos(th);
+  const cx = hx + nx * 2, cy = hy + ny * 2;
+  for (let y = Math.max(0, Math.floor(cy - 14)); y < Math.min(H, cy + 14); y++)
+    for (let x = Math.floor(cx - 14); x < cx + 14; x++) {
+      if (x < 0 || x >= W) continue;
+      const rx = x + 0.5 - cx, ry = y + 0.5 - cy;
+      const ga = rx * tx + ry * ty, gb = rx * nx + ry * ny;
+      const e = (ga / 11) ** 2 + (gb / 8.5) ** 2;
+      if (e >= 1) continue;
+      let k = Math.floor((0.55 - ry / 24 + (1 - e) * 0.3) * 4.99 + bay(x, y) - 0.5);
+      const f = (((ga + 12) / 4.4) % 1 + 1) % 1;
+      if (gb < -0.5 && f < 0.28) k--;                       // gaps between curled fingers
+      if (gb > 0.5 && gb < 3.5 && f > 0.35 && f < 0.75) k++; // knuckles
+      if (e > 0.8) k = 0;
+      fb[y * W + x] = GLOVE[clamp(k, 0, 4)];
+    }
+}
+
+// ---------- loop ----------
+let last = performance.now(), time = 0;
+function frame(now) {
+  const dt = Math.min(0.05, (now - last) / 1000);
+  last = now; time += dt;
+  step(dt);
+  cb = Math.cos(ship.bank); sb = Math.sin(ship.bank);
+
+  const lon = 2 * Math.PI * SUN_U / NW, lat = (SUN_V / NH - 0.5) * Math.PI;
+  const sw = [Math.cos(lat) * Math.sin(lon), Math.sin(lat), Math.cos(lat) * Math.cos(lon)];
+  const dot = a => a[0] * sw[0] + a[1] * sw[1] + a[2] * sw[2];
+  const L = [dot(ship.r), dot(ship.d), dot(ship.f)];   // direction to the sun, camera space
+
+  zb.fill(1e9);
+  drawSky();
+  planets.sort((a, b) => b.z - a.z);
+  for (const p of planets) drawPlanet(p, time, L);
+  drawStars();
+  drawLights(time);
+  drawHUD(time);
+
+  const a = ship.steer * 0.9;
+  const wy = WY + Math.round(ship.pitch * 4) + (Math.random() < (ship.v - 700) / 1500 ? 1 : 0);
+  drawWheel(a, wy);
+  drawArm(-1, a, wy); drawArm(1, a, wy);
+  drawGlove(-1, a, wy); drawGlove(1, a, wy);
+  if (crash) drawCrash();
+
+  lc.putImageData(img, 0, 0);
+  out.imageSmoothingEnabled = false;
+  out.fillStyle = '#02030a';
+  out.fillRect(0, 0, cv.width, cv.height);
+  const sc = Math.max(cv.width / W, cv.height / H);
+  const jolt = crash ? Math.max(0, 1 - crash.t / 1.5) * 6 * sc : 0;
+  out.drawImage(low, (cv.width - W * sc) / 2 + (Math.random() - 0.5) * jolt,
+    (cv.height - H * sc) / 2 + (Math.random() - 0.5) * jolt, W * sc, H * sc);
+  requestAnimationFrame(frame);
+}
+requestAnimationFrame(frame);
+setTimeout(() => { document.getElementById('hint').style.opacity = 0; }, 8000);
+</script>
+</body>
+</html>
