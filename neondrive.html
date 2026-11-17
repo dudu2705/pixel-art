@@ -158,19 +158,48 @@ for (let n = 0; n < NSEG;) {
   for (let i = 0; i < len; i++) curve[n + i] = c * Math.sin(Math.PI * i / len);
   n += len;
 }
-for (let n = 0; n < NSEG; n++) hill[n] = 4 * Math.sin(n * 2 * Math.PI * 28 / NSEG) + 1.5 * Math.sin(n * 2 * Math.PI * 90 / NSEG);
+// ---- the layered city: street level, sky avenues (35 m) and the crown (80 m) ----
+const LH = [0, 35, 80], LAYER_NAMES = ['STREET LEVEL', 'SKY AVENUES', 'CROWN LEVEL'];
+const LAYER = new Int8Array(NSEG), ELEV = new Float32Array(NSEG), LAYERED = new Uint8Array(NSEG), BASE = new Float32Array(NSEG);
+{
+  const fixed = new Int8Array(NSEG).fill(-1);
+  for (const z of ZONES) {
+    const L = z[1] - z[0];
+    for (let n = z[0]; n < z[1]; n++) {
+      if (z[4]) fixed[n] = z[2] === D.TUBE ? 0 : 1;            // links: tube on the sea floor, bridges and highways at 35 m
+      else {
+        LAYERED[n] = 1;
+        if (z[2] === D.TUNNEL) fixed[n] = 0;
+        else if (z[2] === D.HIGHWAY) fixed[n] = 1;
+        else if (z[2] === D.RAMP) fixed[n] = (n - z[0]) < L * 0.62 ? 0 : 2;   // the spiral climbs from the street to the crown
+      }
+    }
+  }
+  const lr = mulberry(31337);
+  let cur = fixed[NSEG - 1] >= 0 ? fixed[NSEG - 1] : 0, left = 200;
+  for (let n = 0; n < NSEG; n++) {
+    if (fixed[n] >= 0) { cur = fixed[n]; left = 160 + lr() * 240; LAYER[n] = cur; continue; }
+    if (left <= 0) { cur = cur === 1 ? (lr() < 0.5 ? 0 : 2) : 1; left = 180 + lr() * 300; }
+    left--; LAYER[n] = cur;
+  }
+  for (let n = 0; n < NSEG; n++) ELEV[n] = LH[LAYER[n]];
+  let prevC = 0;
+  for (let n = 1; n < NSEG; n++) if (LAYER[n] !== LAYER[n - 1]) {      // ramps finish exactly where the new layer begins
+    const len = Math.max(20, Math.min(110, n - prevC - 10)), a = LH[LAYER[n - 1]], b = LH[LAYER[n]];
+    for (let i = 0; i < len; i++) ELEV[n - len + i] = a + (b - a) * smooth(0, 1, (i + 1) / len);
+    prevC = n;
+  }
+}
+for (let n = 0; n < NSEG; n++) { BASE[n] = 4 * Math.sin(n * 2 * Math.PI * 28 / NSEG) + 1.5 * Math.sin(n * 2 * Math.PI * 90 / NSEG); hill[n] = BASE[n] + ELEV[n]; }
 for (const z of ZONES) {
   const L = z[1] - z[0];
   for (let n = z[0]; n < z[1]; n++) {
     const t = (n - z[0]) / L, edge = smooth(0, 0.15, t) * smooth(0, 0.15, 1 - t);
     if (z[2] === D.BRIDGE) { hill[n] += 14 * Math.sin(Math.PI * t); curve[n] *= 0.3; }
-    else if (z[2] === D.HIGHWAY) { hill[n] += 10 * edge; curve[n] *= 0.6; }
+    else if (z[2] === D.HIGHWAY) curve[n] *= 0.6;
     else if (z[2] === D.TUBE) { hill[n] -= 10 * edge; curve[n] *= 0.5; }
     else if (z[2] === D.CANYON) curve[n] *= 1.5;
-    else if (z[2] === D.RAMP) {                       // a tight climbing curve around a tower, then back down
-      curve[n] = 0.05 * smooth(0, 0.08, t) * smooth(0, 0.08, 1 - t);
-      hill[n] += 38 * (t < 0.62 ? smooth(0, 0.62, t) : 1 - smooth(0.62, 1, t));
-    }
+    else if (z[2] === D.RAMP) curve[n] = 0.05 * smooth(0, 0.08, t) * smooth(0, 0.08, 1 - t);   // a tight spiral around a tower
   }
 }
 
@@ -180,7 +209,10 @@ const IX = [];
 const XROAD = new Uint8Array(NSEG);
 for (const z of ZONES) {
   if (z[4] || !LIGHT_D.has(z[2])) continue;
-  for (let n = z[0] + 40; n < z[1] - 30; n += 150 + Math.floor(rng() * 90)) {
+  for (let n = z[0] + 40; n < z[1] - 30; n += ELEV[n] === 0 ? 80 + Math.floor(rng() * 60) : 20) {
+    let street = true;                                // traffic lights only down at street level
+    for (let m = n - 30; m < n + 12; m++) if (ELEV[(m + NSEG) % NSEG] > 0) { street = false; break; }
+    if (!street) continue;
     IX.push(n);
     for (let i = 0; i < 3; i++) XROAD[n + i] = 1;
   }
@@ -221,6 +253,7 @@ for (let side = 0; side < 2; side++) {
       : d === 15 ? 35 + r1 * 60 : 12 + Math.pow(r1, 1.7) * 75;
     const pal = d === 1 || d === 12 ? WARM : cn;
     const hue = city.hue[0] + r2 * (city.hue[1] - city.hue[0]);
+    const el = ELEV[n], tall = el > 20 && rng() < 0.55 ? el + 12 + rng() * 50 : 0;
     const base = d === 1 ? hsl(10 + rng() * 30, 0.28, 0.1 + rng() * 0.07)
       : d === 2 || d === 8 ? hsl(hue, 0.35, 0.12 + rng() * 0.06)
       : d === 4 ? hsl(rng() < 0.5 ? 15 + rng() * 20 : 170 + rng() * 30, 0.3, 0.13 + rng() * 0.06)
@@ -234,7 +267,7 @@ for (let side = 0; side < 2; side++) {
       : hsl(hue, 0.22, 0.09 + rng() * 0.08);
     const styleOf = { 8: 2 };
     const B = {
-      id: blocks.length, start: n, len, h, style: styleOf[d] !== undefined ? styleOf[d] : d, seed: (rng() * 1e6) | 0, base, dark,
+      id: blocks.length, start: n, len, h: Math.max(h, tall), style: styleOf[d] !== undefined ? styleOf[d] : d, seed: (rng() * 1e6) | 0, base, dark,
       set: d === 1 || d === 9 || d === 12 ? rng() * 0.6 : d === 2 ? 1 + rng() * 3 : d === 4 ? 3 + rng() * 4 : d === 8 ? 45 + rng() * 40
         : d === 14 ? 3 + rng() * 4 : d === 15 ? rng() * 3 : rng() * 2.5,
       winP: (d === 2 || d === 8 ? 0.45 + rng() * 0.3 : d === 1 || d === 6 || d === 9 ? 0.35 + rng() * 0.3 : d === 4 ? 0.08
@@ -245,6 +278,8 @@ for (let side = 0; side < 2; side++) {
       bbs: [], signs: [],
     };
     if (B.style === 2 && !B.crown) B.crown = cn[0];
+    if (el > 1) B.set += 5 + rng() * 10;              // a gap beside the elevated road so you can see down
+    B.roof = (rng() * 4) | 0;
     const wc = d === 2 || d === 8 ? [150, 190, 235] : d === 10 ? [40, 120, 80] : [220, 170, 120];
     B.avg = mix(B.base, wc, B.winP * 0.35);
     const L = len * SEGL;
@@ -264,6 +299,19 @@ for (let side = 0; side < 2; side++) {
     blocks.push(B);
     for (let i = 0; i < len; i++) SIDE[side][n + i] = B.id;
     n += len;
+  }
+}
+
+// footbridges and crossing roads strung between the towers, above and below you
+const SKYW = new Map();
+for (const z of ZONES) {
+  if (z[4] || z[2] === D.TUNNEL || z[2] === D.RAMP) continue;
+  for (let n = z[0] + 20; n < z[1] - 10; n += (ELEV[n] === 0 ? 14 : 28) + Math.floor(rng() * (ELEV[n] === 0 ? 16 : 30))) {
+    if (XROAD[n] || XROAD[n + 1] || XROAD[n + 2] || XROAD[n + 3] || XROAD[n - 1]) continue;
+    const e = Math.max(ELEV[n], ELEV[n + 2]), e0 = Math.min(ELEV[n], ELEV[n + 2]);
+    const cands = [12, 20, 27, 50, 58, 66, 98, 112].filter(h => h > e + 7 || h + 1.4 < e0 - 3);
+    if (!cands.length) continue;
+    SKYW.set(n, { hb: cands[Math.floor(rng() * cands.length)], kind: rng() < 0.6 ? 0 : 1, seed: (rng() * 1e6) | 0 });
   }
 }
 
@@ -296,6 +344,8 @@ function useScene() { W = SWD; H = SHD; N = W * H; col = colS; }
 function useOut() { W = OW; H = OH; N = W * H; col = colO; }
 let sky1, sky2, mtn, holoX = 0;
 const Z = new Float32Array(DRAW + 2), S = new Float32Array(DRAW + 2), CX = new Float32Array(DRAW + 2), GY = new Float32Array(DRAW + 2);
+const EL = new Float32Array(DRAW + 2), GYL = new Float32Array(DRAW + 2);   // road height above the city floor, and the floor's screen y
+let gloom = 0;
 
 function setup() {
   PX = hd ? Math.max(1.5, Math.max(innerWidth, innerHeight) / 450) : Math.max(2, Math.round(Math.max(innerWidth, innerHeight) / 340));
@@ -382,7 +432,7 @@ let T = 0, last = performance.now();
 let camZ = 0, speed = 30, px = 3.5, steer = 0, bgX = 0, shake = 0, crashFlash = 0;
 let auto = true, autoLane = 3.5 > 3 ? 5.25 : 1.75, laneCool = 0, idle = 0;
 let rainOn = true, wet = 1, drops = [], streaks = [];
-let curZone = -1, zoneT = 0;
+let curZone = -1, zoneT = 0, shownLayer = -1;
 const zoneEl = document.getElementById('zone');
 const keys = { left: false, right: false, gas: false, brake: false };
 
@@ -561,6 +611,15 @@ function update(dt) {
     for (let i = 0; i < 34; i++) { const a = i / 34 * Math.PI * 2, v = 26 + Math.random() * 18; fw.push({ pc, y, vx: Math.cos(a) * v, vy: Math.sin(a) * v, life: 1.6, c }); }
   }
   for (let i = fw.length - 1; i >= 0; i--) { const f = fw[i]; f.pc += f.vx * dt; f.y += f.vy * dt; f.vy += 22 * dt; f.vx *= 0.98; f.life -= dt; if (f.life <= 0) fw.splice(i, 1); }
+  {
+    const sg_ = Math.floor(camZ / SEGL) % NSEG, Lk = LAYER[sg_];
+    if (LAYERED[sg_] && Math.abs(ELEV[sg_] - LH[Lk]) < 0.5 && Lk !== shownLayer) {
+      if (shownLayer >= 0) { zoneEl.textContent = (Lk > shownLayer ? '▲ ' : '▼ ') + 'LEVEL ' + (Lk + 1) + ' · ' + LAYER_NAMES[Lk]; zoneEl.style.opacity = 1; zoneT = 3.5; }
+      shownLayer = Lk;
+    }
+    const gT = LAYERED[sg_] && ELEV[sg_] < 3 && zoneAt(sg_)[2] !== D.TUNNEL ? 1 : 0;
+    gloom += (gT - gloom) * Math.min(1, dt * 0.5);
+  }
   if ((zoneT -= dt) < 0) zoneEl.style.opacity = 0;
 
   // weather particles: rain, snow, sand or petals
@@ -629,8 +688,8 @@ function drawSky(hy) {
   const top = SKY[0], mid = SKY[1], hz = SKY[2];
   const LUT = [];                                    // 21 dithered gradient steps, built once per frame
   for (let q = 0; q <= 21; q++) {
-    const qq = Math.min(1, q / 20), c = qq < 0.6 ? mix(top, mid, qq / 0.6) : mix(mid, hz, (qq - 0.6) / 0.4), fl = flash * 70 * (1 - qq * 0.5);
-    LUT.push([c[0] + fl, c[1] + fl, c[2] + fl * 1.2]);
+    const qq = Math.min(1, q / 20), c = qq < 0.6 ? mix(top, mid, qq / 0.6) : mix(mid, hz, (qq - 0.6) / 0.4), fl = flash * 70 * (1 - qq * 0.5), dk = 1 - 0.45 * gloom;
+    LUT.push([c[0] * dk + fl, c[1] * dk + fl, c[2] * dk + fl * 1.2]);
   }
   for (let y = 0; y < H; y++) {
     const t20 = clamp(y / hy, 0, 1) * 20, row = y * W * 3;
@@ -768,7 +827,8 @@ function drawSky(hy) {
   }
 }
 
-function drawGround(k, d) {
+function drawGround(k, d, deckOnly) {
+  const deckW = d === D.HIGHWAY ? RW + SW : RW + 1.5;
   const water = d === D.BRIDGE || d === D.CANALS, deck = d === D.HIGHWAY || d === D.RAMP, sand = d === D.CANYON;
   const f = k + 1, yN = GY[k], yF = GY[f];
   if (yF >= yN) return;
@@ -786,7 +846,8 @@ function drawGround(k, d) {
     let lx = -cx * pxw;
     for (let x = 0; x < W; x++, lx += pxw) {
       const a = lx < 0 ? -lx : lx;
-      let r, g, b, rf = 0;
+      if (deckOnly && a >= deckW) continue;
+      let r, g, b, rf = 0, op = 1;
       if (a < RW || (xr && a < RW + SW + 30)) {
         if (xr && a >= RW) { const h = pxw < 0.35 ? hash(Math.floor(lx * 3), zq, 9) * 9 : 4.5; r = 24 + h; g = 22 + h; b = 34 + h; rf = 0.5; if (Math.abs(lz - 2) < lw * 1.2 && ((a * 0.5) % 2) < 1) { r = 190; g = 190; b = 210; } }
         else if (zebra && ((a + 0.45) % 1.0) < 0.55) { r = 215; g = 215; b = 225; rf = 0.15; }
@@ -796,10 +857,11 @@ function drawGround(k, d) {
         else if (!xr && Math.abs(a - (RW - 0.3)) < lw) { r = 200; g = 200; b = 215; rf = 0.2; }
         else {
           const h = pxw < 0.35 ? hash(Math.floor(lx * 3), zq, 9) * 9 : 4.5; r = 24 + h; g = 22 + h; b = 34 + h; rf = 0.5;
+          if (deckOnly) { r = 20; g = 34; b = 52; op = 0.4; rf = 0.15; if (pxw < 0.5 && (wz % 6) < 0.12) { r = 60; g = 90; b = 120; op = 0.8; } }   // glass lanes
           if (sand && a > RW - 1.6 && hash(Math.floor(lx * 2), Math.floor(wz * 0.7), 33) < (a - RW + 1.6) * 0.6) { r = 150; g = 92; b = 54; rf = 0; }
         }
       } else if (deck) {
-        if (a < RW + SW) { const h = pxw < 0.35 ? hash(Math.floor(lx * 3), zq, 19) * 6 : 3; r = 30 + h; g = 28 + h; b = 38 + h; rf = 0.3; }
+        if (a < RW + SW) { const h = pxw < 0.35 ? hash(Math.floor(lx * 3), zq, 19) * 6 : 3; r = 30 + h; g = 28 + h; b = 38 + h; rf = 0.3; if (deckOnly) op = 0.55; }
         else {                                            // the city far below the elevated road
           const lt = pxw < 1.2 && hash(Math.floor(lx / 3), Math.floor(wz / 3), 57) < 0.07;
           const c = lt ? WIN[(hash(Math.floor(lx / 3), Math.floor(wz / 3), 58) * 6) | 0] : [8, 6, 14];
@@ -815,6 +877,7 @@ function drawGround(k, d) {
         else {
           const ln = pxw < 0.5 && (tileRow || ((a - RW) % 1.6) < Math.max(0.1, pxw));
           r = ln ? 30 : 46; g = ln ? 26 : 40; b = ln ? 42 : 60; rf = 0.25;
+          if (deckOnly) { op = ln ? 0.9 : 0.5; rf = 0.1; }
         }
       } else if (water) {
         const sp = pxw < 0.4 && hash(Math.floor(lx * 2), zq, 21) < 0.012;
@@ -822,7 +885,9 @@ function drawGround(k, d) {
       } else if (sand) { r = 110; g = 60; b = 34; }
       else { r = 18; g = 14; b = 26; }
       const i = y * W + x, j = i * 3;
-      col[j] = r + (FOG[0] - r) * fz; col[j + 1] = g + (FOG[1] - g) * fz; col[j + 2] = b + (FOG[2] - b) * fz;
+      r += (FOG[0] - r) * fz; g += (FOG[1] - g) * fz; b += (FOG[2] - b) * fz;
+      if (op < 1) { col[j] += (r - col[j]) * op; col[j + 1] += (g - col[j + 1]) * op; col[j + 2] += (b - col[j + 2]) * op; }
+      else { col[j] = r; col[j + 1] = g; col[j + 2] = b; }
       refl[i] = rf === 0.85 ? rf : rf * (1 - fz) * wet * (1 - smooth(45, 170, z));
     }
   }
@@ -866,6 +931,124 @@ function blob(cx, cy, rx, ry, c, a, fz) {
       if (a >= 1) { col[i] = r; col[i + 1] = g; col[i + 2] = b; refl[y * W + x] = 0; }
       else { col[i] += (r - col[i]) * a; col[i + 1] += (g - col[i + 1]) * a; col[i + 2] += (b - col[i + 2]) * a; }
     }
+}
+
+// ---- rooftops: parapet, gardens, solar panels, AC units, glowing pools ----
+function roofTex(B, ul, wz, mpp) {
+  if (ul < 0.5) { const c = B.crown || [80, 72, 98]; TR = c[0]; TG = c[1]; TB = c[2]; return; }
+  const tx = Math.floor(ul / 5), tz = Math.floor(wz / 5), h = hash(tx, tz, B.seed), fu = ul / 5 - tx, fz = wz / 5 - tz;
+  const kind = ((h * 10) | 0) + B.roof * 2 > 13 ? 9 : (((h * 10) | 0) + B.roof * 2) % 10;
+  if (kind < 4) { const ln = mpp < 0.5 && (fu < 0.05 || fz < 0.05); TR = ln ? 26 : 44; TG = ln ? 24 : 42; TB = ln ? 32 : 54; return; }
+  if (kind < 6) { const tree = mpp < 1 && hash(Math.floor(ul * 1.2), Math.floor(wz * 1.2), B.seed + 5) < 0.35; TR = tree ? 60 : 28; TG = tree ? 140 : 66; TB = tree ? 74 : 40; return; }
+  if (kind < 8) { const st = mpp < 0.6 && (fz * 5) % 1 < 0.15; TR = st ? 70 : 24; TG = st ? 90 : 42; TB = st ? 140 : 84; return; }
+  if (kind < 9) { const box = fu > 0.25 && fu < 0.75 && fz > 0.25 && fz < 0.75; TR = box ? 96 : 44; TG = box ? 96 : 42; TB = box ? 106 : 54; return; }
+  const pool = fu > 0.15 && fu < 0.85 && fz > 0.2 && fz < 0.8, w = 0.7 + 0.3 * Math.sin(wz * 2 + T * 2 + ul);
+  TR = pool ? 30 * w : 44; TG = pool ? 180 * w : 42; TB = pool ? 210 * w : 54;
+}
+function drawRoof(k, B, wx, sg, yN, yF) {
+  const f = k + 1, iN = 1 / Z[k], iF = 1 / Z[f];
+  for (let y = Math.max(0, Math.ceil(yF)); y <= Math.min(H - 1, Math.ceil(yN) - 1); y++) {
+    const t = (y - yF) / (yN - yF), iz = iF + (iN - iF) * t, z = 1 / iz, s = F * iz, cx = CX[f] + (CX[k] - CX[f]) * t;
+    const xa = cx + wx * s, xb = cx + (wx + sg * 26) * s, fz = fogAt(z), wz = camZ + z;
+    for (let x = Math.max(0, Math.ceil(Math.min(xa, xb))); x <= Math.min(W - 1, Math.ceil(Math.max(xa, xb)) - 1); x++) {
+      roofTex(B, Math.abs((x + 0.5 - cx) / s - wx), wz, 1 / s);
+      const i = y * W + x, j = i * 3;
+      col[j] = TR + (FOG[0] - TR) * fz; col[j + 1] = TG + (FOG[1] - TG) * fz; col[j + 2] = TB + (FOG[2] - TB) * fz;
+      refl[i] = 0;
+    }
+  }
+}
+
+// ---- the street far below an elevated road ----
+function drawLower(k, d) {
+  const f = k + 1, yN = GYL[k], yF = GYL[f];
+  if (yF >= yN) return;
+  const water = d === D.CANALS, iN = 1 / Z[k], iF = 1 / Z[f];
+  for (let y = Math.max(0, Math.ceil(yF)); y <= Math.min(H - 1, Math.ceil(yN) - 1); y++) {
+    const t = (y - yF) / (yN - yF), iz = iF + (iN - iF) * t, z = 1 / iz, s = F * iz, pxw = 1 / s;
+    const cx = CX[f] + (CX[k] - CX[f]) * t, wz = camZ + z, fz = fogAt(z), dash = (wz % 10) < 4.5, lw = Math.max(0.1, pxw * 0.55);
+    let lx = -cx * pxw;
+    for (let x = 0; x < W; x++, lx += pxw) {
+      const a = lx < 0 ? -lx : lx;
+      let r, g, b, rf = 0;
+      if (a < RW) {
+        if (Math.abs(a - 0.2) < lw) { r = 150; g = 110; b = 40; }
+        else if (dash && Math.abs(a - 3.5) < lw) { r = 110; g = 110; b = 130; }
+        else { r = 16; g = 15; b = 22; rf = 0.2; }
+      } else if (a < RW + 0.3) { r = 0; g = 150; b = 180; }
+      else if (a < RW + SW) { r = 30; g = 27; b = 40; }
+      else if (water) { r = 6; g = 12; b = 26; rf = 0.5; }
+      else { r = 12; g = 10; b = 18; }
+      const i = y * W + x, j = i * 3;
+      col[j] = r + (FOG[0] - r) * fz; col[j + 1] = g + (FOG[1] - g) * fz; col[j + 2] = b + (FOG[2] - b) * fz;
+      refl[i] = rf * (1 - fz) * wet;
+    }
+  }
+}
+function edgeTex(wz, v) {
+  if (v > -0.3) { TR = 74; TG = 72; TB = 90; return; }
+  if (v < -1.15) { TR = 0; TG = 180; TB = 220; return; }
+  TR = 36; TG = 34; TB = 46;
+}
+// pillars, deck edges and the traffic crawling along the street below
+function drawBelow(k, n, deckW) {
+  quadWall(k, -deckW, -1.4, 0, edgeTex);
+  quadWall(k, deckW, -1.4, 0, edgeTex);
+  if (n % 12 === 0 && projAt(k, 0)) {
+    for (const sg of [-1, 1]) { const x = PCX + sg * (deckW - 0.6) * PS; rect(x - 0.7 * PS, x + 0.7 * PS, PGY + 1.4 * PS, PGL, [34, 32, 44], fogAt(PZ)); }
+  }
+  if (Z[k] > 8 && EL[k] > 5) {
+    const wz0 = camZ + Z[k];
+    for (const L of [-5.25, -1.75, 1.75, 5.25]) {
+      const dir = L > 0 ? 1 : -1, sp = 22 + Math.abs(L) * 4, off = ((T * 13 * dir + L * 17) % sp + sp) % sp;
+      const cz = Math.ceil((wz0 - off) / sp) * sp + off;
+      if (cz >= wz0 + SEGL || !projAt(k, cz - wz0)) continue;
+      const c = dir > 0 ? [255, 40, 50] : [230, 235, 255], fz = fogAt(PZ), y = Math.round(PGL - 0.6 * PS);
+      for (const o of [-0.7, 0.7]) { const xx = Math.round(PCX + (L + o) * PS); if (xx >= 0 && xx < W && y >= 0 && y < H) put(xx, y, ...mix(c, FOG, fz * 0.7)); }
+      if (PZ < 260) addLight(PCX + L * PS, y, Math.min(14, Math.max(2, 1.4 * PS)), c, 0.35 * (1 - fz));
+    }
+  }
+}
+
+// ---- footbridges and crossing roads at other heights ----
+function drawSkywalk(k, n, o) {
+  if (!projAt(k, 5.5)) return;
+  const s2 = PS, cx2 = PCX, g2 = PGL;
+  if (!projAt(k, 0)) return;
+  const s = PS, cx = PCX, g = PGL, fz = fogAt(PZ), top = o.hb + 1.4, span = RW + SW + 22;
+  const yT = g - top * s, yB = g - o.hb * s, yT2 = g2 - top * s2, yB2 = g2 - o.hb * s2;
+  const glowC = NEON[o.seed % 6];
+  if (yT2 < yT - 0.5) {                              // seen from above: walkway with people, or a road with traffic
+    for (let y = Math.max(0, Math.ceil(yT2)); y <= Math.min(H - 1, Math.ceil(yT) - 1); y++) {
+      const t = (y - yT2) / (yT - yT2), sc = s2 + (s - s2) * t, cxx = cx2 + (cx - cx2) * t, row = Math.floor((1 - t) * 6);
+      for (let x = Math.max(0, Math.ceil(cxx - span * sc)); x <= Math.min(W - 1, Math.ceil(cxx + span * sc) - 1); x++) {
+        const lx = (x + 0.5 - cxx) / sc;
+        let c;
+        if (t < 0.1 || t > 0.9) c = [120, 140, 160];
+        else if (o.kind === 0) {
+          const dir = row % 2 ? 1 : -1, cell = Math.floor((lx + T * 1.1 * dir) / 0.8), hh = hash(cell, row, o.seed);
+          c = hh < 0.04 ? NEON[(hh * 150) | 0 % 6] : hh < 0.3 ? [16, 14, 20] : [48, 46, 60];
+        } else {
+          const dir = row < 3 ? 1 : -1, cell = Math.floor((lx - T * 14 * dir) / 6), hh = hash(cell, row, o.seed);
+          c = row === 3 && ((lx * 0.5) % 2 + 2) % 2 < 1 ? [150, 150, 160] : hh < 0.12 ? (dir > 0 ? [255, 50, 60] : [230, 235, 255]) : [30, 28, 38];
+        }
+        put(x, y, ...mix(c, FOG, fz)); refl[y * W + x] = 0;
+      }
+    }
+  } else if (yB2 > yB + 0.5) {                       // seen from below: the dark underside with a row of lamps
+    for (let y = Math.max(0, Math.ceil(yB)); y <= Math.min(H - 1, Math.ceil(yB2) - 1); y++) {
+      const t = (y - yB) / (yB2 - yB), sc = s + (s2 - s) * t, cxx = cx + (cx2 - cx) * t;
+      for (let x = Math.max(0, Math.ceil(cxx - span * sc)); x <= Math.min(W - 1, Math.ceil(cxx + span * sc) - 1); x++) {
+        const lx = (x + 0.5 - cxx) / sc, lamp = Math.abs(t - 0.5) < 0.12 && ((lx % 4) + 4) % 4 < 0.5;
+        put(x, y, ...mix(lamp ? [255, 210, 150] : [22, 20, 30], FOG, fz)); refl[y * W + x] = 0;
+      }
+    }
+    if (PZ < 260) addLight(cx, (yB + yB2) / 2, Math.min(28, 6 * s), [255, 200, 140], 0.25 * (1 - fz));
+  }
+  rect(cx - span * s, cx + span * s, yT, yB, [38, 36, 50], fz);
+  rect(cx - span * s, cx + span * s, yB - Math.max(1, 0.2 * s), yB, glowC, fz * 0.5);
+  rect(cx - span * s, cx + span * s, yT - Math.max(1, 0.9 * s), yT - Math.max(1, 0.9 * s) + 1, [150, 190, 210], fz);
+  if (PZ < 300) addLight(cx, yB, Math.min(30, 5 * s), glowC, 0.2 * (1 - fz));
 }
 
 // ---- tunnel ----
@@ -1114,7 +1297,7 @@ function drawContainers(k, sg, n) {
   for (let j = 0; j < 3; j++) {
     const hgt = 1 + Math.floor(hash(n, j, 51) * 4), x0 = PCX + sg * (RW + SW + 0.6 + j * 2.6) * s, x1 = x0 + sg * 2.4 * s;
     for (let b = 0; b < hgt; b++) {
-      const c = BOX[(hash(n, j * 7 + b, 52) * 6) | 0], ya = PGY - (b + 1) * 2.6 * s, yb = PGY - b * 2.6 * s;
+      const c = BOX[(hash(n, j * 7 + b, 52) * 6) | 0], ya = PGL - (b + 1) * 2.6 * s, yb = PGL - b * 2.6 * s;
       rect(x0, x1, ya, yb, c, fz);
       rect(x0, x1, ya, ya + Math.max(1, 0.15 * s), mix(c, [255, 255, 255], 0.25), fz);
       if (s > 2) for (let r = 1; r < 6; r++) { const xr = x0 + (x1 - x0) * r / 6; rect(xr, xr + Math.max(1, 0.06 * s), ya, yb, mix(c, [0, 0, 0], 0.35), fz); }
@@ -1125,12 +1308,12 @@ function drawCrane(k, sg, n) {
   if (!projAt(k, 0)) return;
   const s = PS, fz = fogAt(PZ), yc = [200, 120, 30], w = Math.max(1, 0.6 * s);
   const la = sg * (RW + SW + 9), lb_ = sg * (RW + SW + 21);
-  for (const l of [la, lb_]) rect(PCX + l * s - w, PCX + l * s + w, PGY - 40 * s, PGY, yc, fz);
+  for (const l of [la, lb_]) rect(PCX + l * s - w, PCX + l * s + w, PGL - 40 * s, PGL, yc, fz);
   const tip = -sg * 4;
-  rect(Math.min(PCX + tip * s, PCX + lb_ * s), Math.max(PCX + tip * s, PCX + lb_ * s), PGY - 41.5 * s, PGY - 40 * s, yc, fz);
-  rect(PCX + la * s - 2 * s, PCX + la * s + 2 * s, PGY - 44 * s, PGY - 41.5 * s, [40, 36, 50], fz);
-  lineS(PCX + (tip + sg * 6) * s, PGY - 40 * s, PCX + (tip + sg * 6) * s, PGY - 30 * s, [30, 30, 40], fz);
-  if ((T * 1.5 + n) % 2 < 1) addLight(PCX + tip * s, PGY - 41 * s, Math.max(3, 2 * s), [255, 40, 40], 0.7 * (1 - fz));
+  rect(Math.min(PCX + tip * s, PCX + lb_ * s), Math.max(PCX + tip * s, PCX + lb_ * s), PGL - 41.5 * s, PGL - 40 * s, yc, fz);
+  rect(PCX + la * s - 2 * s, PCX + la * s + 2 * s, PGL - 44 * s, PGL - 41.5 * s, [40, 36, 50], fz);
+  lineS(PCX + (tip + sg * 6) * s, PGL - 40 * s, PCX + (tip + sg * 6) * s, PGL - 30 * s, [30, 30, 40], fz);
+  if ((T * 1.5 + n) % 2 < 1) addLight(PCX + tip * s, PGL - 41 * s, Math.max(3, 2 * s), [255, 40, 40], 0.7 * (1 - fz));
 }
 
 // ---- holo gardens: glowing trees on the sidewalks ----
@@ -1245,10 +1428,6 @@ function towerTex(wz, v, z) {
   }
   TR = 26; TG = 30; TB = 44;
 }
-function drawRamp(k, n) {
-  quadWall(k, RW + SW + 3, -60, 150, towerTex);
-  quadWall(k, -(RW + SW), 0, 1.2, railTex);
-}
 
 // ---- mega-highway: barriers, overpasses with traffic, a racing train ----
 function barrierTex(wz, v) {
@@ -1301,7 +1480,7 @@ function drawBoat(k, n) {
 // ---- the stadium seen from the highway ----
 function drawStadium(k) {
   if (!projAt(k, 0)) return;
-  const s = PS, fz = fogAt(PZ), cx = PCX - 62 * s, rx = 42 * s, base = PGY + 6 * s, top = PGY - 26 * s;
+  const s = PS, fz = fogAt(PZ), cx = PCX - 62 * s, rx = 42 * s, base = PGL + 6 * s, top = PGL - 26 * s;
   for (let x = Math.max(0, Math.floor(cx - rx)); x <= Math.min(W - 1, cx + rx); x++) {
     const u = (x - cx) / rx, arc = Math.sqrt(Math.max(0, 1 - u * u)), yt = top + (1 - arc) * 8 * s;
     for (let y = Math.max(0, Math.ceil(yt)); y <= Math.min(H - 1, base); y++) {
@@ -1323,7 +1502,7 @@ function drawStadium(k) {
 // ---- data canyon: green lasers from the rooftops ----
 function drawLaser(k, n, sg, h) {
   if (!projAt(k, 0) || PZ > 300) return;
-  const x0 = PCX + sg * (RW + SW + 2) * PS, y0 = PGY - h * PS, ang = Math.sin(T * 0.5 + n) * 0.6 - sg * 0.3;
+  const x0 = PCX + sg * (RW + SW + 2) * PS, y0 = PGL - h * PS, ang = Math.sin(T * 0.5 + n) * 0.6 - sg * 0.3;
   for (let d = 0; d < y0; d += 1) addc(Math.round(x0 + d * Math.tan(ang)), Math.round(y0 - d), [80, 255, 120], 0.35 * (1 - d / (y0 + 1)));
 }
 
@@ -1591,7 +1770,7 @@ function drawWall(k, side, n) {
   const B = blocks[bi], sg = side ? 1 : -1, wx = sg * (RW + SW + B.set), f = k + 1;
   const xa = CX[k] + wx * S[k], xb = CX[f] + wx * S[f], span = xb - xa;
   const iN = 1 / Z[k], iF = 1 / Z[f];
-  const ybA = GY[k], ybB = GY[f], ytA = ybA - B.h * S[k], ytB = ybB - B.h * S[f];
+  const ybA = GYL[k], ybB = GYL[f], ytA = ybA - B.h * S[k], ytB = ybB - B.h * S[f];
   const u0 = (n - B.start) * SEGL;
   if (Math.abs(span) > 1e-4) {
     const x0 = Math.max(0, Math.ceil(Math.min(xa, xb))), x1 = Math.min(W - 1, Math.ceil(Math.max(xa, xb)) - 1);
@@ -1610,7 +1789,7 @@ function drawWall(k, side, n) {
   // corner face of the building, facing us
   if (n === B.start && k > 0) {
     const s = S[k], xw = CX[k] + wx * s, xo = CX[k] + (wx + sg * 80) * s, fz = fogAt(Z[k]);
-    const ytop = GY[k] - B.h * s, ybot = GY[k];
+    const ytop = GYL[k] - B.h * s, ybot = GYL[k];
     const x0 = Math.max(0, Math.ceil(Math.min(xw, xo))), x1 = Math.min(W - 1, Math.ceil(Math.max(xw, xo)) - 1);
     for (let x = x0; x <= x1; x++) {
       const u = Math.abs(x + 0.5 - xw) / s;
@@ -1623,25 +1802,28 @@ function drawWall(k, side, n) {
       }
     }
   }
+  // rooftop, when you ride above it
+  if (ytB < ytA - 0.5) drawRoof(k, B, wx, sg, ytA, ytB);
   // blade signs and billboard glow
   for (const sn of B.signs) if (sn.u >= u0 && sn.u < u0 + SEGL) drawSign(k, sn.u - u0, wx, -sg, sn);
   if (B.style === 7) for (let uc = 5; uc < B.len * SEGL; uc += 10) {
     if (uc >= u0 && uc < u0 + SEGL && projAt(k, uc - u0) && PZ < 200)
-      addLight(PCX + wx * PS, PGY - (B.h / 2 + 1) * PS, Math.min(26, 5 * PS), B.shop[Math.floor(uc / 10) % 3], 0.25 * (1 - fogAt(PZ)));
+      addLight(PCX + wx * PS, PGL - (B.h / 2 + 1) * PS, Math.min(26, 5 * PS), B.shop[Math.floor(uc / 10) % 3], 0.25 * (1 - fogAt(PZ)));
   }
   for (const b of B.bbs) {
     const uc = (b.u0 + b.u1) / 2;
     if (uc >= u0 && uc < u0 + SEGL && projAt(k, uc - u0) && PZ < 220) {
-      addLight(PCX + wx * PS, PGY - (b.v0 + b.v1) / 2 * PS, (b.u1 - b.u0) * PS * 0.55, b.c1, 0.3 * (1 - fogAt(PZ)));
+      addLight(PCX + wx * PS, PGL - (b.v0 + b.v1) / 2 * PS, (b.u1 - b.u0) * PS * 0.55, b.c1, 0.3 * (1 - fogAt(PZ)));
     }
   }
 }
 
-let PZ, PS, PCX, PGY;
+let PZ, PS, PCX, PGY, PGL;
 function projAt(k, dz) {
   const z = Z[k] + dz; if (z < NEAR) return false;
   const iN = 1 / Z[k], iF = 1 / Z[k + 1], t = (1 / z - iN) / (iF - iN);
   PZ = z; PS = F / z; PCX = CX[k] + (CX[k + 1] - CX[k]) * t; PGY = GY[k] + (GY[k + 1] - GY[k]) * t;
+  PGL = PGY + (EL[k] + (EL[k + 1] - EL[k]) * t) * PS;
   return true;
 }
 
@@ -1649,12 +1831,12 @@ function drawSign(k, dz, wx, inward, sn) {
   if (!projAt(k, dz)) return;
   if (PS < 1.4) {                                   // far away: a plain lit slab, no letters, no glow
     const xa = PCX + wx * PS, xb = PCX + (wx + inward * 1.6) * PS;
-    rect(xa, xb, PGY - sn.v1 * PS, PGY - sn.v0 * PS, mix(sn.c, [0, 0, 0], 0.45), fogAt(PZ));
+    rect(xa, xb, PGL - sn.v1 * PS, PGL - sn.v0 * PS, mix(sn.c, [0, 0, 0], 0.45), fogAt(PZ));
     return;
   }
   const s = PS, fz = fogAt(PZ);
   const xa = PCX + wx * s, xb = PCX + (wx + inward * 1.6) * s;
-  const yt = PGY - sn.v1 * s, yb = PGY - sn.v0 * s;
+  const yt = PGL - sn.v1 * s, yb = PGL - sn.v0 * s;
   const TW = 5, TH = Math.max(6, Math.round((sn.v1 - sn.v0) / 1.6 * 5));
   const flick = sn.dead ? (hash(Math.floor(T * 9), sn.seed, 6) < 0.06 ? 1 : 0.12) : hash(Math.floor(T * 7), sn.seed, 5) < 0.04 ? 0.25 : 1;
   const x0 = Math.max(0, Math.ceil(Math.min(xa, xb))), x1 = Math.min(W - 1, Math.ceil(Math.max(xa, xb)) - 1);
@@ -1858,7 +2040,9 @@ function render() {
   const base = Math.floor(camZ / SEGL), frac = camZ / SEGL - base;
   const b0 = base % NSEG, b1 = (base + 1) % NSEG;
   const camY = hill[b0] + (hill[b1] - hill[b0]) * frac + eye() + Math.sin(camZ * 0.9) * 0.015 * Math.min(1, speed / 20);
-  const sh = shake * 3, hy = HOR + (Math.random() - 0.5) * sh;
+  // the higher you ride, the more the camera tilts down to show the layers below
+  const raise = (hill[b0] - BASE[b0]) + ((hill[b1] - BASE[b1]) - (hill[b0] - BASE[b0])) * frac;
+  const sh = shake * 3, hy = HOR - F * Math.tan(0.34 * clamp(raise / 80, 0, 1.1)) + (Math.random() - 0.5) * sh;
   const camX = px + (Math.random() - 0.5) * shake * 0.4;
   blendTheme(base);
 
@@ -1869,6 +2053,7 @@ function render() {
     Z[k] = z; S[k] = F / z;
     CX[k] = W / 2 + (x - camX) * S[k];
     GY[k] = hy - (hill[n] - camY) * S[k];
+    EL[k] = LAYERED[n] ? ELEV[n] : 0; GYL[k] = GY[k] + EL[k] * S[k];
     x += dx; dx += curve[n];
   }
 
@@ -1892,7 +2077,8 @@ function render() {
   }
   for (const p of peds) {
     const r = rel(p.z), k = Math.floor(r / SEGL + frac);
-    if (k < 0 || k >= DRAW || r < NEAR || district(Math.floor(p.z / SEGL)) === 3) continue;
+    const pn = Math.floor(p.z / SEGL) % NSEG;
+    if (k < 0 || k >= DRAW || r < NEAR || district(pn) === 3 || (LAYERED[pn] && ELEV[pn] > 0.3)) continue;
     if (!buckets.has(k)) buckets.set(k, []);
     buckets.get(k).push({ p, r });
   }
@@ -1900,14 +2086,18 @@ function render() {
   for (let k = DRAW - 1; k >= 0; k--) {
     const n = (base + k) % NSEG;
     const zz = zoneAt(n), d = zz[2], cty = CITIES[zz[3]];
-    drawGround(k, d);
-    if (d === D.BRIDGE) drawSkybridge(k, n);
-    else if (d === D.TUNNEL) { drawTunnel(k, n); if (k > 0 && TUNNEL_STARTS.includes(n)) drawPortal(k); }
-    else if (d === D.TUBE) drawTube(k, n);
-    else if (d === D.RAMP) drawRamp(k, n);
+    const elev = EL[k] > 0.4 || EL[k + 1] > 0.4, deckW = d === D.HIGHWAY ? RW + SW : RW + 1.5;
+    const sw = SKYW.get(n);
+    if (elev) drawLower(k, d);
+    if (d === D.BRIDGE) { drawGround(k, d, false); drawSkybridge(k, n); }
+    else if (d === D.TUNNEL) { drawGround(k, d, false); drawTunnel(k, n); if (k > 0 && TUNNEL_STARTS.includes(n)) drawPortal(k); }
+    else if (d === D.TUBE) { drawGround(k, d, false); drawTube(k, n); }
     else {
-      drawWall(k, 0, n);
-      drawWall(k, 1, n);
+      if (d === D.RAMP) quadWall(k, RW + SW + 3, -EL[k] - 2, 160, towerTex);
+      else { drawWall(k, 0, n); drawWall(k, 1, n); }
+      if (elev) { drawBelow(k, n, deckW); if (sw && sw.hb + 1.4 < EL[k]) drawSkywalk(k, n, sw); }
+      drawGround(k, d, elev);
+      if (elev && d !== D.HIGHWAY) { quadWall(k, -deckW, 0, 1.1, railTex); quadWall(k, deckW, 0, 1.1, railTex); }
       if (d === D.HIGHWAY) {
         drawHighway(k, n, zz);
         if (cty.elevator && n === zz[0] + 130) drawStadium(k);
@@ -1917,18 +2107,19 @@ function render() {
           if (projAt(k, 0)) addLight(PCX + (RW + SW + 6) * PS, PGY - 2.5 * PS, Math.min(20, 3 * PS), [255, 220, 170], 0.3 * (1 - fogAt(PZ)));
         }
       }
-      if (d === D.MARKET && n % 2 === 0) for (const sg of [-1, 1]) if (hash(n, sg + 5, 31) < 0.45) drawStall(k, sg, n);
-      if (n % 9 === 0 && ![D.MARKET, D.GARDENS, D.SHRINE, D.HIGHWAY].includes(d)) { drawLamp(k, n, -1); drawLamp(k, n, 1); }
-      if (d === D.DOCKS) {
-        if (n % 3 === 0) for (const sg of [-1, 1]) if (hash(n, sg + 9, 41) < 0.6) drawContainers(k, sg, n);
-        if (n % 45 === 20) drawCrane(k, hash(n, 2, 43) < 0.5 ? -1 : 1, n);
-      }
-      if (d === D.BUILD) { if (n % 2 === 0) drawCones(k, n); if (n % 40 === 15) drawCrane(k, hash(n, 2, 43) < 0.5 ? -1 : 1, n); }
-      const pink = cty.name === 'SAKURA GRID' ? PINK : null;
-      if ((d === D.GARDENS || d === D.SHRINE) && n % 2 === 1) for (const sg of [-1, 1]) drawTree(k, sg, n, d === D.SHRINE ? PINK : pink);
-      if (d === D.CANALS && n % 7 === 0) drawBoat(k, n);
+      if (n % 9 === 0 && ![D.MARKET, D.GARDENS, D.SHRINE, D.HIGHWAY, D.RAMP].includes(d)) { drawLamp(k, n, -1); drawLamp(k, n, 1); }
+      if (d === D.DOCKS && n % 45 === 20) drawCrane(k, hash(n, 2, 43) < 0.5 ? -1 : 1, n);
+      if (d === D.BUILD && n % 40 === 15) drawCrane(k, hash(n, 2, 43) < 0.5 ? -1 : 1, n);
       if (d === D.DATA && n % 11 === 0) drawLaser(k, n, hash(n, 4, 4) < 0.5 ? -1 : 1, 30 + hash(n, 5, 5) * 20);
-      if ([D.DOWNTOWN, D.SPIRES, D.DOCKS, D.STACK, D.DATA, D.BUILD].includes(d) && hash(n, 7, 77) < 0.05) drawSteam(k, hash(n, 8, 78) < 0.5 ? -3.5 : 3.5, 0, n, 1);
+      if (!elev) {                                    // street furniture only down at street level
+        if (d === D.MARKET && n % 2 === 0) for (const sg of [-1, 1]) if (hash(n, sg + 5, 31) < 0.45) drawStall(k, sg, n);
+        if (d === D.DOCKS && n % 3 === 0) for (const sg of [-1, 1]) if (hash(n, sg + 9, 41) < 0.6) drawContainers(k, sg, n);
+        if (d === D.BUILD && n % 2 === 0) drawCones(k, n);
+        const pink = cty.name === 'SAKURA GRID' ? PINK : null;
+        if ((d === D.GARDENS || d === D.SHRINE) && n % 2 === 1) for (const sg of [-1, 1]) drawTree(k, sg, n, d === D.SHRINE ? PINK : pink);
+        if (d === D.CANALS && n % 7 === 0) drawBoat(k, n);
+        if ([D.DOWNTOWN, D.SPIRES, D.DOCKS, D.STACK, D.DATA, D.BUILD].includes(d) && hash(n, 7, 77) < 0.05) drawSteam(k, hash(n, 8, 78) < 0.5 ? -3.5 : 3.5, 0, n, 1);
+      }
     }
     const bk = buckets.get(k);
     if (bk) {
@@ -1939,12 +2130,14 @@ function render() {
         else if (o.xp) drawCrosser(o.xp, k, dz);
       }
     }
+    if (sw && sw.hb + 1.4 >= EL[k]) drawSkywalk(k, n, sw);
     if (d === D.SHRINE && n % 3 === 0) drawTorii(k, n);
-    if (d === D.STACK && n % 4 === 2) drawLaundry(k, n);
-    if (d === 0 || d === 2) drawMonorail(k, n);
-    if (d === 0 && n % 7 === 3) drawWires(k, n);
-    if (d === 1 && n % 3 === 0) drawLanterns(k, n);
-    if ((d === 0 || d === 2) && n % 170 === 85) drawBridge(k);
+    if (!elev) {
+      if (d === D.STACK && n % 4 === 2) drawLaundry(k, n);
+      if (d === 0 || d === 2) drawMonorail(k, n);
+      if (d === 0 && n % 7 === 3) drawWires(k, n);
+      if (d === 1 && n % 3 === 0) drawLanterns(k, n);
+    }
     if (![D.TUNNEL, D.BRIDGE, D.TUBE, D.RAMP].includes(d) && n % 300 === 150) drawKoi(k, n);
     { const zz = zoneAt(n);
       if (zz[4] && zz[2] !== D.TUBE && n === zz[0] + 4) drawGantry(k, CITIES[(zz[3] + 1) % CITIES.length]);
