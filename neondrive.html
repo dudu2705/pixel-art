@@ -161,6 +161,8 @@ for (let n = 0; n < NSEG;) {
 // ---- the layered city: street level, sky avenues (35 m) and the crown (80 m) ----
 const LH = [0, 35, 80], LAYER_NAMES = ['STREET LEVEL', 'SKY AVENUES', 'CROWN LEVEL'];
 const LAYER = new Int8Array(NSEG), ELEV = new Float32Array(NSEG), LAYERED = new Uint8Array(NSEG), BASE = new Float32Array(NSEG);
+const TRANS = [], TRANS_AT = new Int16Array(NSEG).fill(-1);
+const SPLIT = 24;                                    // how far the old and new roads sit beside the ramp
 {
   const fixed = new Int8Array(NSEG).fill(-1);
   for (const z of ZONES) {
@@ -176,19 +178,23 @@ const LAYER = new Int8Array(NSEG), ELEV = new Float32Array(NSEG), LAYERED = new 
     }
   }
   const lr = mulberry(31337);
-  let cur = fixed[NSEG - 1] >= 0 ? fixed[NSEG - 1] : 0, left = 200;
+  let cur = fixed[NSEG - 1] >= 0 ? fixed[NSEG - 1] : 0, left = 300;
   for (let n = 0; n < NSEG; n++) {
-    if (fixed[n] >= 0) { cur = fixed[n]; left = 160 + lr() * 240; LAYER[n] = cur; continue; }
-    if (left <= 0) { cur = cur === 1 ? (lr() < 0.5 ? 0 : 2) : 1; left = 180 + lr() * 300; }
+    if (fixed[n] >= 0) { cur = fixed[n]; left = 260 + lr() * 240; LAYER[n] = cur; continue; }
+    if (left <= 0) { const o = [0, 1, 2].filter(v => v !== cur); cur = o[(lr() * 2) | 0]; left = 280 + lr() * 300; }   // any level to any other
     left--; LAYER[n] = cur;
   }
   for (let n = 0; n < NSEG; n++) ELEV[n] = LH[LAYER[n]];
+  // every level change is its own ramp that splits off the road you're on, then merges into the new level
   let prevC = 0;
-  for (let n = 1; n < NSEG; n++) if (LAYER[n] !== LAYER[n - 1]) {      // ramps finish exactly where the new layer begins
-    const len = Math.max(20, Math.min(110, n - prevC - 10)), a = LH[LAYER[n - 1]], b = LH[LAYER[n]];
-    for (let i = 0; i < len; i++) ELEV[n - len + i] = a + (b - a) * smooth(0, 1, (i + 1) / len);
+  for (let n = 1; n < NSEG; n++) if (LAYER[n] !== LAYER[n - 1]) {
+    const a = LAYER[n - 1], b = LAYER[n], want = Math.abs(LH[b] - LH[a]) > 50 ? 200 : 130;
+    const len = Math.max(40, Math.min(want, n - prevC - 130));
+    for (let i = 0; i < len; i++) ELEV[n - len + i] = LH[a] + (LH[b] - LH[a]) * smooth(0, 1, (i + 1) / len);
+    TRANS.push({ s: n - len, e: n, from: a, to: b, side: lr() < 0.5 ? -1 : 1, curv: lr() < 0.5 ? 0 : (lr() < 0.5 ? -1 : 1) * (0.015 + lr() * 0.02) });
     prevC = n;
   }
+  TRANS.forEach((tr, i) => { for (let n = tr.s - 70; n < tr.e + 70; n++) TRANS_AT[(n + NSEG) % NSEG] = i; });
 }
 for (let n = 0; n < NSEG; n++) { BASE[n] = 4 * Math.sin(n * 2 * Math.PI * 28 / NSEG) + 1.5 * Math.sin(n * 2 * Math.PI * 90 / NSEG); hill[n] = BASE[n] + ELEV[n]; }
 for (const z of ZONES) {
@@ -202,6 +208,10 @@ for (const z of ZONES) {
     else if (z[2] === D.RAMP) curve[n] = 0.05 * smooth(0, 0.08, t) * smooth(0, 0.08, 1 - t);   // a tight spiral around a tower
   }
 }
+for (const tr of TRANS) {                              // ramps are straight or sweep in a curve, at random
+  if (zoneAt(tr.s)[2] === D.RAMP || zoneAt(tr.s)[4]) continue;
+  for (let n = tr.s; n < tr.e; n++) curve[n] = tr.curv * Math.sin(Math.PI * (n - tr.s) / (tr.e - tr.s));
+}
 
 // intersections with traffic lights and a zebra crossing; buildings leave a gap for the cross street
 const LIGHT_D = new Set([0, 1, 2, 6, 7, 9, 10, 12, 14]);
@@ -211,7 +221,7 @@ for (const z of ZONES) {
   if (z[4] || !LIGHT_D.has(z[2])) continue;
   for (let n = z[0] + 40; n < z[1] - 30; n += ELEV[n] === 0 ? 80 + Math.floor(rng() * 60) : 20) {
     let street = true;                                // traffic lights only down at street level
-    for (let m = n - 30; m < n + 12; m++) if (ELEV[(m + NSEG) % NSEG] > 0) { street = false; break; }
+    for (let m = n - 30; m < n + 12; m++) if (ELEV[(m + NSEG) % NSEG] > 0 || TRANS_AT[(m + NSEG) % NSEG] >= 0) { street = false; break; }
     if (!street) continue;
     IX.push(n);
     for (let i = 0; i < 3; i++) XROAD[n + i] = 1;
@@ -279,6 +289,7 @@ for (let side = 0; side < 2; side++) {
     };
     if (B.style === 2 && !B.crown) B.crown = cn[0];
     if (el > 1) B.set += 5 + rng() * 10;              // a gap beside the elevated road so you can see down
+    for (let m = n; m < n + len; m++) if (TRANS_AT[m] >= 0) { B.set += SPLIT + 4; break; }
     B.roof = (rng() * 4) | 0;
     const wc = d === 2 || d === 8 ? [150, 190, 235] : d === 10 ? [40, 120, 80] : [220, 170, 120];
     B.avg = mix(B.base, wc, B.winP * 0.35);
@@ -307,7 +318,7 @@ const SKYW = new Map();
 for (const z of ZONES) {
   if (z[4] || z[2] === D.TUNNEL || z[2] === D.RAMP) continue;
   for (let n = z[0] + 20; n < z[1] - 10; n += (ELEV[n] === 0 ? 14 : 28) + Math.floor(rng() * (ELEV[n] === 0 ? 16 : 30))) {
-    if (XROAD[n] || XROAD[n + 1] || XROAD[n + 2] || XROAD[n + 3] || XROAD[n - 1]) continue;
+    if (XROAD[n] || XROAD[n + 1] || XROAD[n + 2] || XROAD[n + 3] || XROAD[n - 1] || TRANS_AT[n] >= 0) continue;
     const e = Math.max(ELEV[n], ELEV[n + 2]), e0 = Math.min(ELEV[n], ELEV[n + 2]);
     const cands = [12, 20, 27, 50, 58, 66, 98, 112].filter(h => h > e + 7 || h + 1.4 < e0 - 3);
     if (!cands.length) continue;
@@ -342,10 +353,11 @@ let W, H, N, PX, F, HOR, HB, PW, img, fb, col, lb, refl;
 let OW, OH, SWD, SHD, MX, MY, colS, colO, bmask, bcol, vmask, vcol;
 function useScene() { W = SWD; H = SHD; N = W * H; col = colS; }
 function useOut() { W = OW; H = OH; N = W * H; col = colO; }
-let sky1, sky2, mtn, holoX = 0;
+let sky1, sky2, mtn, stars = [], holoX = 0;
 const Z = new Float32Array(DRAW + 2), S = new Float32Array(DRAW + 2), CX = new Float32Array(DRAW + 2), GY = new Float32Array(DRAW + 2);
 const EL = new Float32Array(DRAW + 2), GYL = new Float32Array(DRAW + 2);   // road height above the city floor, and the floor's screen y
-let gloom = 0;
+let gloom = 0, starK = 0;
+const OFF_OLD = new Float32Array(DRAW + 2), OFF_NEW = new Float32Array(DRAW + 2), LOW_OFF = new Float32Array(DRAW + 2);
 
 function setup() {
   PX = hd ? Math.max(1.5, Math.max(innerWidth, innerHeight) / 450) : Math.max(2, Math.round(Math.max(innerWidth, innerHeight) / 340));
@@ -379,6 +391,8 @@ function setup() {
     }
     return L;
   }
+  stars = [];
+  for (let i = 0; i < 420; i++) stars.push({ pc: r() * PW, yr: r(), b: 0.3 + r() * 0.7, tw: r() * 6 });
   mtn = new Float32Array(PW);
   for (let x = 0; x < PW; x++) {
     const u = x / PW * 40;
@@ -698,6 +712,19 @@ function drawSky(hy) {
       col[i] = c[0]; col[i + 1] = c[1]; col[i + 2] = c[2];
     }
   }
+  // stars, more of them the higher you ride
+  const sk = starK * (1 - gloom * 0.8) * (rainOn && wx === 'rain' ? 0.35 : rainOn && (wx === 'fog' || wx === 'sand') ? 0.2 : 1);
+  if (sk > 0.02) {
+    const bxs = Math.floor(bgX), yTop = hy - HB * 0.3;
+    for (const st of stars) {
+      const x = ((Math.round(st.pc - bxs)) % PW + PW) % PW;
+      if (x >= W) continue;
+      const y = Math.round(yTop * st.yr * st.yr);
+      const a = sk * st.b * (0.6 + 0.4 * Math.sin(T * 2 + st.tw));
+      addc(x, y, [220, 230, 255], a);
+      if (st.b > 0.92) { addc(x + 1, y, [220, 230, 255], a * 0.4); addc(x - 1, y, [220, 230, 255], a * 0.4); addc(x, y - 1, [220, 230, 255], a * 0.4); addc(x, y + 1, [220, 230, 255], a * 0.4); }
+    }
+  }
   // aurora curtains
   if (TH.aurora > 0.02) {
     for (let x = 0; x < W; x++) {
@@ -966,7 +993,7 @@ function drawLower(k, d) {
   const water = d === D.CANALS, iN = 1 / Z[k], iF = 1 / Z[f];
   for (let y = Math.max(0, Math.ceil(yF)); y <= Math.min(H - 1, Math.ceil(yN) - 1); y++) {
     const t = (y - yF) / (yN - yF), iz = iF + (iN - iF) * t, z = 1 / iz, s = F * iz, pxw = 1 / s;
-    const cx = CX[f] + (CX[k] - CX[f]) * t, wz = camZ + z, fz = fogAt(z), dash = (wz % 10) < 4.5, lw = Math.max(0.1, pxw * 0.55);
+    const cx = CX[f] + (CX[k] - CX[f]) * t + (LOW_OFF[f] + (LOW_OFF[k] - LOW_OFF[f]) * t) * s, wz = camZ + z, fz = fogAt(z), dash = (wz % 10) < 4.5, lw = Math.max(0.1, pxw * 0.55);
     let lx = -cx * pxw;
     for (let x = 0; x < W; x++, lx += pxw) {
       const a = lx < 0 ? -lx : lx;
@@ -1004,8 +1031,48 @@ function drawBelow(k, n, deckW) {
       const cz = Math.ceil((wz0 - off) / sp) * sp + off;
       if (cz >= wz0 + SEGL || !projAt(k, cz - wz0)) continue;
       const c = dir > 0 ? [255, 40, 50] : [230, 235, 255], fz = fogAt(PZ), y = Math.round(PGL - 0.6 * PS);
-      for (const o of [-0.7, 0.7]) { const xx = Math.round(PCX + (L + o) * PS); if (xx >= 0 && xx < W && y >= 0 && y < H) put(xx, y, ...mix(c, FOG, fz * 0.7)); }
-      if (PZ < 260) addLight(PCX + L * PS, y, Math.min(14, Math.max(2, 1.4 * PS)), c, 0.35 * (1 - fz));
+      for (const o of [-0.7, 0.7]) { const xx = Math.round(PCX + (L + o + LOW_OFF[k]) * PS); if (xx >= 0 && xx < W && y >= 0 && y < H) put(xx, y, ...mix(c, FOG, fz * 0.7)); }
+      if (PZ < 260) addLight(PCX + (L + LOW_OFF[k]) * PS, y, Math.min(14, Math.max(2, 1.4 * PS)), c, 0.35 * (1 - fz));
+    }
+  }
+}
+
+// ---- the road you left (or are about to join), running beside the ramp ----
+function drawSideRoad(k, offs, e) {
+  const f = k + 1, ok = offs[k], of = offs[f];
+  if (isNaN(ok) || isNaN(of)) return;
+  const yN = GYL[k] - e * S[k], yF = GYL[f] - e * S[f], iN = 1 / Z[k], iF = 1 / Z[f], half = RW + 1.5;
+  const above = yF < yN, y0 = above ? yF : yN, y1 = above ? yN : yF;
+  if (Math.abs(y1 - y0) < 0.01) return;
+  for (let y = Math.max(0, Math.ceil(y0)); y <= Math.min(H - 1, Math.ceil(y1) - 1); y++) {
+    const t = above ? (y - yF) / (yN - yF) : (yF - y) / (yF - yN), iz = iF + (iN - iF) * t, z = 1 / iz, s = F * iz, pxw = 1 / s;
+    const cx = CX[f] + (CX[k] - CX[f]) * t + (of + (ok - of) * t) * s, wz = camZ + z, fz = fogAt(z), lw = Math.max(0.1, pxw * 0.55), dash = (wz % 10) < 4.5;
+    for (let x = Math.max(0, Math.ceil(cx - half * s)); x <= Math.min(W - 1, Math.ceil(cx + half * s) - 1); x++) {
+      const a = Math.abs((x + 0.5 - cx) * pxw);
+      let c, op = 1;
+      if (!above) c = Math.abs(a - 3.5) < 0.6 && (wz % 8) < 0.8 ? [255, 210, 150] : [20, 18, 28];          // underside with lamps
+      else if (a > RW + 1.25) c = [120, 140, 160];
+      else if (Math.abs(a - 0.2) < lw) c = [235, 165, 40];
+      else if (dash && Math.abs(a - 3.5) < lw) c = [190, 190, 210];
+      else if (Math.abs(a - (RW - 0.3)) < lw) c = [200, 200, 215];
+      else if (a < RW) { c = [20, 34, 52]; op = 0.55; }
+      else { c = [46, 40, 60]; op = 0.6; }
+      const i = y * W + x, j = i * 3, r = c[0] + (FOG[0] - c[0]) * fz, g = c[1] + (FOG[1] - c[1]) * fz, b = c[2] + (FOG[2] - c[2]) * fz;
+      col[j] += (r - col[j]) * op; col[j + 1] += (g - col[j + 1]) * op; col[j + 2] += (b - col[j + 2]) * op;
+      refl[i] = 0;
+    }
+  }
+  if (above && Z[k] > 6) {                            // its traffic
+    const wz0 = camZ + Z[k];
+    for (const L of [-5.25, -1.75, 1.75, 5.25]) {
+      const dir = L > 0 ? 1 : -1, sp = 26 + Math.abs(L) * 4, off = ((T * 14 * dir + L * 23 + e) % sp + sp) % sp;
+      const cz = Math.ceil((wz0 - off) / sp) * sp + off;
+      if (cz >= wz0 + SEGL || !projAt(k, cz - wz0)) continue;
+      const tt = (cz - wz0) / SEGL, o = ok + (of - ok) * tt, c = dir > 0 ? [255, 40, 50] : [230, 235, 255], fz = fogAt(PZ);
+      const x = PCX + (L + o) * PS, y = PGL - (e + 0.6) * PS;
+      blob(x - 0.7 * PS, y, Math.max(0.6, 0.2 * PS), Math.max(0.6, 0.15 * PS), c, 1, fz * 0.6);
+      blob(x + 0.7 * PS, y, Math.max(0.6, 0.2 * PS), Math.max(0.6, 0.15 * PS), c, 1, fz * 0.6);
+      if (PZ < 220) addLight(x, y, Math.min(16, Math.max(2, 1.5 * PS)), c, 0.4 * (1 - fz));
     }
   }
 }
@@ -1268,14 +1335,13 @@ function drawSkybridge(k, n) {
     }
   }
 }
-function drawGantry(k, city) {
+function drawGantry(k, nm, c) {
   if (!projAt(k, 0)) return;
   const s = PS, fz = fogAt(PZ), L = RW + 1;
   for (const sg of [-1, 1]) rect(PCX + sg * L * s - 0.2 * s, PCX + sg * L * s + 0.2 * s, PGY - 8 * s, PGY, [40, 40, 54], fz);
   rect(PCX - L * s, PCX + L * s, PGY - 8.3 * s, PGY - 7.9 * s, [40, 40, 54], fz);
-  const xa = PCX - 6 * s, xb = PCX + 6 * s, ya = PGY - 7.9 * s, yb = PGY - 5.9 * s, c = city.neon[0];
+  const xa = PCX - 6 * s, xb = PCX + 6 * s, ya = PGY - 7.9 * s, yb = PGY - 5.9 * s;
   rect(xa, xb, ya, yb, [10, 10, 18], fz);
-  const nm = city.name;
   const cols = nm.length * 4;
   for (let x = Math.max(0, Math.ceil(xa)); x <= Math.min(W - 1, Math.ceil(xb) - 1); x++) {
     const gi = Math.floor((x + 0.5 - xa) / (xb - xa) * (cols + 4)) - 2;
@@ -1957,7 +2023,7 @@ const FONT = {
   'U': '101101101101111', 'T': '111010010010010', 'O': '111101101101111', 'N': '110101101101101', 'L': '100100100100111',
   'R': '110101110101101', 'I': '111010010010111', ' ': '000000000000000', 'E': '111100110100111', 'P': '111101111100100',
   'D': '110101101101110', 'S': '111100111001111', 'C': '111100100100111',
-  'V': '101101101101010', 'B': '110101110101110', 'Y': '101101010010010', 'G': '111100101101111',
+  'W': '101101101111101', '^': '010111010010010', '_': '010010010111010', 'V': '101101101101010', 'B': '110101110101110', 'Y': '101101010010010', 'G': '111100101101111',
 };
 function text(str, x, y, c, sc) {
   for (const ch of str) {
@@ -2042,7 +2108,8 @@ function render() {
   const camY = hill[b0] + (hill[b1] - hill[b0]) * frac + eye() + Math.sin(camZ * 0.9) * 0.015 * Math.min(1, speed / 20);
   // the higher you ride, the more the camera tilts down to show the layers below
   const raise = (hill[b0] - BASE[b0]) + ((hill[b1] - BASE[b1]) - (hill[b0] - BASE[b0])) * frac;
-  const sh = shake * 3, hy = HOR - F * Math.tan(0.34 * clamp(raise / 80, 0, 1.1)) + (Math.random() - 0.5) * sh;
+  const sh = shake * 3, hy = HOR + OH * 0.14 * smooth(0, 80, raise) + (Math.random() - 0.5) * sh;
+  starK = smooth(10, 80, raise);
   const camX = px + (Math.random() - 0.5) * shake * 0.4;
   blendTheme(base);
 
@@ -2054,6 +2121,14 @@ function render() {
     CX[k] = W / 2 + (x - camX) * S[k];
     GY[k] = hy - (hill[n] - camY) * S[k];
     EL[k] = LAYERED[n] ? ELEV[n] : 0; GYL[k] = GY[k] + EL[k] * S[k];
+    OFF_OLD[k] = NaN; OFF_NEW[k] = NaN; LOW_OFF[k] = 0;
+    const ti = TRANS_AT[n];
+    if (ti >= 0) {
+      const tr = TRANS[ti], t = (n - tr.s) / (tr.e - tr.s);
+      if (t > 0) OFF_OLD[k] = tr.side * (SPLIT * smooth(0, 0.35, t) + Math.max(0, n - tr.e) * 0.6);
+      if (t < 1) OFF_NEW[k] = -tr.side * (SPLIT * (1 - smooth(0.65, 1, t)) + Math.max(0, tr.s - n) * 0.6);
+      if (tr.from === 0 && t > 0) LOW_OFF[k] = OFF_OLD[k]; else if (tr.to === 0 && t < 1) LOW_OFF[k] = OFF_NEW[k];
+    }
     x += dx; dx += curve[n];
   }
 
@@ -2096,6 +2171,11 @@ function render() {
       if (d === D.RAMP) quadWall(k, RW + SW + 3, -EL[k] - 2, 160, towerTex);
       else { drawWall(k, 0, n); drawWall(k, 1, n); }
       if (elev) { drawBelow(k, n, deckW); if (sw && sw.hb + 1.4 < EL[k]) drawSkywalk(k, n, sw); }
+      if (TRANS_AT[n] >= 0) {
+        const tr = TRANS[TRANS_AT[n]];
+        if (LH[tr.from] > 0 && LH[tr.from] <= EL[k] + 0.5) drawSideRoad(k, OFF_OLD, LH[tr.from]);
+        if (LH[tr.to] > 0 && LH[tr.to] <= EL[k] + 0.5) drawSideRoad(k, OFF_NEW, LH[tr.to]);
+      }
       drawGround(k, d, elev);
       if (elev && d !== D.HIGHWAY) { quadWall(k, -deckW, 0, 1.1, railTex); quadWall(k, deckW, 0, 1.1, railTex); }
       if (d === D.HIGHWAY) {
@@ -2131,6 +2211,11 @@ function render() {
       }
     }
     if (sw && sw.hb + 1.4 >= EL[k]) drawSkywalk(k, n, sw);
+    if (TRANS_AT[n] >= 0 && LAYERED[n]) {
+      const tr = TRANS[TRANS_AT[n]];
+      if (LH[tr.from] > EL[k] + 0.5) drawSideRoad(k, OFF_OLD, LH[tr.from]);
+      if (LH[tr.to] > EL[k] + 0.5) drawSideRoad(k, OFF_NEW, LH[tr.to]);
+    }
     if (d === D.SHRINE && n % 3 === 0) drawTorii(k, n);
     if (!elev) {
       if (d === D.STACK && n % 4 === 2) drawLaundry(k, n);
@@ -2140,8 +2225,10 @@ function render() {
     }
     if (![D.TUNNEL, D.BRIDGE, D.TUBE, D.RAMP].includes(d) && n % 300 === 150) drawKoi(k, n);
     { const zz = zoneAt(n);
-      if (zz[4] && zz[2] !== D.TUBE && n === zz[0] + 4) drawGantry(k, CITIES[(zz[3] + 1) % CITIES.length]);
-      if (!zz[4] && n === zz[0] + 2 && zoneAt(n - 3)[4] && zz[2] !== D.TUNNEL) drawGantry(k, CITIES[zz[3]]); }
+      if (zz[4] && zz[2] !== D.TUBE && n === zz[0] + 4) { const c2 = CITIES[(zz[3] + 1) % CITIES.length]; drawGantry(k, c2.name, c2.neon[0]); }
+      if (!zz[4] && n === zz[0] + 2 && zoneAt(n - 3)[4] && zz[2] !== D.TUNNEL) drawGantry(k, CITIES[zz[3]].name, CITIES[zz[3]].neon[0]);
+      const ti = TRANS_AT[n];
+      if (ti >= 0 && n === TRANS[ti].s - 10) { const tr = TRANS[ti], up = tr.to > tr.from; drawGantry(k, 'TO LEVEL ' + (tr.to + 1) + (up ? ' ^' : ' _'), up ? [80, 255, 150] : [255, 170, 60]); } }
   }
 
   addLight(W / 2, hy + eye() * F / 14, Math.min(30, F * 2.4 / 14), [190, 215, 255], 0.22 + 0.3 * TH.dark);
