@@ -1,0 +1,847 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no">
+<title>Neon Drive</title>
+<style>
+  html, body { margin: 0; height: 100%; overflow: hidden; background: #05030a; -webkit-user-select: none; user-select: none; }
+  canvas { display: block; image-rendering: crisp-edges; image-rendering: pixelated; touch-action: none; }
+  .tag {
+    position: fixed; font: 12px ui-monospace, Menlo, monospace; color: #ff9ce6; letter-spacing: 1px;
+    background: rgba(10, 4, 14, 0.66); padding: 5px 10px; border: 1px solid #5a1d4f; pointer-events: none;
+  }
+  #hint { left: 50%; top: 14px; transform: translateX(-50%); white-space: nowrap; transition: opacity 1.5s; }
+  #pad { display: none; }
+  @media (pointer: coarse) {
+    #pad { display: block; }
+    #hint { display: none; }
+  }
+  .btn {
+    position: fixed; bottom: 18px; width: 74px; height: 74px; border-radius: 14px;
+    background: rgba(20, 8, 30, 0.45); border: 2px solid rgba(255, 80, 200, 0.6); color: #ffb6ef;
+    font: bold 15px ui-monospace, Menlo, monospace; display: flex; align-items: center; justify-content: center;
+    touch-action: none; -webkit-tap-highlight-color: transparent;
+  }
+  .btn.on { background: rgba(255, 60, 190, 0.45); }
+  #bl { left: 18px; } #br { left: 104px; }
+  #bb { right: 104px; } #bg { right: 18px; border-color: rgba(0, 230, 255, 0.7); color: #a8f6ff; }
+  #ba { right: 18px; top: 18px; bottom: auto; height: 44px; width: 74px; font-size: 13px; }
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<div id="hint" class="tag">&larr; &rarr; steer &nbsp;&middot;&nbsp; &uarr; gas &nbsp;&middot;&nbsp; &darr; brake &nbsp;&middot;&nbsp; A autopilot &nbsp;&middot;&nbsp; R rain</div>
+<div id="pad">
+  <div class="btn" id="bl">&#9664;</div><div class="btn" id="br">&#9654;</div>
+  <div class="btn" id="bb">BRK</div><div class="btn" id="bg">GAS</div>
+  <div class="btn on" id="ba">AUTO</div>
+</div>
+<script>
+// Pseudo-3D city street rendered into a small pixel buffer; CSS scales it up with nearest-neighbour.
+const SEGL = 4, NSEG = 1500, DRAW = 150, LEN = NSEG * SEGL;
+const RW = 7, SW = 3.2, EYE = 1.15, NEAR = 0.7, MAXV = 50;
+const FOG = [44, 16, 56];
+const NEON = [[255, 46, 170], [0, 234, 255], [255, 214, 64], [170, 90, 255], [70, 255, 150], [255, 110, 50]];
+const WIN = [[255, 200, 120], [255, 170, 90], [120, 220, 255], [255, 120, 200], [200, 190, 255], [255, 236, 190]];
+
+const cv = document.getElementById('c');
+const ctx = cv.getContext('2d');
+
+// ---------- helpers ----------
+const BAYER = [0, 8, 2, 10, 12, 4, 14, 6, 3, 11, 1, 9, 15, 7, 13, 5].map(v => (v + 0.5) / 16);
+function bay(x, y) { return BAYER[(y & 3) * 4 + (x & 3)]; }
+function clamp(v, a, b) { return v < a ? a : v > b ? b : v; }
+function smooth(a, b, v) { const t = clamp((v - a) / (b - a), 0, 1); return t * t * (3 - 2 * t); }
+function mix(a, b, t) { return [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t, a[2] + (b[2] - a[2]) * t]; }
+function hash(x, y, s) {
+  let h = (x * 374761393 + y * 668265263 + s * 1442695041) | 0;
+  h = Math.imul(h ^ (h >>> 13), 1274126177);
+  h ^= h >>> 16;
+  return (h >>> 0) / 4294967296;
+}
+function vnoise(x, y, s) {
+  const ix = Math.floor(x), iy = Math.floor(y), fx = x - ix, fy = y - iy;
+  const a = hash(ix, iy, s), b = hash(ix + 1, iy, s), c = hash(ix, iy + 1, s), d = hash(ix + 1, iy + 1, s);
+  const ux = fx * fx * (3 - 2 * fx), uy = fy * fy * (3 - 2 * fy);
+  return a + (b - a) * ux + (c - a) * uy + (a - b - c + d) * ux * uy;
+}
+function mulberry(a) {
+  return () => { a |= 0; a = (a + 0x6D2B79F5) | 0; let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t; return ((t ^ (t >>> 14)) >>> 0) / 4294967296; };
+}
+function hsl(h, s, l) {
+  h = (((h % 360) + 360) % 360) / 360;
+  const f = n => { const k = (n + h * 12) % 12, a = s * Math.min(l, 1 - l);
+    return 255 * (l - a * Math.max(-1, Math.min(k - 3, 9 - k, 1))); };
+  return [f(0), f(8), f(4)];
+}
+function fogAt(z) { return smooth(90, DRAW * SEGL * 0.97, z) * 0.92; }
+
+// ---------- the city (generated once) ----------
+const rng = mulberry(2077);
+const curve = new Float32Array(NSEG), hill = new Float32Array(NSEG);
+for (let n = 0; n < NSEG;) {
+  const len = Math.min(NSEG - n, 40 + Math.floor(rng() * 90));
+  const c = rng() < 0.4 ? 0 : (rng() < 0.5 ? -1 : 1) * (0.008 + rng() * 0.028);
+  for (let i = 0; i < len; i++) curve[n + i] = c * Math.sin(Math.PI * i / len);
+  n += len;
+}
+for (let n = 0; n < NSEG; n++) hill[n] = 4 * Math.sin(n * 2 * Math.PI / 500) + 1.5 * Math.sin(n * 2 * Math.PI / 150);
+
+const blocks = [];
+const SIDE = [new Int32Array(NSEG).fill(-1), new Int32Array(NSEG).fill(-1)];
+for (let side = 0; side < 2; side++) {
+  for (let n = 0; n < NSEG;) {
+    if (rng() < 0.17) { n += 1 + Math.floor(rng() * 2); continue; }
+    const len = Math.min(NSEG - n, 4 + Math.floor(rng() * 12));
+    const h = 12 + Math.pow(rng(), 1.7) * 75;
+    const B = {
+      id: blocks.length, start: n, len, h, set: rng() * 2.5, seed: (rng() * 1e6) | 0,
+      base: hsl(200 + rng() * 100, 0.22, 0.09 + rng() * 0.08),
+      winP: 0.15 + rng() * 0.4,
+      crown: rng() < 0.45 ? NEON[(rng() * 6) | 0] : null,
+      shop: [NEON[(rng() * 6) | 0], WIN[(rng() * 6) | 0], NEON[(rng() * 6) | 0]],
+      bbs: [], signs: [],
+    };
+    const L = len * SEGL;
+    if (rng() < 0.6 && h > 18 && L > 10) {
+      const w = Math.min(L - 2, 6 + rng() * 10), hh = 4 + rng() * 6, v0 = 6 + rng() * Math.max(0, h - hh - 9);
+      const u0 = 1 + rng() * (L - w - 2);
+      B.bbs.push({ u0, u1: u0 + w, v0, v1: v0 + hh, kind: (rng() * 3) | 0, c1: NEON[(rng() * 6) | 0], c2: NEON[(rng() * 6) | 0], seed: (rng() * 1e6) | 0 });
+    }
+    const ns = rng() < 0.65 ? 1 + ((rng() * 2) | 0) : 0;
+    for (let i = 0; i < ns; i++) {
+      const v0 = 4.2 + rng() * 3, v1 = Math.min(h - 0.5, v0 + 5 + rng() * 9);
+      B.signs.push({ u: 0.5 + rng() * (L - 1), v0, v1, c: NEON[(rng() * 6) | 0], seed: (rng() * 1e6) | 0 });
+    }
+    blocks.push(B);
+    for (let i = 0; i < len; i++) SIDE[side][n + i] = B.id;
+    n += len;
+  }
+}
+
+// traffic
+const cars = [];
+for (let i = 0; i < 46; i++) {
+  const dir = rng() < 0.68 ? 1 : -1;
+  cars.push({
+    z: rng() * LEN, dir, x: dir * (rng() < 0.5 ? 1.75 : 5.25),
+    speed: dir > 0 ? 13 + rng() * 13 : 16 + rng() * 10,
+    body: hsl(rng() * 360, 0.25 + rng() * 0.3, 0.14 + rng() * 0.12),
+    tail: rng() < 0.6 ? [255, 36, 60] : [255, 40, 170],
+    under: NEON[(rng() * 6) | 0], neon: rng() < 0.4,
+  });
+}
+
+// ---------- buffers ----------
+let W, H, N, PX, F, HOR, PW, img, fb, col, lb, refl, dmask, dcol;
+let sky1, sky2, flyers = [], holoX = 0;
+const Z = new Float32Array(DRAW + 2), S = new Float32Array(DRAW + 2), CX = new Float32Array(DRAW + 2), GY = new Float32Array(DRAW + 2);
+
+function dashTopAt(x) {
+  const u = x / W - 0.5;
+  let t = H * 0.8 + u * u * H * 0.16;
+  if (Math.abs(u) < 0.15) t -= Math.cos(u / 0.15 * Math.PI / 2) * H * 0.03;
+  return t;
+}
+function roofAt(x) { const u = x / W - 0.5; return H * 0.05 + u * u * H * 0.1; }
+function pillarAt(y) { const t = clamp(1 - y / (H * 0.8), 0, 1); return W * 0.02 + t * t * W * 0.11; }
+
+function setup() {
+  PX = Math.max(2, Math.round(Math.max(innerWidth, innerHeight) / 340));
+  W = Math.ceil(innerWidth / PX); H = Math.ceil(innerHeight / PX); N = W * H;
+  cv.width = W; cv.height = H;
+  cv.style.width = W * PX + 'px'; cv.style.height = H * PX + 'px';
+  img = ctx.createImageData(W, H);
+  fb = new Uint32Array(img.data.buffer);
+  col = new Float32Array(N * 3); lb = new Float32Array(N * 3); refl = new Float32Array(N);
+  F = Math.max(W * 0.62, H * 0.8);
+  HOR = Math.round(H * 0.44);
+  PW = Math.round(F * 2 * Math.PI);
+
+  // skyline panorama: two layers of towers
+  const r = mulberry(99);
+  function layer(minH, maxH, minW, maxW) {
+    const L = { h: new Int16Array(PW), x0: new Int32Array(PW), seed: new Int32Array(PW), crown: [] };
+    for (let x = 0; x < PW;) {
+      const w = minW + Math.floor(r() * (maxW - minW)), h = Math.round(minH + Math.pow(r(), 1.5) * (maxH - minH));
+      const sd = (r() * 1e6) | 0, cr = r() < 0.25 ? NEON[(r() * 6) | 0] : null;
+      for (let i = 0; i < w && x + i < PW; i++) { L.h[x + i] = h; L.x0[x + i] = x; L.seed[x + i] = sd; L.crown[x + i] = cr; }
+      x += w + (r() < 0.3 ? 1 + Math.floor(r() * 3) : 0);
+    }
+    return L;
+  }
+  sky1 = layer(HOR * 0.15, HOR * 0.85, 5, 16);
+  sky2 = layer(HOR * 0.08, HOR * 0.45, 8, 22);
+  holoX = Math.round(PW * 0.02);
+  flyers = [];
+  for (let i = 0; i < 14; i++) flyers.push({ pc: r() * PW, y: HOR * (0.12 + r() * 0.5), v: (r() < 0.5 ? -1 : 1) * (12 + r() * 40), c: NEON[(r() * 6) | 0] });
+
+  // static cockpit overlay
+  dmask = new Uint8Array(N); dcol = new Float32Array(N * 3);
+  const set = (x, y, c) => { const i = y * W + x; dmask[i] = 1; dcol[i * 3] = c[0]; dcol[i * 3 + 1] = c[1]; dcol[i * 3 + 2] = c[2]; };
+  const mw = Math.round(W * 0.17), mh = Math.max(6, Math.round(H * 0.065));
+  const mx0 = Math.round(W / 2 - mw / 2), my0 = Math.round(roofAt(W / 2)) + 3;
+  for (let y = 0; y < H; y++) {
+    const pl = pillarAt(y);
+    for (let x = 0; x < W; x++) {
+      const dt = dashTopAt(x), rf = roofAt(x);
+      if (y >= dt) {
+        const k = (y - dt) / (H - dt);
+        let c = mix([28, 22, 42], [8, 6, 14], Math.min(1, k * 1.6));
+        if (y - dt < 1) c = [86, 60, 128];
+        else if (hash(x, y, 4) < 0.08) c = mix(c, [0, 0, 0], 0.3);
+        set(x, y, c);
+      } else if (y < rf) {
+        set(x, y, rf - y < 1 ? [52, 40, 76] : [10, 8, 16]);
+      } else if (x < pl || x >= W - pl) {
+        const edge = x < pl ? pl - x : x - (W - pl);
+        set(x, y, edge < 1 ? [48, 36, 70] : [12, 9, 18]);
+      } else if (x >= mx0 && x < mx0 + mw && y >= my0 && y < my0 + mh) {
+        const bx = x === mx0 || x === mx0 + mw - 1 || y === my0 || y === my0 + mh - 1;
+        const t = (y - my0) / mh;
+        set(x, y, bx ? [20, 16, 28] : mix([40, 18, 60], [120, 40, 110], t));
+      } else if (Math.abs(x - W / 2) < 1 && y >= rf && y < my0) {
+        set(x, y, [20, 16, 28]);
+      }
+    }
+  }
+  // the mirror shows a pair of headlights far behind
+  for (const sx of [-2, 2]) set(Math.round(W / 2 + sx), my0 + Math.round(mh * 0.62), [255, 240, 220]);
+}
+
+// ---------- state ----------
+let T = 0, last = performance.now();
+let camZ = 0, speed = 30, px = 3.5, steer = 0, bgX = 0, shake = 0, crashFlash = 0;
+let auto = true, autoLane = 3.5 > 3 ? 5.25 : 1.75, laneCool = 0, idle = 0;
+let rainOn = true, drops = [], streaks = [], wT = 0, wAng = Math.PI;
+const keys = { left: false, right: false, gas: false, brake: false };
+
+setup();
+addEventListener('resize', setup);
+
+// ---------- simulation ----------
+function rel(z) { return ((z - camZ) % LEN + LEN) % LEN; }
+
+function laneInfo(lx) {
+  let d = 1e9, v = MAXV, blocked = false;
+  for (const c of cars) {
+    if (Math.abs(c.x - lx) > 2.0) continue;
+    const r = rel(c.z);
+    if (r > LEN - 9 || r < 10) blocked = true;
+    const e = c.dir < 0 ? r * 0.45 : r;
+    if (r > 0.5 && e < d) { d = e; v = c.dir > 0 ? c.speed : 0; }
+  }
+  return { d, v, blocked };
+}
+
+function update(dt) {
+  const n = Math.floor(camZ / SEGL) % NSEG;
+  const kappa = curve[n] / (SEGL * SEGL);
+  const latMax = 7 * Math.min(1, speed / 12 + 0.05);
+  let steerT;
+
+  if (!auto) { idle += dt; if (idle > 10) setAuto(true); }
+
+  if (auto) {
+    laneCool -= dt;
+    const other = autoLane > 3 ? 1.75 : 5.25;
+    const cur = laneInfo(autoLane), alt = laneInfo(other);
+    if (laneCool <= 0 && cur.d < 90 && alt.d > cur.d + 20 && !alt.blocked) { autoLane = other; laneCool = 2.5; }
+    let target = MAXV * 0.86;
+    const now = laneInfo(autoLane);
+    if (now.d < 80) target = Math.min(target, now.v + (now.d - 16) * 0.55);
+    speed += clamp(target - speed, -22 * dt, 9 * dt);
+    const want = (autoLane - px) * 1.8 + kappa * speed * speed * 0.35;
+    steerT = clamp(want / latMax, -1, 1);
+  } else {
+    steerT = (keys.right ? 1 : 0) - (keys.left ? 1 : 0);
+    if (keys.gas) speed += 11 * dt * (1 - 0.6 * speed / MAXV);
+    else if (keys.brake) speed -= 26 * dt;
+    else speed -= 2.5 * dt;
+  }
+  speed = clamp(speed, 0, MAXV);
+  steer += (steerT - steer) * Math.min(1, dt * 6);
+  px += steer * latMax * dt;
+  px -= kappa * speed * speed * dt * 0.35;
+  if (Math.abs(px) > RW - 1) { px = Math.sign(px) * (RW - 1); speed *= 1 - dt * 1.5; shake = Math.max(shake, 0.15 * Math.min(1, speed / 20)); }
+
+  camZ = (camZ + speed * dt) % LEN;
+  bgX += kappa * speed * dt * F;
+
+  for (const c of cars) {
+    c.z = ((c.z + c.dir * c.speed * dt) % LEN + LEN) % LEN;
+    const r = rel(c.z);
+    if (r < 3.2 && Math.abs(c.x - px) < 1.9) {
+      if (c.dir > 0) { if (speed > c.speed) { speed = c.speed * 0.6; c.z = (camZ + 5) % LEN; shake = 0.7; crashFlash = 0.6; } }
+      else { speed *= 0.25; c.z = (camZ - 6 + LEN) % LEN; shake = 1; crashFlash = 1; }
+    }
+  }
+  shake *= Math.exp(-dt * 4); crashFlash *= Math.exp(-dt * 5);
+
+  for (const f of flyers) f.pc = ((f.pc + f.v * dt) % PW + PW) % PW;
+
+  // rain
+  const want = rainOn ? Math.round(W * 0.6) : 0;
+  while (streaks.length < want) streaks.push({ x: Math.random() * W, y: Math.random() * H, v: 140 + Math.random() * 80, l: 2 + Math.random() * 4 });
+  if (streaks.length > want) streaks.length = want;
+  for (const s of streaks) {
+    s.y += s.v * dt; s.x += (s.x - W / 2) * dt * speed * 0.02 - steer * 20 * dt;
+    if (s.y > H || s.x < 0 || s.x >= W) { s.x = Math.random() * W; s.y = Math.random() * H * 0.3; }
+  }
+  if (rainOn && drops.length < 140) for (let i = 0; i < 30 * dt * (1 + Math.random()); i++)
+    drops.push({ x: Math.random() * W, y: Math.random() * H * 0.8, s: Math.random() < 0.3 ? 2 : 1 });
+  for (let i = drops.length - 1; i >= 0; i--) {
+    const d = drops[i];
+    d.y -= speed * 0.04 * dt * (1 + d.s); d.x += (d.x - W / 2) * 0.004 * speed * dt;
+    if (d.y < 0 || d.x < 0 || d.x >= W) drops.splice(i, 1);
+  }
+  // wiper
+  if (rainOn || wT % 3.4 < 1.4) wT += dt;
+  const ph = wT % 3.4;
+  wAng = ph < 1.4 ? Math.PI + Math.sin(ph / 1.4 * Math.PI) * Math.PI * 0.62 : Math.PI;
+  if (ph < 1.4) {
+    const pvx = W * 0.62, pvy = dashTopAt(W * 0.62) + 1, ca = Math.cos(wAng), sa = Math.sin(wAng), L = H * 0.66;
+    for (let i = drops.length - 1; i >= 0; i--) {
+      const dx = drops[i].x - pvx, dy = drops[i].y - pvy, along = dx * ca + dy * sa;
+      if (along > 0 && along < L && Math.abs(-dx * sa + dy * ca) < 3) drops.splice(i, 1);
+    }
+  }
+}
+
+// ---------- drawing ----------
+function addLight(x, y, R, c, I) {
+  if (I <= 0.02) return;
+  R = Math.min(30, Math.round(R)); if (R < 1) return;
+  x = Math.round(x); y = Math.round(y);
+  if (x + R < 0 || x - R >= W || y + R < 0 || y - R >= H) return;
+  const R2 = R * R;
+  for (let dy = -R; dy <= R; dy++) {
+    const yy = y + dy; if (yy < 0 || yy >= H) continue;
+    for (let dx = -R; dx <= R; dx++) {
+      const xx = x + dx; if (xx < 0 || xx >= W) continue;
+      const d2 = dx * dx + dy * dy; if (d2 >= R2) continue;
+      let f = 1 - Math.sqrt(d2) / R; f = f * f * I;
+      f = Math.floor(f * 5 + bay(xx, yy)) / 5;
+      if (f <= 0) continue;
+      const i = (yy * W + xx) * 3;
+      lb[i] += c[0] * f; lb[i + 1] += c[1] * f; lb[i + 2] += c[2] * f;
+    }
+  }
+}
+function put(x, y, r, g, b) {
+  if (x < 0 || y < 0 || x >= W || y >= H) return;
+  const i = (y * W + x) * 3; col[i] = r; col[i + 1] = g; col[i + 2] = b;
+}
+function putc(x, y, c) { put(x, y, c[0], c[1], c[2]); }
+function addc(x, y, c, a) {
+  if (x < 0 || y < 0 || x >= W || y >= H) return;
+  const i = (y * W + x) * 3; col[i] += c[0] * a; col[i + 1] += c[1] * a; col[i + 2] += c[2] * a;
+}
+
+// sky, smog, skyline, hologram, flying cars
+function drawSky(hy) {
+  const top = [6, 4, 16], mid = [30, 10, 46], hz = [104, 32, 96];
+  for (let y = 0; y < H; y++) {
+    const t = clamp(y / hy, 0, 1);
+    for (let x = 0; x < W; x++) {
+      const q = Math.min(1, Math.floor(t * 20 + bay(x, y)) / 20);
+      const c = q < 0.6 ? mix(top, mid, q / 0.6) : mix(mid, hz, (q - 0.6) / 0.4);
+      const i = (y * W + x) * 3; col[i] = c[0]; col[i + 1] = c[1]; col[i + 2] = c[2];
+    }
+  }
+  // smog bands lit from below
+  for (let y = 0; y < hy * 0.85; y++) {
+    const glowK = y / hy;
+    for (let x = 0; x < W; x++) {
+      const n = vnoise((x + bgX * 0.5) * 0.03 + T * 0.05, y * 0.12, 3) * 0.65 + vnoise((x + bgX * 0.5) * 0.08, y * 0.3, 5) * 0.35;
+      const d = n - 0.6;
+      if (d <= 0 || d * 9 < bay(x, y)) continue;
+      putc(x, y, mix([36, 14, 54], [150, 50, 130], glowK * glowK));
+    }
+  }
+  const bx = Math.floor(bgX);
+  function towers(L, cBase, cWin, fog) {
+    for (let x = 0; x < W; x++) {
+      const pc = ((x + bx) % PW + PW) % PW, h = L.h[pc], top = Math.round(hy - h), sd = L.seed[pc], wx = pc - L.x0[pc];
+      for (let y = Math.max(0, top); y <= hy + 2 && y < H; y++) {
+        const hy2 = Math.round(hy - y);
+        let c = cBase;
+        if (y === top && L.crown[pc]) c = L.crown[pc];
+        else if (wx % 3 === 1 && hy2 % 3 === 1 && hash(pc, hy2, sd) < 0.28) c = mix(WIN[sd % 6], fog, cWin);
+        putc(x, y, c);
+      }
+      if (h > HOR * 0.6 && wx === 2) {
+        for (let k = 1; k < 5; k++) putc(x, top - k, cBase);
+        if ((T * 1.3 + sd) % 2 < 0.9) { putc(x, top - 5, [255, 40, 40]); addLight(x, top - 5, 3, [255, 40, 40], 0.5); }
+      }
+    }
+  }
+  towers(sky1, [40, 20, 60], 0.6, [70, 30, 80]);
+  // hologram jellyshroom above the skyline
+  const hx = ((holoX - bx) % PW + PW) % PW;
+  const R = Math.max(10, Math.round(H * 0.11));
+  if (hx > -R * 2 && hx < W + R * 2) {
+    const glitch = hash(Math.floor(T * 9), 1, 1) < 0.06;
+    const cx = hx + (glitch ? 3 : 0), cy = Math.round(hy * 0.42 + Math.sin(T * 0.7) * 3);
+    const a = glitch ? 0.25 : 0.55, hc = [70, 230, 255], pulse = 1 + Math.sin(T * 2.2) * 0.06;
+    for (let dy = -Math.ceil(R * 0.8); dy <= 1; dy++) for (let dx = -R - 1; dx <= R + 1; dx++) {
+      const e = (dx / (R * pulse)) ** 2 + (dy / (R * 0.8)) ** 2;
+      if (e > 1) continue;
+      if ((cy + dy) % 2 && e < 0.8) continue;
+      addc(cx + dx, cy + dy, e > 0.8 ? [150, 255, 255] : hc, e > 0.8 ? a : a * 0.4);
+    }
+    for (let i = 0; i < 5; i++) for (let s = 1; s < R * 1.5; s++) {
+      if ((cy + s) % 2) continue;
+      addc(Math.round(cx + (i - 2) * R * 0.38 + Math.sin(T * 2 + s * 0.25 + i) * s * 0.1), cy + s, [200, 120, 255], a * (1 - s / (R * 1.5)));
+    }
+    addLight(cx, cy, R * 1.6, hc, 0.12);
+  }
+  towers(sky2, [22, 12, 36], 0.35, [50, 20, 60]);
+  for (const f of flyers) {
+    const x = ((Math.round(f.pc - bx)) % PW + PW) % PW;
+    if (x < -8 || x > W + 8) continue;
+    const y = Math.round(f.y + Math.sin(T + f.pc) * 1.5);
+    for (let k = 1; k < 7; k++) addc(x - Math.sign(f.v) * k, y, f.c, 0.5 * (1 - k / 7));
+    putc(x, y, [255, 255, 255]);
+    addLight(x, y, 4, f.c, 0.4);
+  }
+}
+
+function drawGround(k) {
+  const f = k + 1, yN = GY[k], yF = GY[f];
+  if (yF >= yN) return;
+  const y0 = Math.max(0, Math.ceil(yF)), y1 = Math.min(H - 1, Math.ceil(yN) - 1);
+  const iN = 1 / Z[k], iF = 1 / Z[f];
+  for (let y = y0; y <= y1; y++) {
+    const t = (y - yF) / (yN - yF), iz = iF + (iN - iF) * t, z = 1 / iz, s = F * iz;
+    const cx = CX[f] + (CX[k] - CX[f]) * t, wz = camZ + z, fz = fogAt(z), pxw = 1 / s;
+    const dash = (wz % 10) < 4.5, lw = Math.max(0.09, pxw * 0.55), tileRow = (wz % 1.6) < Math.max(0.12, pxw);
+    const zq = Math.floor(wz * 3);
+    let lx = -cx * pxw;
+    for (let x = 0; x < W; x++, lx += pxw) {
+      const a = lx < 0 ? -lx : lx;
+      let r, g, b, rf = 0;
+      if (a < RW) {
+        if (Math.abs(a - 0.2) < lw) { r = 235; g = 165; b = 40; rf = 0.2; }
+        else if (dash && Math.abs(a - 3.5) < lw) { r = 190; g = 190; b = 210; rf = 0.2; }
+        else if (Math.abs(a - (RW - 0.3)) < lw) { r = 200; g = 200; b = 215; rf = 0.2; }
+        else { const h = hash(Math.floor(lx * 3), zq, 9) * 9; r = 24 + h; g = 22 + h; b = 34 + h; rf = 0.5; }
+      } else if (a < RW + 0.3) { r = 0; g = 225; b = 255; rf = 0.3; }
+      else if (a < RW + SW) {
+        const ln = tileRow || ((a - RW) % 1.6) < Math.max(0.1, pxw);
+        r = ln ? 30 : 46; g = ln ? 26 : 40; b = ln ? 42 : 60; rf = 0.25;
+      } else { r = 18; g = 14; b = 26; }
+      const i = y * W + x, j = i * 3;
+      col[j] = r + (FOG[0] - r) * fz; col[j + 1] = g + (FOG[1] - g) * fz; col[j + 2] = b + (FOG[2] - b) * fz;
+      refl[i] = rf * (1 - fz);
+    }
+  }
+}
+
+let TR, TG, TB;
+function billboard(b, uu, vv) {
+  if (uu < 0.04 || uu > 0.96 || vv < 0.07 || vv > 0.93) { TR = 34; TG = 30; TB = 44; return; }
+  const qu = Math.floor(uu * 24) / 24, qv = Math.floor(vv * 12) / 12;
+  let c;
+  if (b.kind === 0) {
+    const t = (qv * 2 + qu * 0.5 + T * 0.4) % 1;
+    c = mix(b.c1, b.c2, t < 0.5 ? t * 2 : 2 - t * 2);
+  } else if (b.kind === 1) {
+    const gx = Math.floor((uu - 0.1) / 0.8 * 7), gy = Math.floor((vv - 0.15) / 0.7 * 5);
+    const on = gx >= 0 && gx < 7 && gy >= 0 && gy < 5 && hash(gx % 7 < 4 ? gx : 6 - gx, gy, b.seed) < 0.55;
+    c = on ? b.c1 : mix(b.c2, [0, 0, 0], 0.78);
+    if (hash(Math.floor(T * 4), b.seed, 2) < 0.08) c = mix(c, [255, 255, 255], 0.5);
+  } else {
+    const d = Math.hypot((qu - 0.5) * 2.2, (qv - 0.5) * 1.6), r = 0.45 + Math.sin(T * 3 + b.seed) * 0.12;
+    c = d < r * 0.45 ? [10, 10, 20] : d < r ? b.c1 : mix(b.c2, [0, 0, 0], 0.7);
+  }
+  const scan = (Math.floor(vv * 24) & 1) ? 0.82 : 1;
+  TR = c[0] * scan; TG = c[1] * scan; TB = c[2] * scan;
+}
+
+function wallTex(B, u, v, front) {
+  if (B.crown && v > B.h - 0.6) { TR = B.crown[0]; TG = B.crown[1]; TB = B.crown[2]; return; }
+  if (!front) for (const b of B.bbs) if (u >= b.u0 && u < b.u1 && v >= b.v0 && v < b.v1) {
+    billboard(b, (u - b.u0) / (b.u1 - b.u0), 1 - (v - b.v0) / (b.v1 - b.v0)); return;
+  }
+  const bc = B.base;
+  if (v < 3.8) {
+    const cell = Math.floor(u / 6), cu = u - cell * 6;
+    if (v > 3.0 && v < 3.6) {
+      const c = NEON[(hash(cell, B.id, 3) * 6) | 0];
+      if (cu > 0.4 && cu < 5.6 && hash(Math.floor(cu * 2.2), cell, B.id) < 0.6) { TR = c[0]; TG = c[1]; TB = c[2]; }
+      else { TR = 16; TG = 10; TB = 22; }
+      return;
+    }
+    if (cu > 0.5 && cu < 5.5 && v > 0.15 && v < 2.8) {
+      const c = B.shop[cell % 3], k = 0.35 + 0.25 * (v / 2.8);
+      TR = c[0] * k; TG = c[1] * k; TB = c[2] * k; return;
+    }
+    TR = bc[0] * 0.8; TG = bc[1] * 0.8; TB = bc[2] * 0.8; return;
+  }
+  const fl = Math.floor(v / 3.2), fv = v / 3.2 - fl, bayN = Math.floor(u / 2.6), fu = u / 2.6 - bayN;
+  if (fv > 0.28 && fv < 0.82 && fu > 0.15 && fu < 0.85) {
+    if (hash(bayN, fl, B.seed) < B.winP) {
+      const c = WIN[(hash(bayN, fl, B.seed + 1) * 6) | 0], k = 0.5 + 0.5 * hash(bayN, fl, B.seed + 2);
+      TR = c[0] * k; TG = c[1] * k; TB = c[2] * k;
+    } else { TR = 14 + fv * 14; TG = 14 + fv * 8; TB = 28 + fv * 18; }
+    return;
+  }
+  const p = fu < 0.08 || fu > 0.92 ? 1.35 : 1;
+  TR = bc[0] * p; TG = bc[1] * p; TB = bc[2] * p;
+}
+
+function drawWall(k, side, n) {
+  const bi = SIDE[side][n]; if (bi < 0) return;
+  const B = blocks[bi], sg = side ? 1 : -1, wx = sg * (RW + SW + B.set), f = k + 1;
+  const xa = CX[k] + wx * S[k], xb = CX[f] + wx * S[f], span = xb - xa;
+  const iN = 1 / Z[k], iF = 1 / Z[f];
+  const ybA = GY[k], ybB = GY[f], ytA = ybA - B.h * S[k], ytB = ybB - B.h * S[f];
+  const u0 = (n - B.start) * SEGL;
+  if (Math.abs(span) > 1e-4) {
+    const x0 = Math.max(0, Math.ceil(Math.min(xa, xb))), x1 = Math.min(W - 1, Math.ceil(Math.max(xa, xb)) - 1);
+    for (let x = x0; x <= x1; x++) {
+      const t = clamp((x + 0.5 - xa) / span, 0, 1), iz = iN + (iF - iN) * t, z = 1 / iz;
+      const u = u0 + (z - Z[k]), yt = ytA + (ytB - ytA) * t, yb = ybA + (ybB - ybA) * t, hp = yb - yt, fz = fogAt(z);
+      for (let y = Math.max(0, Math.ceil(yt)); y <= Math.min(H - 1, Math.ceil(yb) - 1); y++) {
+        wallTex(B, u, (yb - y - 0.5) / hp * B.h, false);
+        const i = y * W + x, j = i * 3;
+        col[j] = TR + (FOG[0] - TR) * fz; col[j + 1] = TG + (FOG[1] - TG) * fz; col[j + 2] = TB + (FOG[2] - TB) * fz;
+        refl[i] = 0;
+      }
+    }
+  }
+  // corner face of the building, facing us
+  if (n === B.start && k > 0) {
+    const s = S[k], xw = CX[k] + wx * s, xo = CX[k] + (wx + sg * 80) * s, fz = fogAt(Z[k]);
+    const ytop = GY[k] - B.h * s, ybot = GY[k];
+    const x0 = Math.max(0, Math.ceil(Math.min(xw, xo))), x1 = Math.min(W - 1, Math.ceil(Math.max(xw, xo)) - 1);
+    for (let x = x0; x <= x1; x++) {
+      const u = Math.abs(x + 0.5 - xw) / s;
+      for (let y = Math.max(0, Math.ceil(ytop)); y <= Math.min(H - 1, Math.ceil(ybot) - 1); y++) {
+        wallTex(B, u, (ybot - y - 0.5) / s, true);
+        const i = y * W + x, j = i * 3, r = TR * 0.7, g = TG * 0.7, b = TB * 0.7;
+        col[j] = r + (FOG[0] - r) * fz; col[j + 1] = g + (FOG[1] - g) * fz; col[j + 2] = b + (FOG[2] - b) * fz;
+        refl[i] = 0;
+      }
+    }
+  }
+  // blade signs and billboard glow
+  for (const sn of B.signs) if (sn.u >= u0 && sn.u < u0 + SEGL) drawSign(k, sn.u - u0, wx, -sg, sn);
+  for (const b of B.bbs) {
+    const uc = (b.u0 + b.u1) / 2;
+    if (uc >= u0 && uc < u0 + SEGL && projAt(k, uc - u0)) {
+      addLight(PCX + wx * PS, PGY - (b.v0 + b.v1) / 2 * PS, (b.u1 - b.u0) * PS * 0.55, b.c1, 0.45 * (1 - fogAt(PZ)));
+    }
+  }
+}
+
+let PZ, PS, PCX, PGY;
+function projAt(k, dz) {
+  const z = Z[k] + dz; if (z < NEAR) return false;
+  const iN = 1 / Z[k], iF = 1 / Z[k + 1], t = (1 / z - iN) / (iF - iN);
+  PZ = z; PS = F / z; PCX = CX[k] + (CX[k + 1] - CX[k]) * t; PGY = GY[k] + (GY[k + 1] - GY[k]) * t;
+  return true;
+}
+
+function drawSign(k, dz, wx, inward, sn) {
+  if (!projAt(k, dz)) return;
+  const s = PS, fz = fogAt(PZ);
+  const xa = PCX + wx * s, xb = PCX + (wx + inward * 1.6) * s;
+  const yt = PGY - sn.v1 * s, yb = PGY - sn.v0 * s;
+  const TW = 5, TH = Math.max(6, Math.round((sn.v1 - sn.v0) / 1.6 * 5));
+  const flick = hash(Math.floor(T * 7), sn.seed, 5) < 0.04 ? 0.25 : 1;
+  const x0 = Math.max(0, Math.ceil(Math.min(xa, xb))), x1 = Math.min(W - 1, Math.ceil(Math.max(xa, xb)) - 1);
+  for (let x = x0; x <= x1; x++) {
+    const uu = Math.abs(x + 0.5 - xa) / Math.abs(xb - xa), i0 = Math.min(TW - 1, Math.floor(uu * TW));
+    for (let y = Math.max(0, Math.ceil(yt)); y <= Math.min(H - 1, Math.ceil(yb) - 1); y++) {
+      const j0 = Math.min(TH - 1, Math.floor((y + 0.5 - yt) / (yb - yt) * TH));
+      let c;
+      if (i0 === 0 || i0 === TW - 1 || j0 === 0 || j0 === TH - 1) c = mix(sn.c, [0, 0, 0], 0.35);
+      else {
+        const ch = Math.floor((j0 - 1) / 5), jj = (j0 - 1) % 5;
+        c = jj < 4 && hash(ch, (i0 - 1) + jj * 3, sn.seed) < 0.55 ? mix([30, 10, 30], sn.c, flick) : [20, 8, 24];
+      }
+      put(x, y, c[0] + (FOG[0] - c[0]) * fz, c[1] + (FOG[1] - c[1]) * fz, c[2] + (FOG[2] - c[2]) * fz);
+      refl[y * W + x] = 0;
+    }
+  }
+  addLight((xa + xb) / 2, (yt + yb) / 2, Math.max(3, 2.2 * s), sn.c, 0.5 * flick * (1 - fz));
+}
+
+function rect(xa, xb, ya, yb, c, fz) {
+  const r = c[0] + (FOG[0] - c[0]) * fz, g = c[1] + (FOG[1] - c[1]) * fz, b = c[2] + (FOG[2] - c[2]) * fz;
+  for (let x = Math.max(0, Math.ceil(Math.min(xa, xb))); x <= Math.min(W - 1, Math.ceil(Math.max(xa, xb)) - 1); x++)
+    for (let y = Math.max(0, Math.ceil(ya)); y <= Math.min(H - 1, Math.ceil(yb) - 1); y++) {
+      const i = y * W + x, j = i * 3; col[j] = r; col[j + 1] = g; col[j + 2] = b; refl[i] = 0;
+    }
+}
+
+function drawLamp(k, n, sg) {
+  if (!projAt(k, 0)) return;
+  const s = PS, fz = fogAt(PZ), lat = sg * (RW + 0.6), lat2 = sg * (RW - 2), w = Math.max(1, 0.18 * s);
+  const x = PCX + lat * s, x2 = PCX + lat2 * s, top = PGY - 7 * s;
+  rect(x - w / 2, x + w / 2, top, PGY, [26, 22, 36], fz);
+  rect(Math.min(x, x2), Math.max(x, x2), top - 0.2 * s - 1, top, [26, 22, 36], fz);
+  const lc = n % 18 === 0 ? [255, 70, 200] : [120, 240, 255];
+  rect(x2 - 0.5 * s, x2 + 0.5 * s, top, top + Math.max(1, 0.22 * s), mix(lc, [255, 255, 255], 0.5), fz * 0.6);
+  addLight(x2, top + 1, Math.max(3, 3.2 * s), lc, 0.75 * (1 - fz));
+  addLight(x2, PGY - 0.2 * s, Math.max(3, 3.5 * s), lc, 0.22 * (1 - fz));
+}
+
+function drawBridge(k) {
+  if (!projAt(k, 0)) return;
+  const s = PS, fz = fogAt(PZ), ytop = PGY - 10.8 * s, yu = PGY - 8.4 * s;
+  for (const sg of [-1, 1]) {
+    const xp = PCX + sg * (RW + 1.6) * s;
+    rect(xp - 0.5 * s, xp + 0.5 * s, yu, PGY, [24, 20, 36], fz);
+  }
+  rect(PCX - 70 * s, PCX + 70 * s, ytop, yu, [22, 18, 32], fz);
+  rect(PCX - 70 * s, PCX + 70 * s, ytop, ytop + Math.max(1, 0.3 * s), [255, 46, 170], fz * 0.5);
+  // lit lettering across the middle
+  const xa = PCX - 8 * s, xb = PCX + 8 * s, ya = PGY - 10.2 * s, yb = PGY - 8.9 * s;
+  for (let x = Math.max(0, Math.ceil(xa)); x <= Math.min(W - 1, Math.ceil(xb) - 1); x++) {
+    const gi = Math.floor((x + 0.5 - xa) / (xb - xa) * 32);
+    for (let y = Math.max(0, Math.ceil(ya)); y <= Math.min(H - 1, Math.ceil(yb) - 1); y++) {
+      const gj = Math.floor((y + 0.5 - ya) / (yb - ya) * 5);
+      if (gi % 4 !== 3 && hash(gi >> 2, (gi & 3) + gj * 3, 777) < 0.55) put(x, y, ...mix([0, 230, 255], FOG, fz));
+    }
+  }
+  for (let l = -24; l <= 24; l += 4) addLight(PCX + l * s, yu + 1, Math.max(2, 1.4 * s), [255, 200, 120], 0.4 * (1 - fz));
+  addLight(PCX, (ya + yb) / 2, Math.max(4, 7 * s), [0, 230, 255], 0.35 * (1 - fz));
+}
+
+function drawCar(c, k, dz) {
+  if (!projAt(k, dz)) return;
+  const s = PS, fz = fogAt(PZ), w = 1.9 * s, h = 1.35 * s, xc = PCX + (c.x - 0) * s, yb = PGY, left = xc - w / 2, top = yb - h;
+  const rear = c.dir > 0, lc = rear ? c.tail : [230, 240, 255], vis = 1 - fz;
+  if (w < 3) {
+    const y = Math.round(yb - h * 0.4);
+    putc(Math.round(left), y, lc); putc(Math.round(left + w), y, lc);
+    addLight(xc, y, rear ? 2 : 4, lc, (rear ? 0.4 : 0.7) * vis);
+    return;
+  }
+  const bd = c.body;
+  for (let x = Math.max(0, Math.ceil(left)); x <= Math.min(W - 1, Math.ceil(left + w) - 1); x++) {
+    const u = (x + 0.5 - left) / w;
+    for (let y = Math.max(0, Math.ceil(top)); y <= Math.min(H - 1, Math.ceil(yb) - 1); y++) {
+      const v = (yb - y - 0.5) / h;
+      let cc;
+      if (v < 0.13) cc = (u < 0.2 || u > 0.8) ? [6, 6, 8] : [10, 10, 14];
+      else if (v < 0.24) cc = [bd[0] * 0.55, bd[1] * 0.55, bd[2] * 0.55];
+      else if (v < 0.33 && u > 0.4 && u < 0.6) cc = rear ? [170, 170, 150] : [30, 30, 40];
+      else if (v > 0.36 && v < 0.47) {
+        if (rear) cc = (u < 0.28 || u > 0.72) ? lc : [lc[0] * 0.45, lc[1] * 0.45, lc[2] * 0.45];
+        else cc = (u < 0.28 || u > 0.72) ? lc : [20, 20, 28];
+      } else if (v < 0.58) cc = v > 0.54 ? [bd[0] * 1.7, bd[1] * 1.7, bd[2] * 1.7] : bd;
+      else {
+        const inset = 0.1 + (v - 0.58) * 0.45;
+        if (u < inset || u > 1 - inset) continue;
+        if (v > 0.62 && v < 0.92 && u > inset + 0.05 && u < 1 - inset - 0.05) {
+          cc = ((u * 3 + v * 2 + 0.3) % 1) < 0.14 ? [70, 46, 100] : [16, 18, 30];
+        } else cc = [bd[0] * 1.15, bd[1] * 1.15, bd[2] * 1.15];
+      }
+      put(x, y, cc[0] + (FOG[0] - cc[0]) * fz, cc[1] + (FOG[1] - cc[1]) * fz, cc[2] + (FOG[2] - cc[2]) * fz);
+      refl[y * W + x] = 0;
+    }
+  }
+  const ly = yb - h * 0.42;
+  if (rear) {
+    addLight(left + w * 0.14, ly, clamp(w * 0.45, 2, 16), lc, 0.55 * vis);
+    addLight(left + w * 0.86, ly, clamp(w * 0.45, 2, 16), lc, 0.55 * vis);
+  } else {
+    addLight(left + w * 0.14, ly, clamp(w * 0.9, 3, 30), lc, 0.85 * vis);
+    addLight(left + w * 0.86, ly, clamp(w * 0.9, 3, 30), lc, 0.85 * vis);
+  }
+  if (c.neon) addLight(xc, yb, clamp(w * 0.75, 2, 24), c.under, 0.4 * vis);
+}
+
+// tiny 3x5 font
+const FONT = {
+  '0': '111101101101111', '1': '010110010010111', '2': '111001111100111', '3': '111001111001111', '4': '101101111001001',
+  '5': '111100111001111', '6': '111100111101111', '7': '111001001001001', '8': '111101111101111', '9': '111101111001111',
+  'K': '101101110101101', 'M': '101111111101101', 'H': '101101111101101', '/': '001001010100100', 'A': '010101111101101',
+  'U': '101101101101111', 'T': '111010010010010', 'O': '111101101101111', 'N': '110101101101101', 'L': '100100100100111',
+  'R': '110101110101101', 'I': '111010010010111', ' ': '000000000000000', 'E': '111100110100111', 'P': '111101111100100',
+  'D': '110101101101110', 'S': '111100111001111', 'C': '111100100100111',
+};
+function text(str, x, y, c, sc) {
+  for (const ch of str) {
+    const g = FONT[ch] || FONT[' '];
+    for (let i = 0; i < 15; i++) if (g[i] === '1')
+      for (let a = 0; a < sc; a++) for (let b = 0; b < sc; b++) putc(x + (i % 3) * sc + a, y + Math.floor(i / 3) * sc + b, c);
+    x += 4 * sc;
+  }
+}
+
+function drawCockpit() {
+  for (let i = 0; i < N; i++) if (dmask[i]) { const j = i * 3; col[j] = dcol[j]; col[j + 1] = dcol[j + 1]; col[j + 2] = dcol[j + 2]; }
+  // neon reflections on the dash top edge
+  for (let x = 0; x < W; x++) {
+    const y = Math.ceil(dashTopAt(x)) + 1, j = ((y - 3) * W + x) * 3;
+    if (y < H && y > 3) addc(x, y, [col[j], col[j + 1], col[j + 2]], 0.15);
+  }
+  // speed + mode readout inside the wheel
+  const R = Math.min(W * 0.27, H * 0.42), cx = W / 2, cy = H + R * 0.55;
+  const kmh = String(Math.round(speed * 3.6)).padStart(3, ' ');
+  const sc = H > 200 ? 3 : 2, ty = Math.round(cy - R + 6);
+  text(kmh, Math.round(cx - 6 * sc), ty, [0, 235, 255], sc);
+  text('KM/H', Math.round(cx - 7), ty + 6 * sc + 1, [0, 140, 170], 1);
+  text(auto ? 'AUTO' : 'MANUAL', Math.round(cx - (auto ? 7 : 11)), ty + 6 * sc + 8, auto ? [80, 255, 150] : [255, 150, 60], 1);
+  const segs = 14, bw = 3, bx0 = Math.round(cx - segs * bw / 2);
+  for (let i = 0; i < segs; i++) {
+    const on = i < Math.round(speed / MAXV * segs), c = mix([0, 230, 255], [255, 40, 170], i / segs);
+    for (let a = 0; a < bw - 1; a++) putc(bx0 + i * bw + a, ty - 3, on ? c : [30, 22, 44]);
+  }
+  // nav screen: the road ahead
+  const nx0 = Math.round(W * 0.72), nw = Math.round(W * 0.13), ny0 = Math.round(dashTopAt(W * 0.78) + 4), nh = Math.min(Math.round(H * 0.11), H - ny0 - 3);
+  if (nh > 6) {
+    for (let x = nx0; x < nx0 + nw; x++) for (let y = ny0; y < ny0 + nh; y++)
+      putc(x, y, x === nx0 || y === ny0 || x === nx0 + nw - 1 || y === ny0 + nh - 1 ? [60, 30, 90] : [8, 10, 22]);
+    let lx = 0, ldx = 0;
+    for (let k = 0; k < DRAW; k++) {
+      const n = (Math.floor(camZ / SEGL) + k) % NSEG;
+      const sx = Math.round(nx0 + nw / 2 + lx * 0.12 - px * 0.12), sy = Math.round(ny0 + nh - 2 - k * (nh - 3) / DRAW);
+      if (sx > nx0 && sx < nx0 + nw - 1) putc(sx, sy, k % 18 < 2 ? [255, 60, 200] : [0, 200, 255]);
+      lx += ldx; ldx += curve[n];
+    }
+    putc(Math.round(nx0 + nw / 2), ny0 + nh - 2, [255, 255, 255]);
+  }
+  // steering wheel
+  const a = steer * 0.9;
+  for (let y = Math.max(0, Math.floor(cy - R - 3)); y < H; y++) for (let x = Math.floor(cx - R - 3); x <= cx + R + 3; x++) {
+    const dx = x - cx, dy = y - cy, d = Math.hypot(dx, dy);
+    if (Math.abs(d - R) > 2.4) continue;
+    let ang = Math.atan2(dy, dx) - a + Math.PI / 2;
+    ang = Math.atan2(Math.sin(ang), Math.cos(ang));
+    let c = d < R - 0.8 ? [18, 15, 26] : d > R + 1.2 ? [12, 10, 18] : [40, 34, 56];
+    if (Math.abs(ang) < 0.05) c = [0, 235, 255];
+    putc(x, y, c);
+  }
+}
+
+function drawGlass() {
+  // rain streaks outside
+  for (const s of streaks) for (let k = 0; k < s.l; k++) addc(Math.round(s.x - steer * k * 0.3), Math.round(s.y - k), [120, 140, 190], 0.12);
+  // droplets on the windshield refract what is behind them
+  for (const d of drops) {
+    const x = Math.round(d.x), y = Math.round(d.y);
+    if (x < 1 || y < 3 || x >= W - 1 || y >= H - 1 || dmask[y * W + x]) continue;
+    const sx = clamp(Math.round(x - (x - W / 2) * 0.06), 0, W - 1), sy = Math.max(0, y - 4), j = (sy * W + sx) * 3;
+    const c = [col[j] * 1.3 + 25, col[j + 1] * 1.3 + 25, col[j + 2] * 1.3 + 30];
+    putc(x, y, c);
+    if (d.s === 2) { putc(x + 1, y, c); const k = ((y + 1) * W + x) * 3; put(x, y + 1, col[k] * 0.6, col[k + 1] * 0.6, col[k + 2] * 0.6); }
+  }
+  // wiper
+  const pvx = W * 0.62, pvy = dashTopAt(W * 0.62) + 1, ca = Math.cos(wAng), sa = Math.sin(wAng), L = H * 0.66;
+  for (let t = 0; t < L; t += 0.5) {
+    const x = Math.round(pvx + ca * t), y = Math.round(pvy + sa * t);
+    putc(x, y, [6, 5, 10]); putc(x, y + 1, [6, 5, 10]);
+  }
+}
+
+function render() {
+  lb.fill(0); refl.fill(0);
+  const base = Math.floor(camZ / SEGL), frac = camZ / SEGL - base;
+  const b0 = base % NSEG, b1 = (base + 1) % NSEG;
+  const camY = hill[b0] + (hill[b1] - hill[b0]) * frac + EYE + Math.sin(camZ * 0.9) * 0.015 * Math.min(1, speed / 20);
+  const sh = shake * 3, hy = HOR + (Math.random() - 0.5) * sh;
+  const camX = px + (Math.random() - 0.5) * shake * 0.4;
+
+  let x = 0, dx = -curve[b0] * frac;
+  for (let k = 0; k <= DRAW; k++) {
+    const n = (base + k) % NSEG;
+    const z = Math.max(NEAR, (k - frac) * SEGL);
+    Z[k] = z; S[k] = F / z;
+    CX[k] = W / 2 + (x - camX) * S[k];
+    GY[k] = hy - (hill[n] - camY) * S[k];
+    x += dx; dx += curve[n];
+  }
+
+  drawSky(hy);
+
+  // traffic sorted into segments
+  const buckets = new Map();
+  for (const c of cars) {
+    const r = rel(c.z), k = Math.floor(r / SEGL + frac);
+    if (k < 0 || k >= DRAW || r < NEAR) continue;
+    if (!buckets.has(k)) buckets.set(k, []);
+    buckets.get(k).push({ c, r });
+  }
+
+  for (let k = DRAW - 1; k >= 0; k--) {
+    const n = (base + k) % NSEG;
+    drawGround(k);
+    drawWall(k, 0, n);
+    drawWall(k, 1, n);
+    if (n % 9 === 0) { drawLamp(k, n, -1); drawLamp(k, n, 1); }
+    if (n % 170 === 85) drawBridge(k);
+    const bk = buckets.get(k);
+    if (bk) { bk.sort((a, b) => b.r - a.r); for (const o of bk) drawCar(o.c, k, o.r - Z[k]); }
+  }
+
+  // glow, then wet-road reflections of everything above the horizon
+  for (let i = 0; i < N * 3; i++) col[i] += lb[i];
+  const hr = Math.round(hy);
+  for (let y = hr + 1; y < H; y++) {
+    const ys = 2 * hr - y; if (ys < 0) break;
+    const wob = Math.round(Math.sin(y * 0.9 + T * 5) * 1.2);
+    for (let x = 0; x < W; x++) {
+      const i = y * W + x, k = refl[i]; if (!k) continue;
+      const xs = clamp(x + wob, 0, W - 1), j = (ys * W + xs) * 3, o = i * 3;
+      col[o] += (col[j] - col[o]) * k * 0.6; col[o + 1] += (col[j + 1] - col[o + 1]) * k * 0.6; col[o + 2] += (col[j + 2] - col[o + 2]) * k * 0.6;
+    }
+  }
+
+  drawGlass();
+  drawCockpit();
+
+  const fl = crashFlash * 120;
+  for (let i = 0, j = 0; i < N; i++, j += 3) {
+    let r = col[j] + fl, g = col[j + 1] + fl * 0.3, b = col[j + 2] + fl * 0.4;
+    r = r > 255 ? 255 : r | 0; g = g > 255 ? 255 : g | 0; b = b > 255 ? 255 : b | 0;
+    fb[i] = (255 << 24) | (b << 16) | (g << 8) | r;
+  }
+  ctx.putImageData(img, 0, 0);
+}
+
+function frame(now) {
+  const dt = Math.min(0.05, (now - last) / 1000); last = now;
+  T += dt;
+  update(dt);
+  render();
+  requestAnimationFrame(frame);
+}
+
+// ---------- input ----------
+const btnA = document.getElementById('ba');
+function setAuto(on) {
+  auto = on; idle = 0;
+  if (on) autoLane = px < 3.5 ? 1.75 : 5.25;
+  btnA.classList.toggle('on', on);
+}
+function manual() { if (auto) setAuto(false); idle = 0; }
+const KEYMAP = { ArrowLeft: 'left', ArrowRight: 'right', ArrowUp: 'gas', ArrowDown: 'brake' };
+addEventListener('keydown', e => {
+  if (KEYMAP[e.key]) { keys[KEYMAP[e.key]] = true; manual(); e.preventDefault(); }
+  else if (e.key === 'a' || e.key === 'A') setAuto(!auto);
+  else if (e.key === 'r' || e.key === 'R') rainOn = !rainOn;
+});
+addEventListener('keyup', e => { if (KEYMAP[e.key]) keys[KEYMAP[e.key]] = false; });
+function hold(id, key) {
+  const el = document.getElementById(id);
+  const on = e => { e.preventDefault(); keys[key] = true; el.classList.add('on'); manual(); };
+  const off = e => { e.preventDefault(); keys[key] = false; el.classList.remove('on'); };
+  el.addEventListener('pointerdown', on);
+  el.addEventListener('pointerup', off); el.addEventListener('pointercancel', off); el.addEventListener('pointerleave', off);
+}
+hold('bl', 'left'); hold('br', 'right'); hold('bg', 'gas'); hold('bb', 'brake');
+btnA.addEventListener('pointerdown', e => { e.preventDefault(); setAuto(!auto); });
+setTimeout(() => { document.getElementById('hint').style.opacity = 0; }, 9000);
+
+requestAnimationFrame(frame);
+</script>
+</body>
+</html>
