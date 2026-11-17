@@ -27,15 +27,15 @@
   #bl { left: 18px; } #br { left: 104px; }
   #bb { right: 104px; } #bg { right: 18px; border-color: rgba(0, 230, 255, 0.7); color: #a8f6ff; }
   #ba, #bv { right: 18px; top: 18px; bottom: auto; height: 44px; width: 74px; font-size: 13px; }
-  #bv { top: 72px; } #br2 { top: 126px; }
-  #ba, #bv, #br2 { right: 18px; bottom: auto; height: 44px; width: 74px; font-size: 13px; }
-  #zone { left: 50%; top: 30%; transform: translateX(-50%); font-size: 16px; letter-spacing: 6px; color: #9ff4ff;
+  #bv { top: 72px; } #br2 { top: 126px; } #bq { top: 180px; }
+  #ba, #bv, #br2, #bq { right: 18px; bottom: auto; height: 44px; width: 74px; font-size: 13px; }
+  #zone { left: 50%; top: 58px; transform: translateX(-50%); font-size: 16px; letter-spacing: 6px; color: #9ff4ff;
     border-color: #1d4f5a; transition: opacity 1.2s; opacity: 0; }
 </style>
 </head>
 <body>
 <canvas id="c"></canvas>
-<div id="hint" class="tag">&larr; &rarr; steer &nbsp;&middot;&nbsp; &uarr; gas &nbsp;&middot;&nbsp; &darr; brake &nbsp;&middot;&nbsp; A autopilot &nbsp;&middot;&nbsp; V bike/car &nbsp;&middot;&nbsp; R rain</div>
+<div id="hint" class="tag">&larr; &rarr; steer &nbsp;&middot;&nbsp; &uarr; gas &nbsp;&middot;&nbsp; &darr; brake &nbsp;&middot;&nbsp; A autopilot &nbsp;&middot;&nbsp; V bike/car &nbsp;&middot;&nbsp; R rain &nbsp;&middot;&nbsp; H HD</div>
 <div id="zone" class="tag"></div>
 <div id="pad">
   <div class="btn" id="bl">&#9664;</div><div class="btn" id="br">&#9654;</div>
@@ -43,6 +43,7 @@
   <div class="btn on" id="ba">AUTO</div>
   <div class="btn" id="bv">CAR</div>
   <div class="btn on" id="br2">RAIN</div>
+  <div class="btn on" id="bq">HD</div>
 </div>
 <script>
 // Pseudo-3D city street rendered into a small pixel buffer; CSS scales it up with nearest-neighbour.
@@ -79,7 +80,7 @@ function zoneEnd(n) { return zoneAt(n)[1]; }
 const TUNNEL_STARTS = ZONES.filter(z => z[2] === 3).map(z => z[0]);
 let FOG = CITIES[0].fog.slice(), SKY = CITIES[0].sky, TWC = CITIES[0].tw;
 const RW = 7, SW = 3.2, NEAR = 0.7;
-let bike = true, roll = 0;
+let bike = true, roll = 0, hd = true;
 const maxV = () => bike ? 62 : 50;
 const eye = () => bike ? 1.4 : 1.15;
 const NEON = [[255, 46, 170], [0, 234, 255], [255, 214, 64], [170, 90, 255], [70, 255, 150], [255, 110, 50]];
@@ -220,7 +221,7 @@ function roofAt(x) { const u = x / W - 0.5; return H * 0.05 + u * u * H * 0.1; }
 function pillarAt(y) { const t = clamp(1 - y / (H * 0.8), 0, 1); return W * 0.02 + t * t * W * 0.11; }
 
 function setup() {
-  PX = Math.max(2, Math.round(Math.max(innerWidth, innerHeight) / 340));
+  PX = hd ? Math.max(1.5, Math.max(innerWidth, innerHeight) / 450) : Math.max(2, Math.round(Math.max(innerWidth, innerHeight) / 340));
   OW = Math.ceil(innerWidth / PX); OH = Math.ceil(innerHeight / PX);
   // the scene is rendered with a margin so it can be rolled (motorcycle lean) without empty corners
   const th = 0.27;
@@ -437,8 +438,11 @@ function update(dt) {
     s.y += s.v * dt; s.x += (s.x - W / 2) * dt * speed * 0.02 - steer * 20 * dt;
     if (s.y > H || s.x < 0 || s.x >= W) { s.x = Math.random() * W; s.y = Math.random() * H * 0.3; }
   }
-  if (rainOn && drops.length < 140) for (let i = 0; i < 30 * dt * (1 + Math.random()); i++)
-    drops.push({ x: Math.random() * W, y: Math.random() * H * 0.8, s: Math.random() < 0.3 ? 2 : 1 });
+  if (rainOn && drops.length < 60) for (let i = 0; i < 18 * dt * (1 + Math.random()); i++) {
+    const a = Math.random() * Math.PI * 2, r = 0.62 + Math.random() * 0.45;
+    const x = W / 2 + Math.cos(a) * r * W * 0.5, y = H * 0.42 + Math.sin(a) * r * H * 0.5;
+    if (x > 0 && x < W && y > 0 && y < H * 0.8) drops.push({ x, y, s: Math.random() < 0.25 ? 2 : 1 });
+  }
   for (let i = drops.length - 1; i >= 0; i--) {
     const d = drops[i];
     if (bike) { d.y -= speed * 0.06 * dt * (1 + d.s); d.x += (d.x - W / 2) * 0.012 * speed * dt; }
@@ -1305,15 +1309,18 @@ function drawCockpit() {
 
 function drawGlass() {
   // rain streaks outside
-  for (const s of streaks) for (let k = 0; k < s.l; k++) addc(Math.round(s.x - steer * k * 0.3), Math.round(s.y - k), [120, 140, 190], 0.12);
+  for (const s of streaks) {
+    const cd = Math.abs(s.x - W / 2) / W + Math.abs(s.y - H * 0.42) / H;   // fainter near the centre of view
+    const a = 0.09 * Math.min(1, cd * 2.5);
+    if (a > 0.01) for (let k = 0; k < s.l; k++) addc(Math.round(s.x - steer * k * 0.3), Math.round(s.y - k), [130, 150, 200], a);
+  }
   // droplets on the windshield refract what is behind them
   for (const d of drops) {
     const x = Math.round(d.x), y = Math.round(d.y);
     if (x < 1 || y < 3 || x >= W - 1 || y >= H - 1) continue;
-    const sx = clamp(Math.round(x - (x - W / 2) * 0.06), 0, W - 1), sy = Math.max(0, y - 4), j = (sy * W + sx) * 3;
-    const c = [col[j] * 1.3 + 25, col[j + 1] * 1.3 + 25, col[j + 2] * 1.3 + 30];
-    putc(x, y, c);
-    if (d.s === 2) { putc(x + 1, y, c); const k = ((y + 1) * W + x) * 3; put(x, y + 1, col[k] * 0.6, col[k + 1] * 0.6, col[k + 2] * 0.6); }
+    const j = (y * W + x) * 3;
+    put(x, y, col[j] * 1.15 + 22, col[j + 1] * 1.15 + 24, col[j + 2] * 1.15 + 30);
+    if (d.s === 2) { const k = ((y + 1) * W + x) * 3; put(x, y + 1, col[k] * 0.7, col[k + 1] * 0.7, col[k + 2] * 0.7); }
   }
   if (bike) return;
   // wiper
@@ -1502,8 +1509,14 @@ function render() {
   ctx.putImageData(img, 0, 0);
 }
 
+let perfT = 0, perfN = 0, perfDone = false, hdChosen = false;
 function frame(now) {
-  const dt = Math.min(0.05, (now - last) / 1000); last = now;
+  const rawDt = (now - last) / 1000;
+  const dt = Math.min(0.05, rawDt); last = now;
+  if (!perfDone && !hdChosen && T > 1.5) {          // after warming up, measure ~3 s; fall back if under ~32 fps
+    perfT += rawDt; perfN++;
+    if (perfT > 3) { perfDone = true; if (hd && perfN / perfT < 32) setHD(false); }
+  }
   T += dt;
   update(dt);
   render();
@@ -1524,6 +1537,7 @@ addEventListener('keydown', e => {
   else if (e.key === 'a' || e.key === 'A') setAuto(!auto);
   else if (e.key === 'r' || e.key === 'R') toggleRain();
   else if (e.key === 'v' || e.key === 'V') toggleVehicle();
+  else if (e.key === 'h' || e.key === 'H') { hdChosen = true; setHD(!hd); }
 });
 addEventListener('keyup', e => { if (KEYMAP[e.key]) keys[KEYMAP[e.key]] = false; });
 function hold(id, key) {
@@ -1541,6 +1555,9 @@ btnV.addEventListener('pointerdown', e => { e.preventDefault(); toggleVehicle();
 const btnR = document.getElementById('br2');
 function toggleRain() { rainOn = !rainOn; if (!rainOn) drops = []; btnR.classList.toggle('on', rainOn); }
 btnR.addEventListener('pointerdown', e => { e.preventDefault(); toggleRain(); });
+const btnQ = document.getElementById('bq');
+function setHD(on) { hd = on; btnQ.classList.toggle('on', on); drops = []; streaks = []; setup(); }
+btnQ.addEventListener('pointerdown', e => { e.preventDefault(); hdChosen = true; setHD(!hd); });
 setTimeout(() => { document.getElementById('hint').style.opacity = 0; }, 9000);
 
 requestAnimationFrame(frame);
