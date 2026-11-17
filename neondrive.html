@@ -27,17 +27,22 @@
   #bl { left: 18px; } #br { left: 104px; }
   #bb { right: 104px; } #bg { right: 18px; border-color: rgba(0, 230, 255, 0.7); color: #a8f6ff; }
   #ba, #bv { right: 18px; top: 18px; bottom: auto; height: 44px; width: 74px; font-size: 13px; }
-  #bv { top: 72px; }
+  #bv { top: 72px; } #br2 { top: 126px; }
+  #ba, #bv, #br2 { right: 18px; bottom: auto; height: 44px; width: 74px; font-size: 13px; }
+  #zone { left: 50%; top: 30%; transform: translateX(-50%); font-size: 16px; letter-spacing: 6px; color: #9ff4ff;
+    border-color: #1d4f5a; transition: opacity 1.2s; opacity: 0; }
 </style>
 </head>
 <body>
 <canvas id="c"></canvas>
 <div id="hint" class="tag">&larr; &rarr; steer &nbsp;&middot;&nbsp; &uarr; gas &nbsp;&middot;&nbsp; &darr; brake &nbsp;&middot;&nbsp; A autopilot &nbsp;&middot;&nbsp; V bike/car &nbsp;&middot;&nbsp; R rain</div>
+<div id="zone" class="tag"></div>
 <div id="pad">
   <div class="btn" id="bl">&#9664;</div><div class="btn" id="br">&#9654;</div>
   <div class="btn" id="bb">BRK</div><div class="btn" id="bg">GAS</div>
   <div class="btn on" id="ba">AUTO</div>
   <div class="btn" id="bv">CAR</div>
+  <div class="btn on" id="br2">RAIN</div>
 </div>
 <script>
 // Pseudo-3D city street rendered into a small pixel buffer; CSS scales it up with nearest-neighbour.
@@ -94,37 +99,62 @@ for (let n = 0; n < NSEG;) {
 }
 for (let n = 0; n < NSEG; n++) hill[n] = 4 * Math.sin(n * 2 * Math.PI / 500) + 1.5 * Math.sin(n * 2 * Math.PI / 150);
 
+// districts along the loop: 0 neon downtown, 1 lantern market, 2 glass spires, 3 tunnel
+const ZONES = [[0, 380, 0], [380, 440, 3], [440, 800, 1], [800, 1150, 2], [1150, 1210, 3], [1210, NSEG, 0]];
+const ZONE_NAMES = ['NEON DOWNTOWN', 'LANTERN MARKET', 'GLASS SPIRES', 'UNDERPASS'];
+function district(n) { n = ((n % NSEG) + NSEG) % NSEG; for (const z of ZONES) if (n < z[1]) return z[2]; return 0; }
+function zoneEnd(n) { for (const z of ZONES) if (n < z[1]) return z[1]; return NSEG; }
+const TUNNEL_STARTS = ZONES.filter(z => z[2] === 3).map(z => z[0]);
+const WARM = [[255, 60, 40], [255, 150, 40], [255, 214, 64], [255, 90, 140]];
+const COOL = [[180, 210, 255], [140, 200, 255], [210, 230, 255], [120, 180, 240]];
+
 const blocks = [];
 const SIDE = [new Int32Array(NSEG).fill(-1), new Int32Array(NSEG).fill(-1)];
 for (let side = 0; side < 2; side++) {
   for (let n = 0; n < NSEG;) {
-    if (rng() < 0.17) { n += 1 + Math.floor(rng() * 2); continue; }
-    const len = Math.min(NSEG - n, 4 + Math.floor(rng() * 12));
-    const h = 12 + Math.pow(rng(), 1.7) * 75;
+    const d = district(n);
+    if (d === 3) { n++; continue; }
+    if (rng() < (d === 2 ? 0.08 : 0.17)) { n += 1 + Math.floor(rng() * 2); continue; }
+    const len = Math.min(zoneEnd(n) - n, (d === 2 ? 8 : 4) + Math.floor(rng() * 12));
+    const h = d === 1 ? 8 + Math.pow(rng(), 1.5) * 22 : d === 2 ? 50 + rng() * 90 : 12 + Math.pow(rng(), 1.7) * 75;
+    const pal = d === 1 ? WARM : NEON;
     const B = {
-      id: blocks.length, start: n, len, h, set: rng() * 2.5, seed: (rng() * 1e6) | 0,
-      base: hsl(200 + rng() * 100, 0.22, 0.09 + rng() * 0.08),
-      winP: 0.15 + rng() * 0.4,
-      crown: rng() < 0.45 ? NEON[(rng() * 6) | 0] : null,
-      shop: [NEON[(rng() * 6) | 0], WIN[(rng() * 6) | 0], NEON[(rng() * 6) | 0]],
+      id: blocks.length, start: n, len, h, style: d, seed: (rng() * 1e6) | 0,
+      set: d === 1 ? rng() * 0.8 : d === 2 ? 1 + rng() * 3 : rng() * 2.5,
+      base: d === 1 ? hsl(10 + rng() * 30, 0.28, 0.1 + rng() * 0.07) : d === 2 ? hsl(205 + rng() * 25, 0.35, 0.12 + rng() * 0.06) : hsl(200 + rng() * 100, 0.22, 0.09 + rng() * 0.08),
+      winP: d === 2 ? 0.45 + rng() * 0.3 : d === 1 ? 0.35 + rng() * 0.3 : 0.15 + rng() * 0.4,
+      crown: d === 2 || rng() < (d === 1 ? 0.15 : 0.45) ? NEON[(rng() * 6) | 0] : null,
+      shop: [pal[(rng() * pal.length) | 0], WIN[(rng() * 6) | 0], pal[(rng() * pal.length) | 0]],
       bbs: [], signs: [],
     };
+    const wc = d === 2 ? [150, 190, 235] : [220, 170, 120];
+    B.avg = mix(B.base, wc, B.winP * 0.35);
     const L = len * SEGL;
-    if (rng() < 0.6 && h > 18 && L > 10) {
-      const w = Math.min(L - 2, 6 + rng() * 10), hh = 4 + rng() * 6, v0 = 6 + rng() * Math.max(0, h - hh - 9);
+    if (rng() < (d === 2 ? 0.5 : d === 1 ? 0.25 : 0.6) && h > 18 && L > 10) {
+      const big = d === 2 ? 2 : 1;
+      const w = Math.min(L - 2, (6 + rng() * 10) * big), hh = (4 + rng() * 6) * big, v0 = 6 + rng() * Math.max(0, h - hh - 9);
       const u0 = 1 + rng() * (L - w - 2);
       B.bbs.push({ u0, u1: u0 + w, v0, v1: v0 + hh, kind: (rng() * 3) | 0, c1: NEON[(rng() * 6) | 0], c2: NEON[(rng() * 6) | 0], seed: (rng() * 1e6) | 0 });
     }
-    const ns = rng() < 0.65 ? 1 + ((rng() * 2) | 0) : 0;
+    const ns = d === 2 ? 0 : d === 1 ? 2 + ((rng() * 3) | 0) : rng() < 0.65 ? 1 + ((rng() * 2) | 0) : 0;
     for (let i = 0; i < ns; i++) {
       const v0 = 4.2 + rng() * 3, v1 = Math.min(h - 0.5, v0 + 5 + rng() * 9);
-      B.signs.push({ u: 0.5 + rng() * (L - 1), v0, v1, c: NEON[(rng() * 6) | 0], seed: (rng() * 1e6) | 0 });
+      if (v1 - v0 > 3) B.signs.push({ u: 0.5 + rng() * (L - 1), v0, v1, c: pal[(rng() * pal.length) | 0], seed: (rng() * 1e6) | 0 });
     }
     blocks.push(B);
     for (let i = 0; i < len; i++) SIDE[side][n + i] = B.id;
     n += len;
   }
 }
+
+// people with glowing umbrellas walking the sidewalks
+const peds = [];
+for (let i = 0; i < 110; i++) {
+  const side = rng() < 0.5 ? -1 : 1;
+  peds.push({ z: rng() * LEN, x: side * (RW + 0.8 + rng() * (SW - 1.4)), v: (rng() < 0.5 ? -1 : 1) * (0.9 + rng() * 0.8),
+    umb: rng() < 0.7 ? NEON[(rng() * 6) | 0] : null, coat: hsl(rng() * 360, 0.2, 0.12 + rng() * 0.1), ph: rng() * 6 });
+}
+let train = { z: 500, v: -26 };
 
 // traffic
 const cars = [];
@@ -283,7 +313,9 @@ function setup() {
 let T = 0, last = performance.now();
 let camZ = 0, speed = 30, px = 3.5, steer = 0, bgX = 0, shake = 0, crashFlash = 0;
 let auto = true, autoLane = 3.5 > 3 ? 5.25 : 1.75, laneCool = 0, idle = 0;
-let rainOn = true, drops = [], streaks = [], wT = 0, wAng = Math.PI;
+let rainOn = true, wet = 1, drops = [], streaks = [], wT = 0, wAng = Math.PI;
+let curZone = -1, zoneT = 0;
+const zoneEl = document.getElementById('zone');
 const keys = { left: false, right: false, gas: false, brake: false };
 
 setup();
@@ -352,6 +384,13 @@ function update(dt) {
   shake *= Math.exp(-dt * 4); crashFlash *= Math.exp(-dt * 5);
 
   for (const f of flyers) f.pc = ((f.pc + f.v * dt) % PW + PW) % PW;
+  for (const p of peds) p.z = ((p.z + p.v * dt) % LEN + LEN) % LEN;
+  train.z = ((train.z + train.v * dt) % LEN + LEN) % LEN;
+  { const r = rel(train.z); if (r > LEN - 90) train.z = (camZ + 500 + Math.random() * 300) % LEN; }
+  wet += ((rainOn ? 1 : 0.3) - wet) * Math.min(1, dt * 0.6);
+  const zn = district(Math.floor(camZ / SEGL));
+  if (zn !== curZone) { curZone = zn; zoneEl.textContent = ZONE_NAMES[zn]; zoneEl.style.opacity = 1; zoneT = 3; }
+  if ((zoneT -= dt) < 0) zoneEl.style.opacity = 0;
 
   // rain
   const want = rainOn ? Math.round(W * 0.6) : 0;
@@ -395,7 +434,7 @@ function addLight(x, y, R, c, I) {
       const xx = x + dx; if (xx < 0 || xx >= W) continue;
       const d2 = dx * dx + dy * dy; if (d2 >= R2) continue;
       let f = 1 - Math.sqrt(d2) / R; f = f * f * I;
-      f = Math.floor(f * 5 + bay(xx, yy)) / 5;
+      f = Math.floor(f * 6) / 6;
       if (f <= 0) continue;
       const i = (yy * W + xx) * 3;
       lb[i] += c[0] * f; lb[i + 1] += c[1] * f; lb[i + 2] += c[2] * f;
@@ -471,6 +510,18 @@ function drawSky(hy) {
     addLight(cx, cy, R * 1.6, hc, 0.12);
   }
   towers(sky2, [22, 12, 36], 0.35, [50, 20, 60]);
+  // searchlights sweeping the clouds
+  for (let i = 0; i < 3; i++) {
+    const bxs = ((Math.round(PW * (0.2 + i * 0.31)) - bx) % PW + PW) % PW;
+    if (bxs < -W || bxs > 2 * W) continue;
+    const ang = Math.sin(T * 0.35 + i * 2.1) * 0.55, ta = Math.tan(ang), base = hy - HB * 0.2;
+    const c = i === 1 ? [255, 120, 220] : [170, 210, 255];
+    for (let y = Math.floor(base); y >= 0; y--) {
+      const d = base - y, cxl = bxs + d * ta, hw = 1 + d * 0.06;
+      for (let x = Math.max(0, Math.floor(cxl - hw)); x <= Math.min(W - 1, cxl + hw); x++)
+        addc(x, y, c, 0.07 * (1 - d / base) * (1 - Math.abs(x - cxl) / (hw + 1)));
+    }
+  }
   for (const f of flyers) {
     const x = ((Math.round(f.pc - bx)) % PW + PW) % PW;
     if (x < -8 || x > W + 8) continue;
@@ -499,18 +550,259 @@ function drawGround(k) {
         if (Math.abs(a - 0.2) < lw) { r = 235; g = 165; b = 40; rf = 0.2; }
         else if (dash && Math.abs(a - 3.5) < lw) { r = 190; g = 190; b = 210; rf = 0.2; }
         else if (Math.abs(a - (RW - 0.3)) < lw) { r = 200; g = 200; b = 215; rf = 0.2; }
-        else { const h = hash(Math.floor(lx * 3), zq, 9) * 9; r = 24 + h; g = 22 + h; b = 34 + h; rf = 0.5; }
+        else { const h = pxw < 0.35 ? hash(Math.floor(lx * 3), zq, 9) * 9 : 4.5; r = 24 + h; g = 22 + h; b = 34 + h; rf = 0.5; }
       } else if (a < RW + 0.3) { r = 0; g = 225; b = 255; rf = 0.3; }
       else if (a < RW + SW) {
-        const ln = tileRow || ((a - RW) % 1.6) < Math.max(0.1, pxw);
+        const ln = pxw < 0.5 && (tileRow || ((a - RW) % 1.6) < Math.max(0.1, pxw));
         r = ln ? 30 : 46; g = ln ? 26 : 40; b = ln ? 42 : 60; rf = 0.25;
       } else { r = 18; g = 14; b = 26; }
       const i = y * W + x, j = i * 3;
       col[j] = r + (FOG[0] - r) * fz; col[j + 1] = g + (FOG[1] - g) * fz; col[j + 2] = b + (FOG[2] - b) * fz;
-      refl[i] = rf * (1 - fz);
+      refl[i] = rf * (1 - fz) * wet;
     }
   }
 }
+
+// a vertical face parallel to the road (monorail beam, train, tunnel walls), textured by world z and height
+function quadWall(k, lat, h0, h1, tex, zlo, zhi) {
+  const f = k + 1, xa = CX[k] + lat * S[k], xb = CX[f] + lat * S[f], span = xb - xa;
+  if (Math.abs(span) < 1e-4) return;
+  const iN = 1 / Z[k], iF = 1 / Z[f];
+  const x0 = Math.max(0, Math.ceil(Math.min(xa, xb))), x1 = Math.min(W - 1, Math.ceil(Math.max(xa, xb)) - 1);
+  for (let x = x0; x <= x1; x++) {
+    const t = clamp((x + 0.5 - xa) / span, 0, 1), iz = iN + (iF - iN) * t, z = 1 / iz;
+    if (zlo !== undefined && (z < zlo || z > zhi)) continue;
+    const g = GY[k] + (GY[f] - GY[k]) * t, s = F * iz, yt = g - h1 * s, yb = g - h0 * s, fz = fogAt(z), wz = camZ + z;
+    for (let y = Math.max(0, Math.ceil(yt)); y <= Math.min(H - 1, Math.ceil(yb) - 1); y++) {
+      tex(wz, h0 + (yb - y - 0.5) / (yb - yt) * (h1 - h0), z, s);
+      const i = y * W + x, j = i * 3;
+      col[j] = TR + (FOG[0] - TR) * fz; col[j + 1] = TG + (FOG[1] - TG) * fz; col[j + 2] = TB + (FOG[2] - TB) * fz;
+      refl[i] = 0;
+    }
+  }
+}
+
+function lineS(x0, y0, x1, y1, c, fz) {
+  const n = Math.ceil(Math.max(Math.abs(x1 - x0), Math.abs(y1 - y0)));
+  const r = c[0] + (FOG[0] - c[0]) * fz, g = c[1] + (FOG[1] - c[1]) * fz, b = c[2] + (FOG[2] - c[2]) * fz;
+  for (let i = 0; i <= n; i++) {
+    const x = Math.round(x0 + (x1 - x0) * i / (n || 1)), y = Math.round(y0 + (y1 - y0) * i / (n || 1));
+    if (x < 0 || y < 0 || x >= W || y >= H) continue;
+    put(x, y, r, g, b); refl[y * W + x] = 0;
+  }
+}
+function blob(cx, cy, rx, ry, c, a, fz) {
+  const r = c[0] + (FOG[0] - c[0]) * fz, g = c[1] + (FOG[1] - c[1]) * fz, b = c[2] + (FOG[2] - c[2]) * fz;
+  for (let y = Math.max(0, Math.floor(cy - ry)); y <= Math.min(H - 1, cy + ry); y++)
+    for (let x = Math.max(0, Math.floor(cx - rx)); x <= Math.min(W - 1, cx + rx); x++) {
+      if (((x - cx) / rx) ** 2 + ((y - cy) / ry) ** 2 > 1) continue;
+      const i = (y * W + x) * 3;
+      if (a >= 1) { col[i] = r; col[i + 1] = g; col[i + 2] = b; refl[y * W + x] = 0; }
+      else { col[i] += (r - col[i]) * a; col[i + 1] += (g - col[i + 1]) * a; col[i + 2] += (b - col[i + 2]) * a; }
+    }
+}
+
+// ---- tunnel ----
+const TH_ = 6.5, TW_ = RW + 1.2;
+function tunnelTex(wz, v) {
+  if (v > 4.55 && v < 4.85) { TR = 0; TG = 200; TB = 255; return; }
+  if (v < 0.8) { const st = ((wz + v * 1.5) % 1.2) < 0.6; TR = st ? 190 : 20; TG = st ? 150 : 18; TB = st ? 30 : 24; return; }
+  const grout = (v % 1) < 0.08 || (wz % 2) < 0.08;
+  TR = grout ? 36 : 64; TG = grout ? 34 : 60; TB = grout ? 44 : 74;
+}
+function drawTunnel(k, n) {
+  quadWall(k, -TW_, 0, TH_, tunnelTex);
+  quadWall(k, TW_, 0, TH_, tunnelTex);
+  const f = k + 1, yN = GY[k] - TH_ * S[k], yF = GY[f] - TH_ * S[f];
+  if (yN < yF) {
+    const iN = 1 / Z[k], iF = 1 / Z[f];
+    for (let y = Math.max(0, Math.ceil(yN)); y <= Math.min(H - 1, Math.ceil(yF) - 1); y++) {
+      const t = (yF - y) / (yF - yN), iz = iF + (iN - iF) * t, z = 1 / iz, sc = F * iz;
+      const cx = CX[f] + (CX[k] - CX[f]) * t, wz = camZ + z, fz = fogAt(z);
+      const lamp = (wz % 8) < 2.5;
+      for (let x = Math.max(0, Math.ceil(cx - TW_ * sc)); x <= Math.min(W - 1, Math.ceil(cx + TW_ * sc) - 1); x++) {
+        const lx = (x + 0.5 - cx) / sc;
+        let c = Math.abs(lx) < 0.6 ? (lamp ? [255, 196, 120] : [30, 26, 36]) : ((Math.abs(lx) % 2.5) < 0.12 / Math.min(1, sc * 0.2) ? [28, 26, 34] : [44, 42, 52]);
+        put(x, y, c[0] + (FOG[0] - c[0]) * fz, c[1] + (FOG[1] - c[1]) * fz, c[2] + (FOG[2] - c[2]) * fz);
+        refl[y * W + x] = 0;
+      }
+    }
+  }
+  if (n % 2 === 0 && k < 70 && projAt(k, 0)) {
+    addLight(PCX, PGY - TH_ * PS + 1, Math.min(14, Math.max(3, 1.6 * PS)), [255, 170, 90], 0.28 * (1 - fogAt(PZ)));
+    addLight(PCX, PGY, Math.max(3, 3.5 * PS), [255, 170, 90], 0.12 * (1 - fogAt(PZ)));
+  }
+}
+function drawPortal(k) {
+  if (!projAt(k, 0)) return;
+  const s = PS, fz = fogAt(PZ);
+  const xa = Math.max(0, Math.ceil(PCX - 50 * s)), xb = Math.min(W - 1, Math.ceil(PCX + 50 * s) - 1);
+  const ya = Math.max(0, Math.ceil(PGY - 24 * s)), yb = Math.min(H - 1, Math.ceil(PGY) - 1);
+  for (let x = xa; x <= xb; x++) {
+    const lx = (x + 0.5 - PCX) / s;
+    for (let y = ya; y <= yb; y++) {
+      const h = (PGY - y - 0.5) / s;
+      if (Math.abs(lx) < TW_ && h < TH_) continue;                 // the opening
+      let c;
+      const rim = Math.abs(lx) < TW_ + 0.5 && h < TH_ + 0.5;
+      if (rim) c = [255, 46, 170];
+      else if (Math.abs(lx) < 10 && h > 8 && h < 11.5) {
+        const gi = Math.floor((lx + 10) / 20 * 30), gj = Math.floor((h - 8) / 3.5 * 5);
+        c = gi % 4 !== 3 && hash(gi >> 2, (gi & 3) + gj * 3, 4242) < 0.55 ? [0, 230, 255] : [16, 14, 22];
+      } else {
+        c = ((h % 3) < 0.15 || (Math.abs(lx) % 6) < 0.2) ? [26, 24, 32] : [46, 42, 54];
+      }
+      put(x, y, c[0] + (FOG[0] - c[0]) * fz, c[1] + (FOG[1] - c[1]) * fz, c[2] + (FOG[2] - c[2]) * fz);
+      refl[y * W + x] = 0;
+    }
+  }
+  addLight(PCX, PGY - 9.7 * s, Math.max(4, 9 * s), [0, 230, 255], 0.3 * (1 - fz));
+  addLight(PCX, PGY - TH_ * s, Math.max(4, 6 * s), [255, 46, 170], 0.3 * (1 - fz));
+}
+
+// ---- monorail ----
+const MLAT = -(RW + 1.4);
+function beamTex(wz, v) { const c = v > 12.35 ? [0, 220, 255] : ((wz % 6) < 0.2 ? [20, 18, 28] : [40, 36, 52]); TR = c[0]; TG = c[1]; TB = c[2]; }
+function trainTex(wz, v) {
+  const u = ((wz - train.z) % LEN + LEN) % LEN;
+  let c;
+  if (v < 13.1) c = [30, 32, 44];
+  else if (v < 13.35) c = [255, 46, 170];
+  else if (v > 13.7 && v < 14.9 && (u % 2.4) > 0.3 && u > 1.5 && u < 58.5) c = hash(Math.floor(u / 2.4), 1, 77) < 0.75 ? [255, 214, 150] : [40, 50, 70];
+  else if (u < 1.2 || u > 58.8) c = [210, 230, 255];
+  else c = [52, 56, 74];
+  TR = c[0]; TG = c[1]; TB = c[2];
+}
+function drawMonorail(k, n) {
+  quadWall(k, MLAT, 11.5, 12.6, beamTex);
+  if (n % 6 === 0 && projAt(k, 0)) {
+    const x = PCX + MLAT * PS, w = Math.max(1, 0.7 * PS);
+    rect(x - w / 2, x + w / 2, PGY - 11.5 * PS, PGY, [30, 26, 40], fogAt(PZ));
+  }
+  const tr = rel(train.z);
+  const z0 = Z[k], z1 = Z[k + 1];
+  if (tr < z1 && tr + 60 > z0) {
+    quadWall(k, MLAT, 12.6, 15.6, trainTex, tr, tr + 60);
+    if (projAt(k, 0)) addLight(PCX + MLAT * PS, PGY - 14.3 * PS, Math.max(3, 3 * PS), [255, 200, 140], 0.3 * (1 - fogAt(PZ)));
+  }
+}
+
+// ---- market lanterns and stalls ----
+function drawLanterns(k, n) {
+  if (!projAt(k, 0)) return;
+  const s = PS, fz = fogAt(PZ), L = RW + SW, sway = Math.sin(T * 1.3 + n) * 0.15;
+  let px_ = null, py_ = null;
+  for (let l = -L; l <= L + 0.01; l += 0.5) {
+    const h = 8 - 1.3 * (1 - (l / L) ** 2), x = PCX + l * s, y = PGY - h * s;
+    if (px_ !== null) lineS(px_, py_, x, y, [14, 12, 20], fz);
+    px_ = x; py_ = y;
+  }
+  for (let l = -L + 1.4, i = 0; l < L; l += 2.4, i++) {
+    const h = 8 - 1.3 * (1 - (l / L) ** 2) - 0.55, x = PCX + (l + sway) * s, y = PGY - h * s;
+    const c = WARM[(n + i) % 4], r = 0.32 * s;
+    if (r < 0.8) { if (x >= 0 && x < W && y >= 0 && y < H) putc(Math.round(x), Math.round(y), c); continue; }
+    blob(x, y, r * 1.1, r, c, 1, fz * 0.6);
+    rect(x - r * 0.5, x + r * 0.5, y - r - Math.max(1, 0.08 * s), y - r + 1, [40, 20, 20], fz);
+    if (i % 2 === 0) addLight(x, y, Math.max(3, 1.6 * s), c, 0.4 * (1 - fz));
+  }
+}
+function drawStall(k, sg, n) {
+  if (!projAt(k, 0)) return;
+  const s = PS, fz = fogAt(PZ), cx = PCX + sg * (RW + SW * 0.55) * s, hw = 1.3 * s;
+  const c1 = WARM[n % 4], c2 = [240, 230, 220];
+  rect(cx - hw * 0.9, cx + hw * 0.9, PGY - 1.0 * s, PGY, [60, 36, 30], fz);
+  rect(cx - hw * 0.85, cx + hw * 0.85, PGY - 1.0 * s, PGY - 0.8 * s, [255, 190, 110], fz * 0.5);
+  rect(cx - hw * 0.8, cx + hw * 0.8, PGY - 2.3 * s, PGY - 1.0 * s, [24, 16, 20], fz);
+  const ya = PGY - 2.9 * s, yb = PGY - 2.3 * s;
+  for (let x = Math.max(0, Math.ceil(cx - hw * 1.1)); x <= Math.min(W - 1, Math.ceil(cx + hw * 1.1) - 1); x++) {
+    const band = Math.floor((x + 0.5 - (cx - hw * 1.1)) / (hw * 2.2) * 6);
+    const c = band % 2 ? c1 : c2;
+    for (let y = Math.max(0, Math.ceil(ya)); y <= Math.min(H - 1, Math.ceil(yb) - 1); y++)
+      put(x, y, c[0] + (FOG[0] - c[0]) * fz, c[1] + (FOG[1] - c[1]) * fz, c[2] + (FOG[2] - c[2]) * fz);
+  }
+  addLight(cx, PGY - 1.6 * s, Math.max(3, 2.2 * s), [255, 170, 90], 0.45 * (1 - fz));
+  drawSteam(k, sg * (RW + SW * 0.55), 2.9, n, 0.7);
+}
+
+// ---- steam rising from vents and food stalls ----
+function drawSteam(k, lat, h0, n, scale) {
+  if (!projAt(k, 0)) return;
+  const s = PS, fz = fogAt(PZ);
+  for (let i = 0; i < 5; i++) {
+    const ph = (T * 0.35 + i / 5 + hash(n, 3, 3)) % 1, h = h0 + ph * 3.5 * scale, r = (0.35 + ph * 0.9) * scale * s;
+    if (r < 0.7) continue;
+    const x = PCX + (lat + Math.sin(T * 0.8 + i + n) * 0.4 * ph) * s, y = PGY - h * s;
+    blob(x, y, r, r * 0.8, [170, 150, 190], 0.22 * (1 - ph), fz);
+  }
+}
+
+// ---- overhead cables ----
+function drawWires(k, n) {
+  if (!projAt(k, 0)) return;
+  const s = PS, fz = fogAt(PZ), L = RW + SW, h0 = 9 + (n % 3), h1 = 10 + ((n >> 1) % 3);
+  for (let w = 0; w < 2; w++) {
+    let px_ = null, py_ = null;
+    for (let l = -L; l <= L + 0.01; l += 1) {
+      const t = (l + L) / (2 * L), h = h0 + (h1 - h0) * t - 1.1 * Math.sin(Math.PI * t) + w * 0.4;
+      const x = PCX + l * s, y = PGY - h * s;
+      if (px_ !== null) lineS(px_, py_, x, y, [10, 8, 16], fz);
+      px_ = x; py_ = y;
+    }
+  }
+}
+
+// ---- pedestrians ----
+function drawPed(p, k, dz) {
+  if (!projAt(k, dz)) return;
+  const s = PS, fz = fogAt(PZ), x = PCX + p.x * s, yb = PGY;
+  if (s < 1.2) { if (p.umb) { const xx = Math.round(x), yy = Math.round(yb - 2 * s); if (xx >= 0 && xx < W && yy >= 0 && yy < H) putc(xx, yy, p.umb); } return; }
+  const w = 0.5 * s, step = Math.sin(T * 6 * Math.abs(p.v) + p.ph) * 0.12 * s;
+  rect(x - w * 0.4 + step, x - w * 0.05 + step, yb - 0.85 * s, yb, [14, 12, 20], fz);
+  rect(x + w * 0.05 - step, x + w * 0.4 - step, yb - 0.85 * s, yb, [14, 12, 20], fz);
+  rect(x - w * 0.5, x + w * 0.5, yb - 1.5 * s, yb - 0.8 * s, p.coat, fz);
+  blob(x, yb - 1.62 * s, 0.13 * s, 0.14 * s, [30, 24, 34], 1, fz);
+  if (p.umb) {
+    const uy = yb - 2.05 * s;
+    lineS(x, uy, x, yb - 1.2 * s, [30, 30, 40], fz);
+    for (let y = Math.max(0, Math.ceil(uy - 0.45 * s)); y <= Math.min(H - 1, Math.ceil(uy) - 1); y++) {
+      const ny = (uy - y - 0.5) / (0.45 * s), half = 0.65 * s * Math.sqrt(Math.max(0, 1 - ny * ny));
+      for (let xx = Math.max(0, Math.ceil(x - half)); xx <= Math.min(W - 1, Math.ceil(x + half) - 1); xx++) {
+        const c = y === Math.ceil(uy) - 1 ? mix(p.umb, [255, 255, 255], 0.5) : mix(p.umb, [0, 0, 0], 0.25 + ny * 0.3);
+        put(xx, y, c[0] + (FOG[0] - c[0]) * fz * 0.6, c[1] + (FOG[1] - c[1]) * fz * 0.6, c[2] + (FOG[2] - c[2]) * fz * 0.6);
+        refl[y * W + xx] = 0;
+      }
+    }
+    addLight(x, uy, Math.max(2, 1.1 * s), p.umb, 0.3 * (1 - fz));
+  }
+}
+
+// ---- a holographic koi swimming over the street ----
+function drawKoi(k, n) {
+  if (!projAt(k, 0)) return;
+  const s = PS, fz = fogAt(PZ), dir = Math.cos(T * 0.25 + n) > 0 ? 1 : -1;
+  const cx = PPCX(), cy = PGY - (17 + Math.sin(T * 0.8 + n) * 1.5) * s, Lm = 12, a = 0.5 * (1 - fz);
+  function PPCX() { return PCX + Math.sin(T * 0.25 + n) * 7 * s; }
+  if (Lm * s > W * 3) return;
+  for (let i = 0; i <= 26; i++) {
+    const t = i / 26, wave = Math.sin(T * 3 - t * 5) * 0.7 * t;
+    const x = cx + dir * (0.5 - t) * Lm * s, y = cy + wave * s, r = 1.5 * Math.pow(1 - t, 0.7) * Math.min(1, t * 5 + 0.35) * s;
+    const c = mix([255, 90, 160], [80, 230, 255], t);
+    for (let yy = Math.max(0, Math.floor(y - r)); yy <= Math.min(H - 1, y + r); yy++) {
+      if (yy & 1) continue;
+      for (let xx = Math.max(0, Math.floor(x - r)); xx <= Math.min(W - 1, x + r); xx++) {
+        const e = ((xx - x) ** 2 + (yy - y) ** 2) / (r * r + 0.01);
+        if (e <= 1) addc(xx, yy, c, e > 0.7 ? a * 0.9 : a * 0.3);
+      }
+    }
+    if (i === 26) {
+      for (let f = 0; f < 1.6 * s; f++) for (const sgn of [-1, 1])
+        addc(Math.round(x - dir * f * 0.8), Math.round(y + sgn * f * 0.7), [120, 240, 255], a * 0.6);
+    }
+  }
+  addc(Math.round(cx + dir * 0.4 * Lm * s), Math.round(cy - 0.3 * s), [255, 255, 255], a * 1.5);
+  addLight(cx, cy, Math.max(4, 7 * s), [180, 120, 255], 0.2 * (1 - fz));
+}
+
 
 let TR, TG, TB;
 function billboard(b, uu, vv) {
@@ -533,16 +825,41 @@ function billboard(b, uu, vv) {
   TR = c[0] * scan; TG = c[1] * scan; TB = c[2] * scan;
 }
 
-function wallTex(B, u, v, front) {
-  if (B.crown && v > B.h - 0.6) { TR = B.crown[0]; TG = B.crown[1]; TB = B.crown[2]; return; }
+function wallTex(B, u, v, front, mpp) {
+  if (B.crown && v > B.h - 0.6 && B.style !== 2) { TR = B.crown[0]; TG = B.crown[1]; TB = B.crown[2]; return; }
   if (!front) for (const b of B.bbs) if (u >= b.u0 && u < b.u1 && v >= b.v0 && v < b.v1) {
     billboard(b, (u - b.u0) / (b.u1 - b.u0), 1 - (v - b.v0) / (b.v1 - b.v0)); return;
   }
   const bc = B.base;
+  if (B.style === 2) {                              // glass spires: big windows, running LED strips, bright lobby
+    const bayN = Math.floor(u / 1.8), fu = u / 1.8 - bayN;
+    if (bayN % 4 === 0 && fu < 0.12 && v > 5) {
+      const run = ((v * 0.35 - T * 4 + bayN * 0.37 + B.seed) % 6 + 6) % 6;
+      const k = run < 1.2 ? 1 : 0.28, c = B.crown;
+      TR = c[0] * k; TG = c[1] * k; TB = c[2] * k; return;
+    }
+    if (mpp > 1.2) { TR = B.avg[0]; TG = B.avg[1]; TB = B.avg[2]; return; }
+    if (v < 5) {
+      const m = (u % 3) < 0.15 || v > 4.6;
+      if (m) { TR = bc[0] * 0.7; TG = bc[1] * 0.7; TB = bc[2] * 0.7; }
+      else { const k = 0.3 + 0.15 * (v / 5); TR = 200 * k; TG = 190 * k; TB = 170 * k; }
+      return;
+    }
+    const fl = Math.floor(v / 3.6), fv = v / 3.6 - fl;
+    if (fv > 0.12 && fv < 0.92 && fu > 0.06 && fu < 0.94) {
+      if (hash(bayN, fl, B.seed) < B.winP) {
+        const c = COOL[(hash(bayN, fl, B.seed + 1) * 4) | 0], k = 0.45 + 0.4 * hash(bayN, fl, B.seed + 2);
+        TR = c[0] * k; TG = c[1] * k; TB = c[2] * k;
+      } else { TR = 18 + fv * 22; TG = 26 + fv * 22; TB = 46 + fv * 30; }
+      return;
+    }
+    TR = bc[0] * 1.3; TG = bc[1] * 1.3; TB = bc[2] * 1.3; return;
+  }
+  if (mpp > 1.1 && v >= 3.8) { TR = B.avg[0]; TG = B.avg[1]; TB = B.avg[2]; return; }
   if (v < 3.8) {
     const cell = Math.floor(u / 6), cu = u - cell * 6;
     if (v > 3.0 && v < 3.6) {
-      const c = NEON[(hash(cell, B.id, 3) * 6) | 0];
+      const c = B.shop[(hash(cell, B.id, 3) * 3) | 0];
       if (cu > 0.4 && cu < 5.6 && hash(Math.floor(cu * 2.2), cell, B.id) < 0.6) { TR = c[0]; TG = c[1]; TB = c[2]; }
       else { TR = 16; TG = 10; TB = 22; }
       return;
@@ -578,7 +895,7 @@ function drawWall(k, side, n) {
       const t = clamp((x + 0.5 - xa) / span, 0, 1), iz = iN + (iF - iN) * t, z = 1 / iz;
       const u = u0 + (z - Z[k]), yt = ytA + (ytB - ytA) * t, yb = ybA + (ybB - ybA) * t, hp = yb - yt, fz = fogAt(z);
       for (let y = Math.max(0, Math.ceil(yt)); y <= Math.min(H - 1, Math.ceil(yb) - 1); y++) {
-        wallTex(B, u, (yb - y - 0.5) / hp * B.h, false);
+        wallTex(B, u, (yb - y - 0.5) / hp * B.h, false, z / F);
         const i = y * W + x, j = i * 3;
         col[j] = TR + (FOG[0] - TR) * fz; col[j + 1] = TG + (FOG[1] - TG) * fz; col[j + 2] = TB + (FOG[2] - TB) * fz;
         refl[i] = 0;
@@ -593,7 +910,7 @@ function drawWall(k, side, n) {
     for (let x = x0; x <= x1; x++) {
       const u = Math.abs(x + 0.5 - xw) / s;
       for (let y = Math.max(0, Math.ceil(ytop)); y <= Math.min(H - 1, Math.ceil(ybot) - 1); y++) {
-        wallTex(B, u, (ybot - y - 0.5) / s, true);
+        wallTex(B, u, (ybot - y - 0.5) / s, true, 1 / s);
         const i = y * W + x, j = i * 3, r = TR * 0.7, g = TG * 0.7, b = TB * 0.7;
         col[j] = r + (FOG[0] - r) * fz; col[j + 1] = g + (FOG[1] - g) * fz; col[j + 2] = b + (FOG[2] - b) * fz;
         refl[i] = 0;
@@ -605,7 +922,7 @@ function drawWall(k, side, n) {
   for (const b of B.bbs) {
     const uc = (b.u0 + b.u1) / 2;
     if (uc >= u0 && uc < u0 + SEGL && projAt(k, uc - u0)) {
-      addLight(PCX + wx * PS, PGY - (b.v0 + b.v1) / 2 * PS, (b.u1 - b.u0) * PS * 0.55, b.c1, 0.45 * (1 - fogAt(PZ)));
+      addLight(PCX + wx * PS, PGY - (b.v0 + b.v1) / 2 * PS, (b.u1 - b.u0) * PS * 0.55, b.c1, 0.3 * (1 - fogAt(PZ)));
     }
   }
 }
@@ -640,7 +957,7 @@ function drawSign(k, dz, wx, inward, sn) {
       refl[y * W + x] = 0;
     }
   }
-  addLight((xa + xb) / 2, (yt + yb) / 2, Math.max(3, 2.2 * s), sn.c, 0.5 * flick * (1 - fz));
+  addLight((xa + xb) / 2, (yt + yb) / 2, Math.max(3, 2.2 * s), sn.c, 0.36 * flick * (1 - fz));
 }
 
 function rect(xa, xb, ya, yb, c, fz) {
@@ -901,16 +1218,37 @@ function render() {
     if (!buckets.has(k)) buckets.set(k, []);
     buckets.get(k).push({ c, r });
   }
+  for (const p of peds) {
+    const r = rel(p.z), k = Math.floor(r / SEGL + frac);
+    if (k < 0 || k >= DRAW || r < NEAR || district(Math.floor(p.z / SEGL)) === 3) continue;
+    if (!buckets.has(k)) buckets.set(k, []);
+    buckets.get(k).push({ p, r });
+  }
 
   for (let k = DRAW - 1; k >= 0; k--) {
     const n = (base + k) % NSEG;
+    const d = district(n);
     drawGround(k);
-    drawWall(k, 0, n);
-    drawWall(k, 1, n);
-    if (n % 9 === 0) { drawLamp(k, n, -1); drawLamp(k, n, 1); }
-    if (n % 170 === 85) drawBridge(k);
+    if (d === 3) {
+      drawTunnel(k, n);
+      if (k > 0 && TUNNEL_STARTS.includes(n)) drawPortal(k);
+    } else {
+      drawWall(k, 0, n);
+      drawWall(k, 1, n);
+      if (d === 1 && n % 2 === 0) for (const sg of [-1, 1]) if (hash(n, sg + 5, 31) < 0.45) drawStall(k, sg, n);
+      if (n % 9 === 0 && d !== 1) { drawLamp(k, n, -1); drawLamp(k, n, 1); }
+      if (d !== 1 && hash(n, 7, 77) < 0.05) drawSteam(k, hash(n, 8, 78) < 0.5 ? -3.5 : 3.5, 0, n, 1);
+    }
     const bk = buckets.get(k);
-    if (bk) { bk.sort((a, b) => b.r - a.r); for (const o of bk) drawCar(o.c, k, o.r - Z[k]); }
+    if (bk) {
+      bk.sort((a, b) => b.r - a.r);
+      for (const o of bk) { if (o.c) drawCar(o.c, k, o.r - Z[k]); else drawPed(o.p, k, o.r - Z[k]); }
+    }
+    if (d === 0 || d === 2) drawMonorail(k, n);
+    if (d === 0 && n % 7 === 3) drawWires(k, n);
+    if (d === 1 && n % 3 === 0) drawLanterns(k, n);
+    if (d !== 1 && d !== 3 && n % 170 === 85) drawBridge(k);
+    if (d !== 3 && n % 300 === 150) drawKoi(k, n);
   }
 
   addLight(W / 2, hy + eye() * F / 14, Math.min(30, F * 2.4 / 14), [190, 215, 255], bike ? 0.22 : 0.28);
@@ -920,11 +1258,11 @@ function render() {
   const hr = Math.round(hy);
   for (let y = hr + 1; y < H; y++) {
     const ys = 2 * hr - y; if (ys < 0) break;
-    const wob = Math.round(Math.sin(y * 0.9 + T * 5) * 1.2);
+    const wob = Math.round(Math.sin(y * 0.9 + T * 5) * 0.6);
     for (let x = 0; x < W; x++) {
       const i = y * W + x, k = refl[i]; if (!k) continue;
       const xs = clamp(x + wob, 0, W - 1), j = (ys * W + xs) * 3, o = i * 3;
-      col[o] += (col[j] - col[o]) * k * 0.6; col[o + 1] += (col[j + 1] - col[o + 1]) * k * 0.6; col[o + 2] += (col[j + 2] - col[o + 2]) * k * 0.6;
+      col[o] += (col[j] - col[o]) * k * 0.5; col[o + 1] += (col[j + 1] - col[o + 1]) * k * 0.5; col[o + 2] += (col[j + 2] - col[o + 2]) * k * 0.5;
     }
   }
 
@@ -974,7 +1312,7 @@ const KEYMAP = { ArrowLeft: 'left', ArrowRight: 'right', ArrowUp: 'gas', ArrowDo
 addEventListener('keydown', e => {
   if (KEYMAP[e.key]) { keys[KEYMAP[e.key]] = true; manual(); e.preventDefault(); }
   else if (e.key === 'a' || e.key === 'A') setAuto(!auto);
-  else if (e.key === 'r' || e.key === 'R') rainOn = !rainOn;
+  else if (e.key === 'r' || e.key === 'R') toggleRain();
   else if (e.key === 'v' || e.key === 'V') toggleVehicle();
 });
 addEventListener('keyup', e => { if (KEYMAP[e.key]) keys[KEYMAP[e.key]] = false; });
@@ -990,6 +1328,9 @@ btnA.addEventListener('pointerdown', e => { e.preventDefault(); setAuto(!auto); 
 const btnV = document.getElementById('bv');
 function toggleVehicle() { bike = !bike; roll = 0; drops = []; btnV.textContent = bike ? 'CAR' : 'BIKE'; }
 btnV.addEventListener('pointerdown', e => { e.preventDefault(); toggleVehicle(); });
+const btnR = document.getElementById('br2');
+function toggleRain() { rainOn = !rainOn; if (!rainOn) drops = []; btnR.classList.toggle('on', rainOn); }
+btnR.addEventListener('pointerdown', e => { e.preventDefault(); toggleRain(); });
 setTimeout(() => { document.getElementById('hint').style.opacity = 0; }, 9000);
 
 requestAnimationFrame(frame);
