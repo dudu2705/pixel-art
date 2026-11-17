@@ -1,0 +1,684 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Glowgarden</title>
+<style>
+  html, body { margin: 0; height: 100%; overflow: hidden; background: #05060f; }
+  canvas { display: block; image-rendering: crisp-edges; image-rendering: pixelated; cursor: crosshair; touch-action: none; }
+  .tag {
+    position: fixed; font: 12px ui-monospace, Menlo, monospace; color: #bff3e2; letter-spacing: 1px;
+    background: rgba(4, 10, 12, 0.62); padding: 5px 10px; border: 1px solid #1d4a40; pointer-events: none;
+  }
+  #hint { left: 50%; bottom: 18px; transform: translateX(-50%); white-space: nowrap; transition: opacity 1.5s; }
+  #seed { left: 12px; top: 10px; }
+  @media (max-width: 640px) { #hint { white-space: normal; width: 86%; text-align: center; } }
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<div id="seed" class="tag"></div>
+<div id="hint" class="tag">click to plant &nbsp;&middot;&nbsp; 1&ndash;4 pick seed &nbsp;&middot;&nbsp; 0 random &nbsp;&middot;&nbsp; R rain &nbsp;&middot;&nbsp; hold T time-warp &nbsp;&middot;&nbsp; C clear</div>
+<script>
+// The canvas itself is the low-res art buffer; CSS scales it up with nearest-neighbour.
+const DAY = 150;                    // seconds per full day
+const SPECIES = ['lantern tree', 'fern', 'crystal', 'glowcap'];
+
+const cv = document.getElementById('c');
+const ctx = cv.getContext('2d');
+const seedEl = document.getElementById('seed');
+
+// ---------- helpers ----------
+const BAYER = [0, 8, 2, 10, 12, 4, 14, 6, 3, 11, 1, 9, 15, 7, 13, 5].map(v => (v + 0.5) / 16);
+function bay(x, y) { return BAYER[(y & 3) * 4 + (x & 3)]; }
+function clamp(v, a, b) { return v < a ? a : v > b ? b : v; }
+function smooth(a, b, v) { const t = clamp((v - a) / (b - a), 0, 1); return t * t * (3 - 2 * t); }
+function mix(a, b, t) { return [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t, a[2] + (b[2] - a[2]) * t]; }
+function mul(a, m) { return [a[0] * m[0], a[1] * m[1], a[2] * m[2]]; }
+function scale(a, s) { return [a[0] * s, a[1] * s, a[2] * s]; }
+function hash(x, y, s) {
+  let h = (x * 374761393 + y * 668265263 + s * 1442695041) | 0;
+  h = Math.imul(h ^ (h >>> 13), 1274126177);
+  h ^= h >>> 16;
+  return (h >>> 0) / 4294967296;
+}
+function vnoise(x, y, s) {
+  const ix = Math.floor(x), iy = Math.floor(y), fx = x - ix, fy = y - iy;
+  const a = hash(ix, iy, s), b = hash(ix + 1, iy, s), c = hash(ix, iy + 1, s), d = hash(ix + 1, iy + 1, s);
+  const ux = fx * fx * (3 - 2 * fx), uy = fy * fy * (3 - 2 * fy);
+  return a + (b - a) * ux + (c - a) * uy + (a - b - c + d) * ux * uy;
+}
+function fbm(x, y, s, oct) {
+  let v = 0, amp = 0.5, f = 1, norm = 0;
+  for (let o = 0; o < oct; o++) { v += amp * vnoise(x * f, y * f, s + o); norm += amp; amp *= 0.5; f *= 2; }
+  return v / norm;
+}
+function mulberry(a) {
+  return () => { a |= 0; a = (a + 0x6D2B79F5) | 0; let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t; return ((t ^ (t >>> 14)) >>> 0) / 4294967296; };
+}
+function hsl(h, s, l) {
+  h = (((h % 360) + 360) % 360) / 360;
+  const f = n => { const k = (n + h * 12) % 12, a = s * Math.min(l, 1 - l);
+    return 255 * (l - a * Math.max(-1, Math.min(k - 3, 9 - k, 1))); };
+  return [f(0), f(8), f(4)];
+}
+
+// ---------- buffers & terrain ----------
+let W, H, N, PX, HOR, GB, img, fb, col, lit, lb;
+let ground, farM, nearM, groundCol, pebbles, tufts, stars, planet;
+
+function setup() {
+  PX = Math.max(2, Math.round(Math.max(innerWidth, innerHeight) / 330));
+  W = Math.ceil(innerWidth / PX); H = Math.ceil(innerHeight / PX); N = W * H;
+  cv.width = W; cv.height = H;
+  cv.style.width = W * PX + 'px'; cv.style.height = H * PX + 'px';
+  img = ctx.createImageData(W, H);
+  fb = new Uint32Array(img.data.buffer);
+  col = new Float32Array(N * 3);   // colour of each pixel this frame
+  lit = new Uint8Array(N);         // 1 = affected by ambient light, 0 = emissive
+  lb = new Float32Array(N * 3);    // additive glow
+  HOR = Math.round(H * 0.62); GB = Math.round(H * 0.82);
+
+  ground = new Int16Array(W); farM = new Int16Array(W); nearM = new Int16Array(W);
+  for (let x = 0; x < W; x++) {
+    farM[x] = Math.round(HOR - 4 - Math.pow(fbm(x * 0.012, 1.5, 3, 4), 1.6) * H * 0.32);
+    nearM[x] = Math.round(HOR + 2 - fbm(x * 0.03, 7.3, 5, 4) * H * 0.16);
+    ground[x] = Math.round(GB - (fbm(x * 0.018, 3.1, 9, 3) - 0.3) * H * 0.1);
+  }
+
+  groundCol = new Float32Array(N * 3); pebbles = []; tufts = [];
+  for (let x = 0; x < W; x++) {
+    for (let y = Math.max(0, ground[x]); y < H; y++) {
+      const d = y - ground[x], h = hash(x, y, 2);
+      let c;
+      if (d === 0) c = [104, 214, 172];
+      else if (d === 1) c = [62, 162, 142];
+      else if (d === 2) c = h < 0.5 ? [62, 162, 142] : [46, 108, 110];
+      else {
+        c = mix([78, 50, 96], [30, 20, 44], Math.min(1, (d - 3) / 30));
+        if (h < 0.15) c = scale(c, 0.78);
+        else if (h > 0.985) c = [124, 104, 146];
+        if (d > 4 && hash(x, y, 77) < 0.002) pebbles.push({ x, y, c: hsl(160 + hash(x, y, 8) * 140, 0.9, 0.66) });
+      }
+      const i = (y * W + x) * 3;
+      groundCol[i] = c[0]; groundCol[i + 1] = c[1]; groundCol[i + 2] = c[2];
+    }
+    if (hash(x, 5, 5) < 0.4) tufts.push({ x, h: 1 + Math.floor(hash(x, 6, 6) * 3), c: hash(x, 7, 7) < 0.5 ? [120, 230, 180] : [86, 196, 160] });
+  }
+
+  stars = [];
+  const ns = Math.round(W * HOR / 260);
+  for (let i = 0; i < ns; i++) {
+    stars.push({ x: Math.floor(Math.random() * W), y: Math.floor(Math.random() * HOR * 0.9),
+      b: 0.3 + Math.random() * 0.7, sp: 1 + Math.random() * 3, ph: Math.random() * 7 });
+  }
+  planet = { x: Math.round(W * 0.76), y: Math.round(HOR * 0.28), r: Math.max(7, Math.round(Math.min(W, H) * 0.06)) };
+
+  if (typeof plants !== 'undefined') {
+    plants = plants.filter(p => p.x < W);
+    for (const p of plants) p.y = ground[p.x];
+  }
+}
+
+// ---------- plant generators (relative coords, up = negative y) ----------
+function finish(shape) {
+  let maxS = 0, maxH = 1;
+  for (const s of shape.segs) { maxS = Math.max(maxS, s.s1); maxH = Math.max(maxH, -s.ay, -s.by); }
+  for (const t of shape.tips) maxS = Math.max(maxS, t.s);
+  if (shape.capS) maxS = shape.capS;
+  for (const s of shape.segs) { s.s0 /= maxS; s.s1 /= maxS; }
+  for (const t of shape.tips) t.s /= maxS;
+  for (const c of shape.caps) { c.s0 /= maxS; maxH = Math.max(maxH, -c.cy + c.ry); }
+  shape.maxH = maxH;
+  return shape;
+}
+
+function genLantern(R) {
+  const segs = [], tips = [], depth = 4;
+  function br(x, y, a, len, d, s) {
+    const bx = x + Math.cos(a) * len, by = y + Math.sin(a) * len;
+    segs.push({ ax: x, ay: y, bx, by, s0: s, s1: s + len, w: d >= depth - 1 ? 2 : 1, k: 0 });
+    if (d === 0) { tips.push({ x: bx, y: by, s: s + len, big: R() < 0.5, light: R() < 0.6, ph: R() * 6 }); return; }
+    const n = R() < 0.35 ? 3 : 2, spread = 0.45 + R() * 0.35;
+    for (let i = 0; i < n; i++) {
+      const off = (i - (n - 1) / 2) * spread * (n === 3 ? 0.9 : 1.2);
+      br(bx, by, a + off + (R() - 0.5) * 0.3 - (a + Math.PI / 2) * 0.25, len * (0.68 + R() * 0.12), d - 1, s + len);
+    }
+  }
+  br(0, 0, -Math.PI / 2 + (R() - 0.5) * 0.2, 8 + R() * 6, depth, 0);
+  return finish({ segs, tips, caps: [] });
+}
+
+function genFrond(R) {
+  const segs = [], tips = [], n = 3 + Math.floor(R() * 3);
+  for (let f = 0; f < n; f++) {
+    const side = f - (n - 1) / 2;
+    let a = -Math.PI / 2 + side * 0.42 + (R() - 0.5) * 0.2;
+    const dir = side === 0 ? (R() < 0.5 ? -1 : 1) : Math.sign(side);
+    const curl = dir * (0.035 + R() * 0.04), steps = 12 + Math.floor(R() * 8), len = 1.7;
+    let x = 0, y = 0, s = 0;
+    for (let i = 0; i < steps; i++) {
+      a += curl * (0.5 + (i / steps) * 2);
+      const nx = x + Math.cos(a) * len, ny = y + Math.sin(a) * len;
+      segs.push({ ax: x, ay: y, bx: nx, by: ny, s0: s, s1: s + len, w: i < 3 ? 2 : 1, k: 0 });
+      if (i % 2 === 1 && i < steps - 2) {
+        const ll = (1 - i / steps) * 4 + 1;
+        for (const sd of [-1, 1]) {
+          const la = a + sd * 1.05 + 0.25;
+          segs.push({ ax: nx, ay: ny, bx: nx + Math.cos(la) * ll, by: ny + Math.sin(la) * ll, s0: s + len, s1: s + len + ll, w: 1, k: 1 });
+        }
+      }
+      x = nx; y = ny; s += len;
+    }
+    tips.push({ x, y, s, big: false, light: true, ph: R() * 6 });
+  }
+  return finish({ segs, tips, caps: [] });
+}
+
+function genCrystal(R) {
+  const segs = [], tips = [], n = 3 + Math.floor(R() * 4);
+  for (let i = 0; i < n; i++) {
+    const a = -Math.PI / 2 + (R() - 0.5) * 1.3;
+    const len = (7 + R() * 16) * (1 - Math.abs(a + Math.PI / 2) * 0.45);
+    const bx = Math.round((R() - 0.5) * 6);
+    const ex = bx + Math.cos(a) * len, ey = Math.sin(a) * len;
+    segs.push({ ax: bx, ay: 0, bx: ex, by: ey, s0: 0, s1: len, w: R() < 0.5 ? 2 : 3, k: 2 });
+    tips.push({ x: ex, y: ey, s: len, big: false, light: true, ph: R() * 6 });
+  }
+  return finish({ segs, tips, caps: [] });
+}
+
+function genShroom(R) {
+  const segs = [], caps = [], n = 1 + Math.floor(R() * 3);
+  let maxStem = 0;
+  for (let i = 0; i < n; i++) {
+    const h = i === 0 ? 9 + R() * 10 : 5 + R() * 7;
+    const bx = i === 0 ? 0 : (R() < 0.5 ? -1 : 1) * (3 + R() * 4);
+    const lean = (R() - 0.5) * 0.5, sl = h / 4;
+    let x = bx, y = 0, s = 0, a = -Math.PI / 2 + lean * 0.3;
+    for (let k = 0; k < 4; k++) {
+      a += lean * 0.15;
+      const nx = x + Math.cos(a) * sl, ny = y + Math.sin(a) * sl;
+      segs.push({ ax: x, ay: y, bx: nx, by: ny, s0: s, s1: s + sl, w: h > 11 ? 2 : 1, k: 0 });
+      x = nx; y = ny; s += sl;
+    }
+    const r = 2.5 + h * 0.28, spots = [];
+    for (let j = 0; j < 2 + Math.floor(R() * 4); j++) spots.push({ u: (R() - 0.5) * 1.4, v: -0.3 - R() * 0.55 });
+    caps.push({ cx: x + (h > 11 ? 0.5 : 0), cy: y, rx: r, ry: r * 0.62, s0: s, spots });
+    maxStem = Math.max(maxStem, s);
+  }
+  return finish({ segs, tips: [], caps, capS: maxStem * 1.35 });
+}
+
+const GEN = [genLantern, genFrond, genCrystal, genShroom];
+const HUES = [
+  () => Math.random() < 0.5 ? 25 + Math.random() * 35 : 300 + Math.random() * 40,
+  () => 140 + Math.random() * 60,
+  () => 180 + Math.random() * 100,
+  () => Math.random() < 0.75 ? 260 + Math.random() * 80 : 10 + Math.random() * 25,
+];
+
+function makePlant(sp, x, hue) {
+  if (hue == null) hue = HUES[sp]();
+  const shape = GEN[sp](mulberry((Math.random() * 1e9) | 0));
+  let stemC, leafC, glowC;
+  if (sp === 0) { stemC = hsl(hue, 0.25, 0.3); leafC = stemC; glowC = hsl(hue, 1, 0.62); }
+  else if (sp === 1) { stemC = hsl(hue, 0.55, 0.36); leafC = hsl(hue + 12, 0.6, 0.5); glowC = hsl(hue + 180, 0.95, 0.66); }
+  else if (sp === 2) { stemC = hsl(hue, 0.6, 0.6); leafC = hsl(hue + 10, 0.55, 0.38); glowC = hsl(hue, 0.95, 0.72); }
+  else { stemC = hsl(hue, 0.18, 0.8); leafC = hsl(hue, 0.6, 0.46); glowC = hsl(hue + 40, 1, 0.7); }
+  return {
+    sp, x, y: ground[x], hue, shape, stemC, leafC, glowC,
+    grow: 0, g: 0, wilt: 0, age: 0,
+    life: 170 + Math.random() * 220,
+    growDur: [24, 15, 18, 11][sp] * (0.8 + Math.random() * 0.4),
+    flex: [0.6, 1, 0, 0.35][sp], sporeT: 5 + Math.random() * 10,
+  };
+}
+
+// ---------- world state ----------
+let T = 0, last = performance.now(), warp = false;
+let tod, sunAlt, daylight, night, glow, amb, skyTop, skyBot;
+let rain = 0, rainTarget = 0, weatherT = 50, flash = 0, windBase = 0, cloudOff = 0;
+let plants = [], spores = [], flies = [], drops = [], splashes = [], jelly = null;
+let chosen = -1, mouse = null;
+
+setup();
+addEventListener('resize', setup);
+const MAXP = () => Math.max(12, Math.floor(W / 7));
+
+function wind(x) { return windBase + Math.sin(T * 1.7 + x * 0.09) * 0.18 * (1 + rain); }
+function room(x, d) { return !plants.some(p => p.wilt < 0.5 && Math.abs(p.x - x) < d); }
+function sway(p, y) { const k = -y / p.shape.maxH; return wind(p.x) * p.flex * k * k * Math.min(p.shape.maxH, 40) * 0.14; }
+
+function plantAt(x, sp, hue) {
+  x = clamp(Math.round(x), 2, W - 3);
+  if (!room(x, 5)) return false;
+  if (plants.length >= MAXP()) {
+    const old = plants.filter(p => !p.wilt).sort((a, b) => b.age / b.life - a.age / a.life)[0];
+    if (old) old.age = Math.max(old.age, old.life * 0.85);
+  }
+  plants.push(makePlant(sp < 0 ? Math.floor(Math.random() * 4) : sp, x, hue));
+  return true;
+}
+
+for (let i = 0; i < Math.min(10, MAXP() >> 1); i++) {
+  const x = 4 + Math.floor(Math.random() * (W - 8));
+  if (plantAt(x, -1)) { const p = plants[plants.length - 1]; p.grow = 1; p.age = Math.random() * p.life * 0.6; }
+}
+
+function updateSky() {
+  tod = (T / DAY + 0.67) % 1;
+  sunAlt = -Math.cos(tod * 2 * Math.PI);
+  const NIGHT = { top: [6, 8, 26], bot: [30, 20, 62], amb: [0.22, 0.24, 0.44] };
+  const DUSK = { top: [54, 38, 112], bot: [255, 124, 92], amb: [1.0, 0.7, 0.62] };
+  const NOON = { top: [84, 160, 198], bot: [250, 216, 176], amb: [1, 1, 1] };
+  let a, b, k;
+  if (sunAlt >= 0) { a = DUSK; b = NOON; k = smooth(0, 0.35, sunAlt); }
+  else { a = DUSK; b = NIGHT; k = smooth(0, 0.3, -sunAlt); }
+  skyTop = mix(a.top, b.top, k); skyBot = mix(a.bot, b.bot, k); amb = mix(a.amb, b.amb, k);
+  daylight = smooth(-0.12, 0.3, sunAlt);
+  night = 1 - smooth(-0.2, 0.1, sunAlt);
+  glow = 1 - smooth(-0.1, 0.3, sunAlt) * 0.8;
+  const grey = scale([96, 100, 116], 0.25 + 0.75 * daylight);
+  skyTop = mix(skyTop, grey, rain * 0.6); skyBot = mix(skyBot, grey, rain * 0.6);
+  amb = scale(amb, 1 - 0.3 * rain);
+  glow = Math.min(1, glow + rain * 0.25);
+}
+
+function update(dt) {
+  updateSky();
+
+  weatherT -= dt;
+  if (weatherT <= 0) { weatherT = 40 + Math.random() * 60; rainTarget = Math.random() < 0.3 ? 1 : 0; }
+  rain += (rainTarget - rain) * Math.min(1, dt * 0.3);
+  if (rain > 0.7 && Math.random() < dt * 0.06) flash = 1;
+  flash *= Math.exp(-dt * 6);
+  windBase = Math.sin(T * 0.13) * 0.5 + Math.sin(T * 0.37 + 1) * 0.3 + rain * 0.6 * Math.sin(T * 0.9);
+  cloudOff += (windBase * 0.4 + 0.08) * dt;
+
+  // plants
+  for (let i = plants.length - 1; i >= 0; i--) {
+    const p = plants[i];
+    p.age += dt;
+    if (p.grow < 1) p.grow = Math.min(1, p.grow + dt / p.growDur * (1 + rain * 1.5));
+    const lf = p.age / p.life;
+    p.wilt = lf > 0.85 ? Math.min(1, (lf - 0.85) / 0.15) : 0;
+    p.g = p.grow * (1 - p.wilt);
+    if (lf >= 1) { plants.splice(i, 1); continue; }
+    if (p.grow >= 1 && !p.wilt && (p.sporeT -= dt) <= 0) {
+      p.sporeT = 7 + Math.random() * 16;
+      const S = p.shape;
+      let sx, sy;
+      if (S.tips.length) { const t = S.tips[Math.floor(Math.random() * S.tips.length)]; sx = t.x + sway(p, t.y); sy = t.y; }
+      else { const c = S.caps[0]; sx = c.cx + sway(p, c.cy); sy = c.cy - c.ry; }
+      if (spores.length < 80) spores.push({ x: p.x + sx, y: p.y + sy, vx: (Math.random() - 0.5) * 4, vy: -4 - Math.random() * 4,
+        sp: p.sp, hue: p.hue + (Math.random() - 0.5) * 40, c: p.glowC, life: 25, ph: Math.random() * 6 });
+    }
+  }
+
+  // spores drift, land, sprout
+  for (let i = spores.length - 1; i >= 0; i--) {
+    const s = spores[i];
+    s.life -= dt;
+    s.vx += (wind(s.x) * 14 - s.vx) * Math.min(1, dt * 0.8);
+    s.vy += (2.5 + Math.sin(T * 3 + s.ph) * 5 - s.vy) * Math.min(1, dt * 0.6);
+    s.x += s.vx * dt; s.y += s.vy * dt;
+    const gx = Math.round(s.x);
+    if (gx < 0 || gx >= W || s.life <= 0) { spores.splice(i, 1); continue; }
+    if (s.y >= ground[gx]) {
+      if (plants.length < MAXP() && gx > 2 && gx < W - 3 && room(gx, 7)) plants.push(makePlant(s.sp, gx, s.hue));
+      spores.splice(i, 1);
+    }
+  }
+
+  // fireflies
+  const target = Math.round(night * Math.min(24, W / 12) * (1 - rain * 0.7));
+  while (flies.length < target) flies.push({ x: Math.random() * W, y: GB - 6 - Math.random() * 30, vx: 0, vy: 0, ph: Math.random() * 10 });
+  if (flies.length > target && Math.random() < dt * 2) flies.pop();
+  for (const f of flies) {
+    f.vx += (Math.random() - 0.5) * 50 * dt + wind(f.x) * 3 * dt;
+    f.vy += (Math.random() - 0.5) * 50 * dt;
+    f.vx *= Math.exp(-dt * 1.2); f.vy *= Math.exp(-dt * 1.2);
+    f.x += f.vx * dt; f.y += f.vy * dt;
+    if (f.x < 0) f.x += W; if (f.x >= W) f.x -= W;
+    const g = ground[clamp(Math.round(f.x), 0, W - 1)];
+    if (f.y > g - 3) f.vy -= 30 * dt;
+    if (f.y < g - 40) f.vy += 30 * dt;
+  }
+
+  // a jellyshroom drifts past at night now and then
+  if (!jelly && night > 0.6 && Math.random() < dt / 35) {
+    const dir = Math.random() < 0.5 ? 1 : -1;
+    jelly = { x: dir > 0 ? -12 : W + 12, dir, y: 12 + Math.random() * HOR * 0.45, ph: Math.random() * 6 };
+  }
+  if (jelly) {
+    jelly.x += jelly.dir * 6 * dt;
+    jelly.y += Math.sin(T * 0.8 + jelly.ph) * 3 * dt;
+    if (jelly.x < -20 || jelly.x > W + 20) jelly = null;
+  }
+
+  // rain
+  const want = Math.round(rain * W * 0.8);
+  while (drops.length < want) drops.push({ x: Math.random() * W, y: -Math.random() * H, v: 110 + Math.random() * 60 });
+  if (drops.length > want) drops.length = want;
+  for (const d of drops) {
+    d.y += d.v * dt; d.x += wind(d.x) * 20 * dt;
+    if (d.x < 0) d.x += W; if (d.x >= W) d.x -= W;
+    const g = ground[clamp(Math.round(d.x), 0, W - 1)];
+    if (d.y >= g) {
+      if (Math.random() < 0.5) splashes.push({ x: d.x, y: g - 1, t: 0.15 });
+      d.y = -Math.random() * 20; d.x = Math.random() * W;
+    }
+  }
+  for (let i = splashes.length - 1; i >= 0; i--) if ((splashes[i].t -= dt) <= 0) splashes.splice(i, 1);
+}
+
+// ---------- drawing primitives ----------
+function plot(x, y, c, L) {
+  x = Math.round(x); y = Math.round(y);
+  if (x < 0 || y < 0 || x >= W || y >= H) return;
+  const i = y * W + x, j = i * 3;
+  col[j] = c[0]; col[j + 1] = c[1]; col[j + 2] = c[2]; lit[i] = L;
+}
+function line(x0, y0, x1, y1, c, L, w) {
+  x0 = Math.round(x0); y0 = Math.round(y0); x1 = Math.round(x1); y1 = Math.round(y1);
+  const dx = Math.abs(x1 - x0), dy = -Math.abs(y1 - y0), sx = x0 < x1 ? 1 : -1, sy = y0 < y1 ? 1 : -1;
+  let err = dx + dy;
+  for (;;) {
+    plot(x0, y0, c, L); if (w > 1) plot(x0 + 1, y0, c, L);
+    if (x0 === x1 && y0 === y1) break;
+    const e2 = 2 * err;
+    if (e2 >= dy) { err += dy; x0 += sx; }
+    if (e2 <= dx) { err += dx; y0 += sy; }
+  }
+}
+function addLight(x, y, R, c, I) {
+  if (I <= 0.01) return;
+  x = Math.round(x); y = Math.round(y);
+  const R2 = R * R;
+  for (let dy = -R; dy <= R; dy++) {
+    const yy = y + dy; if (yy < 0 || yy >= H) continue;
+    for (let dx = -R; dx <= R; dx++) {
+      const xx = x + dx; if (xx < 0 || xx >= W) continue;
+      const d2 = dx * dx + dy * dy; if (d2 >= R2) continue;
+      let f = 1 - Math.sqrt(d2) / R; f = f * f * I;
+      f = Math.floor(f * 5 + bay(xx, yy)) / 5;     // banded, dithered falloff
+      if (f <= 0) continue;
+      const i = (yy * W + xx) * 3;
+      lb[i] += c[0] * f; lb[i + 1] += c[1] * f; lb[i + 2] += c[2] * f;
+    }
+  }
+}
+function disk(cx, cy, r, fn) {
+  const R = Math.ceil(r);
+  for (let dy = -R; dy <= R; dy++) for (let dx = -R; dx <= R; dx++)
+    if (dx * dx + dy * dy <= r * r) fn(Math.round(cx) + dx, Math.round(cy) + dy, dx / r, dy / r);
+}
+
+// ---------- scene ----------
+function drawSky() {
+  for (let y = 0; y < H; y++) {
+    const t = Math.pow(Math.min(1, y / HOR), 1.2);
+    for (let x = 0; x < W; x++) {
+      const tq = Math.min(1, Math.floor(t * 22 + bay(x, y)) / 22);
+      const i = y * W + x, j = i * 3;
+      col[j] = skyTop[0] + (skyBot[0] - skyTop[0]) * tq + flash * 90;
+      col[j + 1] = skyTop[1] + (skyBot[1] - skyTop[1]) * tq + flash * 90;
+      col[j + 2] = skyTop[2] + (skyBot[2] - skyTop[2]) * tq + flash * 110;
+      lit[i] = 0;
+    }
+  }
+  if (night > 0.02) {
+    for (const s of stars) {
+      const b = s.b * night * (1 - rain * 0.8) * (0.55 + 0.45 * Math.sin(T * s.sp + s.ph));
+      const j = (s.y * W + s.x) * 3;
+      col[j] += 230 * b; col[j + 1] += 230 * b; col[j + 2] += 255 * b;
+    }
+  }
+}
+
+function sunPos(off) {
+  const a = (tod + off) * 2 * Math.PI, alt = -Math.cos(a);
+  return { x: W / 2 - Math.sin(a) * W * 0.5, y: HOR - alt * HOR * 0.9, alt };
+}
+
+function drawPlanet(sun) {
+  const P = planet, pa = (1 - daylight * 0.55) * (1 - rain * 0.7);
+  let lx = sun.x - P.x, ly = sun.y - P.y, lz = P.r * 2.5;
+  const ln = Math.hypot(lx, ly, lz); lx /= ln; ly /= ln; lz /= ln;
+  const tilt = -0.35, ct = Math.cos(tilt), st = Math.sin(tilt);
+  function ring(front) {
+    for (let a = 0; a < Math.PI * 2; a += 0.012) {
+      if ((Math.sin(a) > 0) !== front) continue;
+      for (let r = 0; r < 4; r++) {
+        const rr = (1.55 + r * 0.17) * P.r, ex = Math.cos(a) * rr, ey = Math.sin(a) * rr * 0.3;
+        const x = Math.round(P.x + ex * ct - ey * st), y = Math.round(P.y + ex * st + ey * ct);
+        if (x < 0 || y < 0 || x >= W || y >= H) continue;
+        const c = r === 1 ? [150, 128, 120] : [214, 192, 162], j = (y * W + x) * 3, k = pa * 0.8;
+        col[j] += (c[0] - col[j]) * k; col[j + 1] += (c[1] - col[j + 1]) * k; col[j + 2] += (c[2] - col[j + 2]) * k;
+      }
+    }
+  }
+  ring(false);
+  disk(P.x, P.y, P.r, (x, y, nx, ny) => {
+    if (x < 0 || y < 0 || x >= W || y >= H) return;
+    const nz = Math.sqrt(Math.max(0, 1 - nx * nx - ny * ny));
+    const sh = Math.max(0, nx * lx + ny * ly + nz * lz);
+    const q = Math.floor(sh * 4 + bay(x, y)) / 4;
+    const band = Math.sin(ny * 9 + fbm(nx * 3, ny * 3, 4, 2) * 3) > 0 ? [206, 140, 118] : [168, 98, 108];
+    const c = scale(band, 0.1 + 0.9 * q), j = (y * W + x) * 3;
+    col[j] += (c[0] - col[j]) * pa; col[j + 1] += (c[1] - col[j + 1]) * pa; col[j + 2] += (c[2] - col[j + 2]) * pa;
+  });
+  ring(true);
+}
+
+function drawLights(sun, moon) {
+  const sc = mix([255, 150, 80], [255, 250, 225], smooth(0, 0.4, sun.alt));
+  const rs = Math.max(3, Math.round(H * 0.022));
+  if (sun.y < HOR + rs) {
+    disk(sun.x, sun.y, rs, (x, y) => plot(x, y, sc, 0));
+    addLight(sun.x, sun.y, Math.round(rs * 6), sc, 0.32 * (1 - rain * 0.7));
+  }
+  if (moon.y < HOR + 3) {
+    const mv = 0.35 + 0.65 * night;
+    disk(moon.x, moon.y, 3, (x, y, nx, ny) => {
+      if ((nx - 0.55) ** 2 + (ny + 0.1) ** 2 < 0.7) return;       // crescent
+      const j = (y * W + x) * 3;
+      if (x >= 0 && y >= 0 && x < W && y < H) plot(x, y, mix([col[j], col[j + 1], col[j + 2]], [226, 230, 255], mv), 0);
+    });
+    addLight(moon.x, moon.y, 9, [150, 170, 255], 0.2 * night * (1 - rain * 0.7));
+  }
+}
+
+function drawClouds() {
+  let hi = mix(mix(skyBot, skyTop, 0.3), [255, 250, 255], 0.15 + 0.55 * daylight);
+  hi = mix(hi, scale([104, 108, 122], 0.3 + 0.7 * daylight), rain * 0.6);
+  const lo = mix(scale(hi, 0.8), skyTop, 0.15);
+  const cover = 0.36 + rain * 0.38 + 0.08 * Math.sin(T * 0.05), top = HOR * 0.75;
+  for (let y = 0; y < top; y++) {
+    const band = cover * Math.sin(Math.PI * y / top);
+    for (let x = 0; x < W; x++) {
+      const d = fbm(x * 0.022 + cloudOff, y * 0.07 + 3, 11, 3) - (1 - band);
+      if (d <= 0 || d * 10 < bay(x, y)) continue;
+      const c = d > 0.06 ? hi : lo, j = (y * W + x) * 3;
+      col[j] = c[0] + flash * 120; col[j + 1] = c[1] + flash * 120; col[j + 2] = c[2] + flash * 140;
+    }
+  }
+}
+
+function drawLand() {
+  const farC = mix(skyBot, mul([90, 64, 132], amb), 0.42);
+  const nearC = mix(skyBot, mul([52, 38, 86], amb), 0.7);
+  for (let x = 0; x < W; x++) {
+    for (let y = Math.max(0, farM[x]); y < H; y++) plot(x, y, y === farM[x] ? mix(farC, skyBot, 0.3) : farC, 0);
+    for (let y = Math.max(0, nearM[x]); y < H; y++) plot(x, y, y === nearM[x] ? mix(nearC, farC, 0.5) : nearC, 0);
+    for (let y = Math.max(0, ground[x]); y < H; y++) {
+      const i = y * W + x, j = i * 3;
+      col[j] = groundCol[j]; col[j + 1] = groundCol[j + 1]; col[j + 2] = groundCol[j + 2]; lit[i] = 1;
+    }
+  }
+  for (const p of pebbles) {
+    plot(p.x, p.y, scale(p.c, 0.35 + 0.65 * glow), 0);
+    addLight(p.x, p.y, 3, p.c, 0.3 * glow);
+  }
+  for (const t of tufts) {
+    const w = wind(t.x);
+    for (let k = 0; k < t.h; k++) plot(t.x + Math.round(w * k * 0.7), ground[t.x] - 1 - k, t.c, 1);
+  }
+}
+
+function drawPlant(p) {
+  const S = p.shape, g = p.g, w = p.wilt, gl = glow * (1 - w);
+  const dead = [98, 84, 74];
+  const stem = mix(p.stemC, dead, w), leaf = mix(p.leafC, dead, w);
+  const X = y => p.x + sway(p, y);
+  for (const s of S.segs) {
+    if (s.s0 >= g) continue;
+    const t = s.s1 <= g ? 1 : (g - s.s0) / (s.s1 - s.s0);
+    const bx = s.ax + (s.bx - s.ax) * t, by = s.ay + (s.by - s.ay) * t;
+    if (s.k === 2) drawShard(X(s.ay) + s.ax, p.y + s.ay, X(by) + bx, p.y + by, s.w, stem, leaf, p.glowC, gl);
+    else line(X(s.ay) + s.ax, p.y + s.ay, X(by) + bx, p.y + by, s.k ? leaf : stem, 1, s.w);
+  }
+  for (const t of S.tips) {
+    if (t.s > g) continue;
+    const x = X(t.y) + t.x, y = p.y + t.y;
+    const pulse = 0.75 + 0.25 * Math.sin(T * 2 + t.ph);
+    const bright = mix(scale(mul(p.glowC, amb), 0.55), p.glowC, gl);
+    if (p.sp === 0) {
+      plot(x, y + 1, stem, 1);
+      plot(x, y + 2, bright, 0); plot(x, y + 3, bright, 0);
+      if (t.big) { plot(x + 1, y + 2, bright, 0); plot(x + 1, y + 3, scale(bright, 0.8), 0); }
+      if (t.light) addLight(x, y + 3, 6, p.glowC, 0.5 * gl * pulse);
+    } else if (p.sp === 1) {
+      plot(x, y, bright, 0);
+      addLight(x, y, 4, p.glowC, 0.45 * gl * pulse);
+    } else {
+      plot(x, y, mix(bright, [255, 255, 255], 0.4), 0);
+      addLight(x, y, 5, p.glowC, 0.5 * gl * pulse);
+    }
+  }
+  for (const c of S.caps) {
+    if (g <= c.s0) continue;
+    const cs = clamp((g - c.s0) / 0.26, 0, 1);
+    const rx = Math.max(1, c.rx * cs), ry = Math.max(1, c.ry * cs);
+    const cx = Math.round(X(c.cy) + c.cx), cy = Math.round(p.y + c.cy);
+    const capC = leaf, capHi = mix(leaf, [255, 255, 255], 0.25), gill = mix(scale(mul(leaf, amb), 0.6), p.glowC, gl * 0.7);
+    for (let dy = -Math.ceil(ry); dy <= 0; dy++) {
+      for (let dx = -Math.ceil(rx); dx <= Math.ceil(rx); dx++) {
+        if ((dx / rx) ** 2 + (dy / ry) ** 2 > 1) continue;
+        if (dy === 0) plot(cx + dx, cy, gill, 0);
+        else plot(cx + dx, cy + dy, dy < -ry * 0.55 ? capHi : capC, 1);
+      }
+    }
+    if (cs > 0.6) for (const s of c.spots) plot(cx + s.u * rx, cy + s.v * ry, mix(scale(p.glowC, 0.5), p.glowC, gl), 0);
+    addLight(cx, cy + 2, Math.round(rx) + 4, p.glowC, 0.4 * gl * cs);
+  }
+}
+
+function drawShard(x0, y0, x1, y1, w, light, dark, glowC, gl) {
+  const steps = Math.max(1, Math.round(Math.max(Math.abs(x1 - x0), Math.abs(y1 - y0))));
+  const L = mix(mul(light, amb), glowC, gl * 0.5), D = mix(mul(dark, amb), glowC, gl * 0.3);
+  for (let i = 0; i <= steps; i++) {
+    const u = i / steps, x = x0 + (x1 - x0) * u, y = y0 + (y1 - y0) * u;
+    const ww = Math.max(1, Math.round(w * (1 - u * 0.7)));
+    for (let k = 0; k < ww; k++) plot(x + k - (ww >> 1), y, k === 0 ? L : D, 0);
+  }
+  addLight((x0 + x1) / 2, (y0 + y1) / 2, 4, glowC, 0.25 * gl);
+}
+
+function drawCritters() {
+  for (const s of spores) {
+    plot(s.x, s.y, s.c, 0);
+    addLight(s.x, s.y, 3, s.c, 0.45 * (0.4 + 0.6 * glow));
+  }
+  for (const f of flies) {
+    const b = Math.pow(Math.max(0, Math.sin(T * 2.1 + f.ph)), 3);
+    if (b < 0.05) continue;
+    plot(f.x, f.y, scale([220, 255, 140], 0.4 + 0.6 * b), 0);
+    addLight(f.x, f.y, 5, [190, 255, 120], 0.6 * b);
+  }
+  if (jelly) {
+    const J = jelly, pulse = Math.sin(T * 3), r = 4 + pulse * 0.6;
+    const capC = [130, 205, 255], tC = [190, 150, 255];
+    for (let dy = -Math.ceil(r * 0.8); dy <= 0; dy++)
+      for (let dx = -Math.ceil(r); dx <= Math.ceil(r); dx++)
+        if ((dx / r) ** 2 + (dy / (r * 0.8)) ** 2 <= 1) plot(J.x + dx, J.y + dy, dy < -2 ? [200, 235, 255] : capC, 0);
+    for (let k = -1; k <= 1; k++)
+      for (let s = 1; s <= 7; s++) plot(J.x + k * 2 + Math.sin(T * 4 + s * 0.8 + k) * (s / 5), J.y + s, tC, 0);
+    addLight(J.x, J.y, 12, capC, 0.35);
+  }
+  const rc = [140, 162, 214];
+  for (const d of drops) {
+    if (d.y < 0) continue;
+    const lean = wind(d.x) * 0.8;
+    plot(d.x, d.y, rc, 1); plot(d.x - lean, d.y - 1, rc, 1); plot(d.x - lean * 2, d.y - 2, scale(rc, 0.75), 1);
+  }
+  for (const s of splashes) { plot(s.x - 1, s.y, rc, 1); plot(s.x + 1, s.y, rc, 1); }
+}
+
+function drawCursor() {
+  if (!mouse) return;
+  const x = clamp(Math.round(mouse.x), 2, W - 3), ok = room(x, 5);
+  if ((performance.now() / 250 | 0) % 2) {
+    const c = ok ? [230, 255, 240] : [255, 110, 110];
+    plot(x, ground[x] - 3, c, 0);
+    plot(x, ground[x] - 5, scale(c, 0.6), 0);
+  }
+}
+
+function composite() {
+  const f = flash * 0.9, ar = amb[0] + f, ag = amb[1] + f, ab = amb[2] + f;
+  for (let i = 0, j = 0; i < N; i++, j += 3) {
+    let r = col[j], g = col[j + 1], b = col[j + 2];
+    if (lit[i]) { r *= ar; g *= ag; b *= ab; }
+    r += lb[j]; g += lb[j + 1]; b += lb[j + 2];
+    fb[i] = (255 << 24) | ((b > 255 ? 255 : b) << 16) | ((g > 255 ? 255 : g) << 8) | (r > 255 ? 255 : r);
+  }
+  ctx.putImageData(img, 0, 0);
+}
+
+function render() {
+  lb.fill(0);
+  const sun = sunPos(0), moon = sunPos(0.5);
+  drawSky();
+  drawPlanet(sun);
+  drawLights(sun, moon);
+  drawClouds();
+  drawLand();
+  for (const p of plants) drawPlant(p);
+  drawCritters();
+  drawCursor();
+  composite();
+  seedEl.textContent = 'seed: ' + (chosen < 0 ? 'random' : SPECIES[chosen]) + (warp ? '  ·  time-warp' : '') + (rainTarget ? '  ·  rain' : '');
+}
+
+function frame(now) {
+  const dt = Math.min(0.05, (now - last) / 1000); last = now;
+  const sdt = dt * (warp ? 10 : 1);
+  T += sdt;
+  update(sdt);
+  render();
+  requestAnimationFrame(frame);
+}
+
+// ---------- input ----------
+cv.addEventListener('pointermove', e => { mouse = { x: e.clientX / PX }; });
+cv.addEventListener('pointerleave', () => { mouse = null; });
+cv.addEventListener('pointerdown', e => { plantAt(e.clientX / PX, chosen); });
+addEventListener('keydown', e => {
+  const k = e.key.toLowerCase();
+  if (k >= '1' && k <= '4') chosen = +k - 1;
+  else if (k === '0') chosen = -1;
+  else if (k === 'r') { rainTarget = rainTarget ? 0 : 1; weatherT = 60; }
+  else if (k === 't') warp = true;
+  else if (k === 'c') for (const p of plants) p.age = Math.max(p.age, p.life * 0.85);
+});
+addEventListener('keyup', e => { if (e.key.toLowerCase() === 't') warp = false; });
+setTimeout(() => { document.getElementById('hint').style.opacity = 0; }, 9000);
+
+requestAnimationFrame(frame);
+</script>
+</body>
+</html>
