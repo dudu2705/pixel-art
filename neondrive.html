@@ -294,7 +294,7 @@ let W, H, N, PX, F, HOR, HB, PW, img, fb, col, lb, refl;
 let OW, OH, SWD, SHD, MX, MY, colS, colO, bmask, bcol, vmask, vcol;
 function useScene() { W = SWD; H = SHD; N = W * H; col = colS; }
 function useOut() { W = OW; H = OH; N = W * H; col = colO; }
-let sky1, sky2, mtn, flyers = [], holoX = 0;
+let sky1, sky2, mtn, holoX = 0;
 const Z = new Float32Array(DRAW + 2), S = new Float32Array(DRAW + 2), CX = new Float32Array(DRAW + 2), GY = new Float32Array(DRAW + 2);
 
 function setup() {
@@ -337,8 +337,6 @@ function setup() {
   sky1 = layer(HB * 0.15, HB * 0.85, 5, 16);
   sky2 = layer(HB * 0.08, HB * 0.45, 8, 22);
   holoX = Math.round(PW * 0.02);
-  flyers = [];
-  for (let i = 0; i < 14; i++) flyers.push({ pc: r() * PW, y: MY + HB * (0.12 + r() * 0.5), v: (r() < 0.5 ? -1 : 1) * (12 + r() * 40), c: NEON[(r() * 6) | 0] });
 
   // static motorcycle overlay: windscreen (tint), fairing, tank, mirrors; and the helmet visor frame
   bmask = new Uint8Array(N); bcol = new Float32Array(N * 3); vmask = new Uint8Array(N); vcol = new Float32Array(N * 3);
@@ -536,16 +534,9 @@ function update(dt) {
   }
   shake *= Math.exp(-dt * 4); crashFlash *= Math.exp(-dt * 5);
 
-  for (const f of flyers) f.pc = ((f.pc + f.v * dt) % PW + PW) % PW;
   for (const p of peds) p.z = ((p.z + p.v * dt) % LEN + LEN) % LEN;
   train.z = ((train.z + train.v * dt) % LEN + LEN) % LEN;
   racer.off = 25 + Math.sin(T * 0.12) * 45; racer.z = camZ + racer.off;
-  {
-    const dz_ = district(Math.floor(camZ / SEGL)), inCity = !zoneAt(Math.floor(camZ / SEGL))[4] && ![D.TUNNEL, D.TUBE, D.RAMP].includes(dz_);
-    if ((lifeT.xfly -= dt) <= 0) { lifeT.xfly = 5 + Math.random() * 7; if (inCity) { const dir = Math.random() < 0.5 ? 1 : -1; xfly.push({ z: camZ + 110 + Math.random() * 110, h: 13 + Math.random() * 14, x: -dir * 85, vx: dir * (26 + Math.random() * 14), c: NEON[(Math.random() * 6) | 0] }); } }
-    for (const o of xfly) o.x += o.vx * dt;
-    xfly = xfly.filter(o => Math.abs(o.x) < 95 && o.z - camZ > -10);
-  }
   { const r = rel(train.z); if (r > LEN - 90) train.z = (camZ + 500 + Math.random() * 300) % LEN; }
   const th = blendTheme(Math.floor(camZ / SEGL));
   const W_ = rainOn ? wx : 'off';
@@ -774,14 +765,6 @@ function drawSky(hy) {
       for (let x = Math.max(0, Math.floor(cxl - hw)); x <= Math.min(W - 1, cxl + hw); x++)
         addc(x, y, c, 0.07 * (1 - d / base) * (1 - Math.abs(x - cxl) / (hw + 1)));
     }
-  }
-  for (const f of flyers) {
-    const x = ((Math.round(f.pc - bx)) % PW + PW) % PW;
-    if (x < -8 || x > W + 8) continue;
-    const y = Math.round(f.y + Math.sin(T + f.pc) * 1.5);
-    for (let k = 1; k < 7; k++) addc(x - Math.sign(f.v) * k, y, f.c, 0.5 * (1 - k / 7));
-    putc(x, y, [255, 255, 255]);
-    addLight(x, y, 4, f.c, 0.4);
   }
 }
 
@@ -1249,20 +1232,6 @@ function drawTube(k, n) {
     }
   }
 }
-function drawWhale(k, dz) {                         // a slow, huge, very real whale gliding beside the tube
-  if (!projAt(k, dz)) return;
-  const s = PS, fz = fogAt(PZ), cx = PCX - 17 * s, cy = PGY - (3.5 + Math.sin(T * 0.5) * 0.8) * s, L = 16 * s, R = 2.6 * s;
-  for (let i = 0; i <= 40; i++) {
-    const t = i / 40, wv = Math.sin(T * 1.2 - t * 3) * 0.35 * t * s;
-    const x = cx + (0.5 - t) * L, y = cy + wv, r = R * Math.pow(Math.sin(Math.PI * Math.min(1, t * 1.1 + 0.05)), 0.6) * (1 - t * 0.55);
-    blob(x, y, Math.max(1, L / 40 + 1), Math.max(1, r), [18, 30, 46], 0.85, fz * 0.6);
-    blob(x, y + r * 0.45, Math.max(1, L / 40 + 1), Math.max(1, r * 0.35), [70, 96, 110], 0.6, fz * 0.6);
-    if (i % 5 === 2) { const xx = Math.round(x), yy = Math.round(y - r * 0.2); if (xx >= 0 && xx < W && yy >= 0 && yy < H) addc(xx, yy, [90, 255, 230], 0.8); }
-  }
-  const tx = cx - 0.5 * L, ty = cy + Math.sin(T * 1.2 - 3) * 0.35 * s;
-  for (const sgn of [-1, 1]) lineS(tx, ty, tx - 2.2 * s, ty + sgn * (1.3 + Math.sin(T * 1.2) * 0.4) * s, [18, 30, 46], fz * 0.6);
-}
-
 // ---- spiral ramp: a giant lit tower on the inside of the curve ----
 function towerTex(wz, v, z) {
   if ((v % 9) < 0.35) { TR = 0; TG = 200; TB = 255; return; }
@@ -1316,8 +1285,6 @@ function racerTex(wz, v) {
   TR = 220; TG = 226; TB = 236;
 }
 let racer = { z: 0, off: 40 };
-let xfly = [];
-const lifeT = { xfly: 3 };
 
 // ---- stilt canals: little lantern boats ----
 function drawBoat(k, n) {
@@ -1351,30 +1318,6 @@ function drawStadium(k) {
     }
   }
   addLight(cx, top, Math.min(30, 30 * s), [255, 220, 160], 0.3 * (1 - fz));
-}
-
-// ---- a holographic dragon that flies alongside ----
-function drawDragon(k, dz) {
-  if (!projAt(k, dz)) return;
-  const s = PS, fz = fogAt(PZ), L = 40, a = 0.7;
-  const cx = PCX + (-3 + Math.sin(T * 0.4) * 8) * s, cy = PGY - (16 + Math.sin(T * 0.7) * 3) * s;
-  let hx = 0, hy = 0;
-  for (let i = 40; i >= 0; i--) {
-    const t = i / 40, x = cx + (t - 0.5) * L * s * 0.9, y = cy + Math.sin(T * 2.4 - t * 7) * 2.2 * s;
-    const r = (2.0 - t * 1.3) * s, c = mix([255, 70, 60], [255, 210, 80], (Math.sin(t * 20) + 1) / 2);
-    for (let yy = Math.max(0, Math.floor(y - r)); yy <= Math.min(H - 1, y + r); yy++) {
-      if (yy & 1) continue;
-      for (let xx = Math.max(0, Math.floor(x - r)); xx <= Math.min(W - 1, x + r); xx++) {
-        const e = ((xx - x) ** 2 + (yy - y) ** 2) / (r * r + 0.01);
-        if (e <= 1) addc(xx, yy, c, (e > 0.6 ? 0.8 : 0.25) * a * (1 - fz));
-      }
-    }
-    if (i % 4 === 0) lineS(x, y - r, x - 0.3 * s, y - r - 0.9 * s, [255, 230, 120], fz);   // spines
-    if (i === 0) { hx = x; hy = y; }
-  }
-  addc(Math.round(hx - 0.6 * s), Math.round(hy - 0.3 * s), [255, 255, 255], 1);
-  for (const sgn of [-1, 1]) lineS(hx - 0.2 * s, hy - 0.6 * s, hx + 1.2 * s, hy - (1.6 + sgn * 0.4) * s, [255, 230, 140], fz);
-  addLight(cx, cy, Math.min(30, 10 * s), [255, 120, 60], 0.25 * (1 - fz));
 }
 
 // ---- data canyon: green lasers from the rooftops ----
@@ -1415,18 +1358,6 @@ function drawSignal(i, k, dz) {
 function drawCrosser(c, k, dz) {
   const p = { x: c.x, umb: c.umb, coat: c.coat, ph: c.ph, v: c.v };
   drawPed(p, k, dz);
-}
-
-// ---- flying cars crossing the street between the towers ----
-function drawFlyer(o, k, dz) {
-  if (!projAt(k, dz) || PZ > 420) return;
-  const s = PS, fz = fogAt(PZ), x = PCX + o.x * s, y = PGY - o.h * s, dir = Math.sign(o.vx);
-  for (let i = 1; i < 16; i++) addc(Math.round(x - dir * i * 0.9 * s), Math.round(y + 0.2 * s), o.c, 0.4 * (1 - i / 16) * (1 - fz));
-  rect(x - 1.3 * s, x + 1.3 * s, y - 0.45 * s, y + 0.35 * s, [26, 24, 34], fz);
-  rect(x - 0.6 * s, x + 0.7 * s, y - 0.75 * s, y - 0.4 * s, [60, 70, 100], fz);
-  rect(x - 1.3 * s, x + 1.3 * s, y + 0.25 * s, y + 0.35 * s + 0.5, o.c, fz * 0.4);
-  addLight(x + dir * 1.3 * s, y, Math.min(20, Math.max(2, 1.8 * s)), [230, 240, 255], 0.5 * (1 - fz));
-  addLight(x, y + 0.4 * s, Math.min(20, Math.max(2, 1.6 * s)), o.c, 0.35 * (1 - fz));
 }
 
 // ---- a holographic koi swimming over the street ----
@@ -1959,19 +1890,12 @@ function render() {
     if (r > NEAR && r < DRAW * SEGL) put_(Math.floor(r / SEGL + frac), { sig: i, r });
     for (const c of crossers(i)) { const rc = rel(c.z); if (rc > NEAR) put_(Math.floor(rc / SEGL + frac), { xp: c, r: rc }); }
   }
-  for (const o of xfly) { const r = o.z - camZ; if (r > NEAR) put_(Math.floor(r / SEGL + frac), { xf: o, r }); }
   for (const p of peds) {
     const r = rel(p.z), k = Math.floor(r / SEGL + frac);
     if (k < 0 || k >= DRAW || r < NEAR || district(Math.floor(p.z / SEGL)) === 3) continue;
     if (!buckets.has(k)) buckets.set(k, []);
     buckets.get(k).push({ p, r });
   }
-
-  // companions that travel alongside: a whale in the sea tube, a hologram dragon over shrines and canals
-  const dHere = district(base);
-  const rWhale = 46 + Math.sin(T * 0.2) * 10, rDragon = 52 + Math.sin(T * 0.13) * 12;
-  const kWhale = dHere === D.TUBE && TH.water > 0.6 ? Math.floor(rWhale / SEGL + frac) : -1;
-  const kDragon = dHere === D.SHRINE || dHere === D.CANALS ? Math.floor(rDragon / SEGL + frac) : -1;
 
   for (let k = DRAW - 1; k >= 0; k--) {
     const n = (base + k) % NSEG;
@@ -2012,7 +1936,7 @@ function render() {
       for (const o of bk) {
         const dz = o.r - Z[k];
         if (o.c) drawCar(o.c, k, dz); else if (o.p) drawPed(o.p, k, dz); else if (o.sig !== undefined) drawSignal(o.sig, k, dz);
-        else if (o.xp) drawCrosser(o.xp, k, dz); else if (o.xf) drawFlyer(o.xf, k, dz);
+        else if (o.xp) drawCrosser(o.xp, k, dz);
       }
     }
     if (d === D.SHRINE && n % 3 === 0) drawTorii(k, n);
@@ -2027,8 +1951,6 @@ function render() {
       if (!zz[4] && n === zz[0] + 2 && zoneAt(n - 3)[4] && zz[2] !== D.TUNNEL) drawGantry(k, CITIES[zz[3]]); }
   }
 
-  if (kWhale >= 0) drawWhale(kWhale, rWhale - Z[kWhale]);       // seen through the glass, so drawn last
-  if (kDragon >= 0) drawDragon(kDragon, rDragon - Z[kDragon]);   // a hologram floats in front of everything
   addLight(W / 2, hy + eye() * F / 14, Math.min(30, F * 2.4 / 14), [190, 215, 255], 0.22 + 0.3 * TH.dark);
   if (TH.dark > 0.3) addLight(W / 2, hy + eye() * F / 30, 24, [190, 215, 255], 0.25 * TH.dark);
 
