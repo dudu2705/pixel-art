@@ -46,12 +46,42 @@
 </div>
 <script>
 // Pseudo-3D city street rendered into a small pixel buffer; CSS scales it up with nearest-neighbour.
-const SEGL = 4, NSEG = 1500, DRAW = 150, LEN = NSEG * SEGL;
+const SEGL = 4, DRAW = 120;
+
+// three cities joined by long bridges; each city is a run of districts
+// districts: 0 downtown, 1 lantern market, 2 glass spires, 3 tunnel, 4 docklands, 5 skybridge, 6 holo gardens
+const ZONE_NAMES = ['NEON DOWNTOWN', 'LANTERN MARKET', 'GLASS SPIRES', 'UNDERPASS', 'DOCKLANDS', 'SKYBRIDGE', 'HOLO GARDENS'];
+const CITIES = [
+  { name: 'VANTA BAY', zones: [[0, 260], [3, 50], [1, 230], [2, 230], [4, 180]],
+    sky: [[6, 4, 16], [30, 10, 46], [104, 32, 96]], fog: [44, 16, 56], tw: [[40, 20, 60], [22, 12, 36]], hue: [200, 300],
+    neon: [[255, 46, 170], [0, 234, 255], [255, 214, 64], [170, 90, 255], [70, 255, 150], [255, 110, 50]] },
+  { name: 'AURUM HEIGHTS', zones: [[6, 240], [0, 220], [3, 50], [2, 200], [4, 190]],
+    sky: [[10, 6, 10], [52, 22, 22], [176, 84, 40]], fog: [74, 38, 28], tw: [[62, 34, 28], [34, 18, 16]], hue: [5, 50],
+    neon: [[255, 170, 40], [255, 80, 50], [0, 220, 200], [255, 225, 120], [255, 60, 110], [120, 255, 200]] },
+  { name: 'GLACIA', zones: [[2, 220], [1, 200], [3, 50], [6, 220], [0, 210]],
+    sky: [[4, 8, 22], [14, 30, 62], [64, 116, 156]], fog: [30, 54, 80], tw: [[32, 46, 72], [16, 24, 42]], hue: [190, 250],
+    neon: [[140, 220, 255], [200, 140, 255], [240, 250, 255], [80, 170, 255], [255, 120, 220], [120, 255, 240]] },
+];
+const BRIDGE_LEN = 200;
+const ZONES = [];
+const NSEG = (() => {
+  let n = 0;
+  CITIES.forEach((c, ci) => {
+    for (const [d, len] of c.zones) { ZONES.push([n, n + len, d, ci]); n += len; }
+    ZONES.push([n, n + BRIDGE_LEN, 5, ci]); n += BRIDGE_LEN;
+  });
+  return n;
+})();
+const LEN = NSEG * SEGL;
+function zoneAt(n) { n = ((n % NSEG) + NSEG) % NSEG; for (const z of ZONES) if (n < z[1]) return z; return ZONES[0]; }
+function district(n) { return zoneAt(n)[2]; }
+function zoneEnd(n) { return zoneAt(n)[1]; }
+const TUNNEL_STARTS = ZONES.filter(z => z[2] === 3).map(z => z[0]);
+let FOG = CITIES[0].fog.slice(), SKY = CITIES[0].sky, TWC = CITIES[0].tw;
 const RW = 7, SW = 3.2, NEAR = 0.7;
 let bike = true, roll = 0;
 const maxV = () => bike ? 62 : 50;
 const eye = () => bike ? 1.4 : 1.15;
-const FOG = [44, 16, 56];
 const NEON = [[255, 46, 170], [0, 234, 255], [255, 214, 64], [170, 90, 255], [70, 255, 150], [255, 110, 50]];
 const WIN = [[255, 200, 120], [255, 170, 90], [120, 220, 255], [255, 120, 200], [200, 190, 255], [255, 236, 190]];
 
@@ -86,7 +116,7 @@ function hsl(h, s, l) {
     return 255 * (l - a * Math.max(-1, Math.min(k - 3, 9 - k, 1))); };
   return [f(0), f(8), f(4)];
 }
-function fogAt(z) { return smooth(90, DRAW * SEGL * 0.97, z) * 0.92; }
+function fogAt(z) { return smooth(50, DRAW * SEGL * 0.82, z) * 0.97; }
 
 // ---------- the city (generated once) ----------
 const rng = mulberry(2077);
@@ -97,14 +127,11 @@ for (let n = 0; n < NSEG;) {
   for (let i = 0; i < len; i++) curve[n + i] = c * Math.sin(Math.PI * i / len);
   n += len;
 }
-for (let n = 0; n < NSEG; n++) hill[n] = 4 * Math.sin(n * 2 * Math.PI / 500) + 1.5 * Math.sin(n * 2 * Math.PI / 150);
+for (let n = 0; n < NSEG; n++) hill[n] = 4 * Math.sin(n * 2 * Math.PI * 6 / NSEG) + 1.5 * Math.sin(n * 2 * Math.PI * 20 / NSEG);
+for (const z of ZONES) if (z[2] === 5) {           // bridges arch up over the water and run straight
+  for (let n = z[0]; n < z[1]; n++) { const t = (n - z[0]) / (z[1] - z[0]); hill[n] += 14 * Math.sin(Math.PI * t); curve[n] *= 0.3; }
+}
 
-// districts along the loop: 0 neon downtown, 1 lantern market, 2 glass spires, 3 tunnel
-const ZONES = [[0, 380, 0], [380, 440, 3], [440, 800, 1], [800, 1150, 2], [1150, 1210, 3], [1210, NSEG, 0]];
-const ZONE_NAMES = ['NEON DOWNTOWN', 'LANTERN MARKET', 'GLASS SPIRES', 'UNDERPASS'];
-function district(n) { n = ((n % NSEG) + NSEG) % NSEG; for (const z of ZONES) if (n < z[1]) return z[2]; return 0; }
-function zoneEnd(n) { for (const z of ZONES) if (n < z[1]) return z[1]; return NSEG; }
-const TUNNEL_STARTS = ZONES.filter(z => z[2] === 3).map(z => z[0]);
 const WARM = [[255, 60, 40], [255, 150, 40], [255, 214, 64], [255, 90, 140]];
 const COOL = [[180, 210, 255], [140, 200, 255], [210, 230, 255], [120, 180, 240]];
 
@@ -112,31 +139,37 @@ const blocks = [];
 const SIDE = [new Int32Array(NSEG).fill(-1), new Int32Array(NSEG).fill(-1)];
 for (let side = 0; side < 2; side++) {
   for (let n = 0; n < NSEG;) {
-    const d = district(n);
-    if (d === 3) { n++; continue; }
-    if (rng() < (d === 2 ? 0.08 : 0.17)) { n += 1 + Math.floor(rng() * 2); continue; }
-    const len = Math.min(zoneEnd(n) - n, (d === 2 ? 8 : 4) + Math.floor(rng() * 12));
-    const h = d === 1 ? 8 + Math.pow(rng(), 1.5) * 22 : d === 2 ? 50 + rng() * 90 : 12 + Math.pow(rng(), 1.7) * 75;
-    const pal = d === 1 ? WARM : NEON;
+    const zz = zoneAt(n), d = zz[2], city = CITIES[zz[3]], cn = city.neon;
+    if (d === 3 || d === 5) { n++; continue; }
+    if (rng() < (d === 2 ? 0.08 : d === 4 ? 0.25 : 0.17)) { n += 1 + Math.floor(rng() * 2); continue; }
+    const len = Math.min(zz[1] - n, (d === 2 || d === 4 ? 8 : 4) + Math.floor(rng() * 12));
+    const h = d === 1 ? 8 + Math.pow(rng(), 1.5) * 22 : d === 2 ? 50 + rng() * 90 : d === 4 ? 9 + rng() * 9
+      : d === 6 ? 14 + rng() * 26 : 12 + Math.pow(rng(), 1.7) * 75;
+    const pal = d === 1 ? WARM : cn;
+    const hue = city.hue[0] + rng() * (city.hue[1] - city.hue[0]);
+    const base = d === 1 ? hsl(10 + rng() * 30, 0.28, 0.1 + rng() * 0.07)
+      : d === 2 ? hsl(hue, 0.35, 0.12 + rng() * 0.06)
+      : d === 4 ? hsl(rng() < 0.5 ? 15 + rng() * 20 : 170 + rng() * 30, 0.3, 0.13 + rng() * 0.06)
+      : d === 6 ? hsl(140 + rng() * 60, 0.25, 0.1 + rng() * 0.06)
+      : hsl(hue, 0.22, 0.09 + rng() * 0.08);
     const B = {
-      id: blocks.length, start: n, len, h, style: d, seed: (rng() * 1e6) | 0,
-      set: d === 1 ? rng() * 0.8 : d === 2 ? 1 + rng() * 3 : rng() * 2.5,
-      base: d === 1 ? hsl(10 + rng() * 30, 0.28, 0.1 + rng() * 0.07) : d === 2 ? hsl(205 + rng() * 25, 0.35, 0.12 + rng() * 0.06) : hsl(200 + rng() * 100, 0.22, 0.09 + rng() * 0.08),
-      winP: d === 2 ? 0.45 + rng() * 0.3 : d === 1 ? 0.35 + rng() * 0.3 : 0.15 + rng() * 0.4,
-      crown: d === 2 || rng() < (d === 1 ? 0.15 : 0.45) ? NEON[(rng() * 6) | 0] : null,
+      id: blocks.length, start: n, len, h, style: d, seed: (rng() * 1e6) | 0, base,
+      set: d === 1 ? rng() * 0.8 : d === 2 ? 1 + rng() * 3 : d === 4 ? 3 + rng() * 4 : rng() * 2.5,
+      winP: d === 2 ? 0.45 + rng() * 0.3 : d === 1 || d === 6 ? 0.35 + rng() * 0.3 : d === 4 ? 0.08 : 0.15 + rng() * 0.4,
+      crown: d === 2 || rng() < (d === 1 || d === 4 ? 0.15 : 0.45) ? cn[(rng() * 6) | 0] : null,
       shop: [pal[(rng() * pal.length) | 0], WIN[(rng() * 6) | 0], pal[(rng() * pal.length) | 0]],
       bbs: [], signs: [],
     };
     const wc = d === 2 ? [150, 190, 235] : [220, 170, 120];
     B.avg = mix(B.base, wc, B.winP * 0.35);
     const L = len * SEGL;
-    if (rng() < (d === 2 ? 0.5 : d === 1 ? 0.25 : 0.6) && h > 18 && L > 10) {
+    if (rng() < (d === 2 ? 0.5 : d === 1 || d === 4 ? 0.2 : 0.55) && h > 16 && L > 10) {
       const big = d === 2 ? 2 : 1;
-      const w = Math.min(L - 2, (6 + rng() * 10) * big), hh = (4 + rng() * 6) * big, v0 = 6 + rng() * Math.max(0, h - hh - 9);
+      const w = Math.min(L - 2, (6 + rng() * 10) * big), hh = Math.min(h - 8, (4 + rng() * 6) * big), v0 = 6 + rng() * Math.max(0, h - hh - 9);
       const u0 = 1 + rng() * (L - w - 2);
-      B.bbs.push({ u0, u1: u0 + w, v0, v1: v0 + hh, kind: (rng() * 3) | 0, c1: NEON[(rng() * 6) | 0], c2: NEON[(rng() * 6) | 0], seed: (rng() * 1e6) | 0 });
+      B.bbs.push({ u0, u1: u0 + w, v0, v1: v0 + hh, kind: (rng() * 3) | 0, c1: cn[(rng() * 6) | 0], c2: cn[(rng() * 6) | 0], seed: (rng() * 1e6) | 0 });
     }
-    const ns = d === 2 ? 0 : d === 1 ? 2 + ((rng() * 3) | 0) : rng() < 0.65 ? 1 + ((rng() * 2) | 0) : 0;
+    const ns = d === 2 || d === 4 ? 0 : d === 1 ? 2 + ((rng() * 3) | 0) : rng() < 0.65 ? 1 + ((rng() * 2) | 0) : 0;
     for (let i = 0; i < ns; i++) {
       const v0 = 4.2 + rng() * 3, v1 = Math.min(h - 0.5, v0 + 5 + rng() * 9);
       if (v1 - v0 > 3) B.signs.push({ u: 0.5 + rng() * (L - 1), v0, v1, c: pal[(rng() * pal.length) | 0], seed: (rng() * 1e6) | 0 });
@@ -388,8 +421,12 @@ function update(dt) {
   train.z = ((train.z + train.v * dt) % LEN + LEN) % LEN;
   { const r = rel(train.z); if (r > LEN - 90) train.z = (camZ + 500 + Math.random() * 300) % LEN; }
   wet += ((rainOn ? 1 : 0.3) - wet) * Math.min(1, dt * 0.6);
-  const zn = district(Math.floor(camZ / SEGL));
-  if (zn !== curZone) { curZone = zn; zoneEl.textContent = ZONE_NAMES[zn]; zoneEl.style.opacity = 1; zoneT = 3; }
+  const zr = zoneAt(Math.floor(camZ / SEGL)), zn = ZONES.indexOf(zr);
+  if (zn !== curZone) {
+    curZone = zn;
+    zoneEl.textContent = zr[2] === 5 ? 'SKYBRIDGE → ' + CITIES[(zr[3] + 1) % CITIES.length].name : CITIES[zr[3]].name + ' · ' + ZONE_NAMES[zr[2]];
+    zoneEl.style.opacity = 1; zoneT = 3.5;
+  }
   if ((zoneT -= dt) < 0) zoneEl.style.opacity = 0;
 
   // rain
@@ -424,7 +461,7 @@ function update(dt) {
 // ---------- drawing ----------
 function addLight(x, y, R, c, I) {
   if (I <= 0.02) return;
-  R = Math.min(30, Math.round(R)); if (R < 1) return;
+  R = Math.min(30, Math.round(R)); if (R < 2) return;
   x = Math.round(x); y = Math.round(y);
   if (x + R < 0 || x - R >= W || y + R < 0 || y - R >= H) return;
   const R2 = R * R;
@@ -453,7 +490,7 @@ function addc(x, y, c, a) {
 
 // sky, smog, skyline, hologram, flying cars
 function drawSky(hy) {
-  const top = [6, 4, 16], mid = [30, 10, 46], hz = [104, 32, 96];
+  const top = SKY[0], mid = SKY[1], hz = SKY[2];
   for (let y = 0; y < H; y++) {
     const t = clamp(y / hy, 0, 1);
     for (let x = 0; x < W; x++) {
@@ -469,10 +506,22 @@ function drawSky(hy) {
       const n = vnoise((x + bgX * 0.5) * 0.03 + T * 0.05, y * 0.12, 3) * 0.65 + vnoise((x + bgX * 0.5) * 0.08, y * 0.3, 5) * 0.35;
       const d = n - 0.6;
       if (d <= 0 || d * 9 < bay(x, y)) continue;
-      putc(x, y, mix([36, 14, 54], [150, 50, 130], glowK * glowK));
+      putc(x, y, mix(mix(mid, top, 0.2), mix(hz, [255, 255, 255], 0.12), glowK * glowK));
     }
   }
   const bx = Math.floor(bgX);
+  {
+    const mx = ((Math.round(PW * 0.62) - bx) % PW + PW) % PW, my = Math.round(hy - HB * 0.72), mr = Math.max(6, Math.round(HB * 0.12));
+    if (mx > -mr && mx < W + mr) {
+      const mc = mix([240, 236, 250], hz, 0.15);
+      for (let dy = -mr; dy <= mr; dy++) for (let dx = -mr; dx <= mr; dx++) {
+        if (dx * dx + dy * dy > mr * mr) continue;
+        const cr = hash((mx + dx * 0) + Math.floor((dx + mr) / 3), Math.floor((dy + mr) / 3), 404) < 0.18;
+        putc(mx + dx, my + dy, cr ? mix(mc, [0, 0, 0], 0.15) : mc);
+      }
+      addLight(mx, my, mr * 2.4, mc, 0.18);
+    }
+  }
   function towers(L, cBase, cWin, fog) {
     for (let x = 0; x < W; x++) {
       const pc = ((x + bx) % PW + PW) % PW, h = L.h[pc], top = Math.round(hy - h), sd = L.seed[pc], wx = pc - L.x0[pc];
@@ -489,7 +538,7 @@ function drawSky(hy) {
       }
     }
   }
-  towers(sky1, [40, 20, 60], 0.6, [70, 30, 80]);
+  towers(sky1, TWC[0], 0.6, mix(hz, TWC[0], 0.4));
   // hologram jellyshroom above the skyline
   const hx = ((holoX - bx) % PW + PW) % PW;
   const R = Math.max(10, Math.round(H * 0.11));
@@ -509,7 +558,7 @@ function drawSky(hy) {
     }
     addLight(cx, cy, R * 1.6, hc, 0.12);
   }
-  towers(sky2, [22, 12, 36], 0.35, [50, 20, 60]);
+  towers(sky2, TWC[1], 0.35, mix(hz, TWC[1], 0.6));
   // searchlights sweeping the clouds
   for (let i = 0; i < 3; i++) {
     const bxs = ((Math.round(PW * (0.2 + i * 0.31)) - bx) % PW + PW) % PW;
@@ -532,7 +581,8 @@ function drawSky(hy) {
   }
 }
 
-function drawGround(k) {
+function drawGround(k, d) {
+  const water = d === 5;
   const f = k + 1, yN = GY[k], yF = GY[f];
   if (yF >= yN) return;
   const y0 = Math.max(0, Math.ceil(yF)), y1 = Math.min(H - 1, Math.ceil(yN) - 1);
@@ -555,10 +605,13 @@ function drawGround(k) {
       else if (a < RW + SW) {
         const ln = pxw < 0.5 && (tileRow || ((a - RW) % 1.6) < Math.max(0.1, pxw));
         r = ln ? 30 : 46; g = ln ? 26 : 40; b = ln ? 42 : 60; rf = 0.25;
+      } else if (water) {
+        const sp = pxw < 0.4 && hash(Math.floor(lx * 2), zq, 21) < 0.012;
+        r = sp ? 120 : 6; g = sp ? 130 : 10; b = sp ? 170 : 24; rf = 0.85;
       } else { r = 18; g = 14; b = 26; }
       const i = y * W + x, j = i * 3;
       col[j] = r + (FOG[0] - r) * fz; col[j + 1] = g + (FOG[1] - g) * fz; col[j + 2] = b + (FOG[2] - b) * fz;
-      refl[i] = rf * (1 - fz) * wet;
+      refl[i] = rf === 0.85 ? rf : rf * (1 - fz) * wet * (1 - smooth(45, 170, z));
     }
   }
 }
@@ -575,6 +628,7 @@ function quadWall(k, lat, h0, h1, tex, zlo, zhi) {
     const g = GY[k] + (GY[f] - GY[k]) * t, s = F * iz, yt = g - h1 * s, yb = g - h0 * s, fz = fogAt(z), wz = camZ + z;
     for (let y = Math.max(0, Math.ceil(yt)); y <= Math.min(H - 1, Math.ceil(yb) - 1); y++) {
       tex(wz, h0 + (yb - y - 0.5) / (yb - yt) * (h1 - h0), z, s);
+      if (TR < 0) continue;
       const i = y * W + x, j = i * 3;
       col[j] = TR + (FOG[0] - TR) * fz; col[j + 1] = TG + (FOG[1] - TG) * fz; col[j + 2] = TB + (FOG[2] - TB) * fz;
       refl[i] = 0;
@@ -703,7 +757,7 @@ function drawLanterns(k, n) {
     if (r < 0.8) { if (x >= 0 && x < W && y >= 0 && y < H) putc(Math.round(x), Math.round(y), c); continue; }
     blob(x, y, r * 1.1, r, c, 1, fz * 0.6);
     rect(x - r * 0.5, x + r * 0.5, y - r - Math.max(1, 0.08 * s), y - r + 1, [40, 20, 20], fz);
-    if (i % 2 === 0) addLight(x, y, Math.max(3, 1.6 * s), c, 0.4 * (1 - fz));
+    if (i % 2 === 0 && PZ < 160) addLight(x, y, Math.max(3, 1.6 * s), c, 0.4 * (1 - fz));
   }
 }
 function drawStall(k, sg, n) {
@@ -753,7 +807,7 @@ function drawWires(k, n) {
 
 // ---- pedestrians ----
 function drawPed(p, k, dz) {
-  if (!projAt(k, dz)) return;
+  if (!projAt(k, dz) || PZ > 160) return;
   const s = PS, fz = fogAt(PZ), x = PCX + p.x * s, yb = PGY;
   if (s < 1.2) { if (p.umb) { const xx = Math.round(x), yy = Math.round(yb - 2 * s); if (xx >= 0 && xx < W && yy >= 0 && yy < H) putc(xx, yy, p.umb); } return; }
   const w = 0.5 * s, step = Math.sin(T * 6 * Math.abs(p.v) + p.ph) * 0.12 * s;
@@ -774,6 +828,116 @@ function drawPed(p, k, dz) {
     }
     addLight(x, uy, Math.max(2, 1.1 * s), p.umb, 0.3 * (1 - fz));
   }
+}
+
+// ---- skybridge: railings, pylons, suspension cables, boats far below ----
+function railTex(wz, v) {
+  if (v > 1.0) { TR = 0; TG = 210; TB = 255; return; }
+  if ((wz % 2.5) < 0.18 || (v > 0.5 && v < 0.62)) { TR = 70; TG = 70; TB = 90; return; }
+  TR = -1;
+}
+function cableH(l) {
+  if (l < 50) return 1.2 + 73.8 * (l / 50);
+  if (l > 150) return 1.2 + 73.8 * ((200 - l) / 50);
+  return 8 + 67 * ((l - 100) / 50) ** 2;
+}
+function drawSkybridge(k, n) {
+  const z = zoneAt(n), l = n - z[0], f = k + 1, cc = mix(CITIES[z[3]].neon[1], [255, 255, 255], 0.3);
+  for (const sg of [-1, 1]) {
+    quadWall(k, sg * (RW + SW), 0, 1.2, railTex);
+    const lat = sg * (RW + SW + 0.6), h0 = cableH(l), h1 = cableH(l + 1);
+    const x0 = CX[k] + lat * S[k], y0 = GY[k] - h0 * S[k], x1 = CX[f] + lat * S[f], y1 = GY[f] - h1 * S[f];
+    lineS(x0, y0, x1, y1, [150, 160, 190], fogAt(Z[k]));
+    if (S[k] > 2.5) lineS(x0 + 1, y0, x1 + 1, y1, [90, 96, 120], fogAt(Z[k]));
+    if (l % 5 === 0 && Z[k] < 220) lineS(x0, y0, x0, GY[k] - 1.2 * S[k], mix([70, 74, 96], FOG, 0.4), fogAt(Z[k]));
+    if (l % 4 === 0 && Z[k] < 260) { const xx = Math.round(x0), yy = Math.round(y0); if (xx >= 0 && xx < W && yy >= 0 && yy < H) putc(xx, yy, cc); addLight(x0, y0, Math.max(2, 0.9 * S[k]), cc, 0.35 * (1 - fogAt(Z[k]))); }
+  }
+  if ((l === 50 || l === 150) && projAt(k, 0)) {
+    const s = PS, fz = fogAt(PZ);
+    for (const sg of [-1, 1]) {
+      const xc = PCX + sg * (RW + SW + 1.5) * s, hw = 1.6 * s;
+      rect(xc - hw, xc + hw, PGY - 78 * s, PGY + 30 * s, [34, 32, 46], fz);
+      rect(xc - hw, xc - hw + Math.max(1, 0.3 * s), PGY - 78 * s, PGY, cc, fz * 0.7);
+      rect(xc + hw - Math.max(1, 0.3 * s), xc + hw, PGY - 78 * s, PGY, cc, fz * 0.7);
+      if ((T * 1.2 + l) % 2 < 1) addLight(xc, PGY - 79 * s, Math.max(3, 3 * s), [255, 40, 40], 0.7 * (1 - fz));
+      rect(xc - 0.5 * s, xc + 0.5 * s, PGY - 80 * s, PGY - 78 * s, [255, 60, 60], fz * 0.5);
+    }
+    for (const bh of [44, 72]) rect(PCX - (RW + SW + 3) * s, PCX + (RW + SW + 3) * s, PGY - (bh + 2.5) * s, PGY - bh * s, [30, 28, 42], fz);
+  }
+  if (n % 23 === 0 && Z[k] < 400) {                 // boats on the water
+    const sg = hash(n, 1, 61) < 0.5 ? -1 : 1, lat = sg * (40 + hash(n, 2, 62) * 140) + Math.sin(T * 0.1 + n) * 10;
+    if (projAt(k, 0)) {
+      const x = PCX + lat * PS, y = PGY + 25 * PS * 0.05, c = CITIES[z[3]].neon[(n >> 1) % 6];
+      rect(x - 3 * PS, x + 3 * PS, y - Math.max(1, 0.8 * PS), y, [20, 18, 30], fogAt(PZ));
+      if (x >= 0 && x < W) { putc(Math.round(x), Math.round(y - Math.max(2, PS)), c); addLight(x, y - PS, Math.max(2, 2 * PS), c, 0.4); }
+    }
+  }
+}
+function drawGantry(k, city) {
+  if (!projAt(k, 0)) return;
+  const s = PS, fz = fogAt(PZ), L = RW + 1;
+  for (const sg of [-1, 1]) rect(PCX + sg * L * s - 0.2 * s, PCX + sg * L * s + 0.2 * s, PGY - 8 * s, PGY, [40, 40, 54], fz);
+  rect(PCX - L * s, PCX + L * s, PGY - 8.3 * s, PGY - 7.9 * s, [40, 40, 54], fz);
+  const xa = PCX - 6 * s, xb = PCX + 6 * s, ya = PGY - 7.9 * s, yb = PGY - 5.9 * s, c = city.neon[0];
+  rect(xa, xb, ya, yb, [10, 10, 18], fz);
+  const nm = city.name;
+  const cols = nm.length * 4;
+  for (let x = Math.max(0, Math.ceil(xa)); x <= Math.min(W - 1, Math.ceil(xb) - 1); x++) {
+    const gi = Math.floor((x + 0.5 - xa) / (xb - xa) * (cols + 4)) - 2;
+    if (gi < 0 || gi >= cols || gi % 4 === 3) continue;
+    const g = FONT[nm[gi >> 2]] || FONT[' '];
+    for (let y = Math.max(0, Math.ceil(ya)); y <= Math.min(H - 1, Math.ceil(yb) - 1); y++) {
+      const gj = Math.floor((y + 0.5 - ya) / (yb - ya) * 9) - 2;
+      if (gj >= 0 && gj < 5 && g[gj * 3 + (gi & 3)] === '1') put(x, y, ...mix(c, FOG, fz));
+    }
+  }
+  addLight(PCX, (ya + yb) / 2, Math.max(4, 5 * s), c, 0.3 * (1 - fz));
+}
+
+// ---- docklands: container stacks and gantry cranes ----
+const BOX = [[150, 60, 40], [40, 110, 120], [190, 150, 40], [50, 70, 140], [160, 40, 60], [90, 100, 60]];
+function drawContainers(k, sg, n) {
+  if (!projAt(k, 0) || PZ > 300) return;
+  const s = PS, fz = fogAt(PZ);
+  for (let j = 0; j < 3; j++) {
+    const hgt = 1 + Math.floor(hash(n, j, 51) * 4), x0 = PCX + sg * (RW + SW + 0.6 + j * 2.6) * s, x1 = x0 + sg * 2.4 * s;
+    for (let b = 0; b < hgt; b++) {
+      const c = BOX[(hash(n, j * 7 + b, 52) * 6) | 0], ya = PGY - (b + 1) * 2.6 * s, yb = PGY - b * 2.6 * s;
+      rect(x0, x1, ya, yb, c, fz);
+      rect(x0, x1, ya, ya + Math.max(1, 0.15 * s), mix(c, [255, 255, 255], 0.25), fz);
+      if (s > 2) for (let r = 1; r < 6; r++) { const xr = x0 + (x1 - x0) * r / 6; rect(xr, xr + Math.max(1, 0.06 * s), ya, yb, mix(c, [0, 0, 0], 0.35), fz); }
+    }
+  }
+}
+function drawCrane(k, sg, n) {
+  if (!projAt(k, 0)) return;
+  const s = PS, fz = fogAt(PZ), yc = [200, 120, 30], w = Math.max(1, 0.6 * s);
+  const la = sg * (RW + SW + 9), lb_ = sg * (RW + SW + 21);
+  for (const l of [la, lb_]) rect(PCX + l * s - w, PCX + l * s + w, PGY - 40 * s, PGY, yc, fz);
+  const tip = -sg * 4;
+  rect(Math.min(PCX + tip * s, PCX + lb_ * s), Math.max(PCX + tip * s, PCX + lb_ * s), PGY - 41.5 * s, PGY - 40 * s, yc, fz);
+  rect(PCX + la * s - 2 * s, PCX + la * s + 2 * s, PGY - 44 * s, PGY - 41.5 * s, [40, 36, 50], fz);
+  lineS(PCX + (tip + sg * 6) * s, PGY - 40 * s, PCX + (tip + sg * 6) * s, PGY - 30 * s, [30, 30, 40], fz);
+  if ((T * 1.5 + n) % 2 < 1) addLight(PCX + tip * s, PGY - 41 * s, Math.max(3, 2 * s), [255, 40, 40], 0.7 * (1 - fz));
+}
+
+// ---- holo gardens: glowing trees on the sidewalks ----
+const LEAF = [[60, 255, 180], [200, 90, 255], [90, 200, 255], [255, 90, 200]];
+function drawTree(k, sg, n) {
+  if (!projAt(k, 0) || PZ > 260) return;
+  const s = PS, fz = fogAt(PZ), x = PCX + sg * (RW + 0.9) * s, c = LEAF[(hash(n, sg + 3, 71) * 4) | 0];
+  rect(x - 0.15 * s - 0.5, x + 0.15 * s + 0.5, PGY - 3.2 * s, PGY, [36, 26, 40], fz);
+  const cx = x, cy = PGY - 4.3 * s, rx = 1.5 * s, ry = 1.25 * s;
+  for (let y = Math.max(0, Math.floor(cy - ry)); y <= Math.min(H - 1, cy + ry); y++)
+    for (let xx = Math.max(0, Math.floor(cx - rx)); xx <= Math.min(W - 1, cx + rx); xx++) {
+      const e = ((xx - cx) / rx) ** 2 + ((y - cy) / ry) ** 2;
+      if (e > 1 + (hash(xx, y, 72) - 0.5) * 0.3) continue;
+      const lit = (y - cy) < -ry * 0.2 || hash(Math.floor(xx / 2), Math.floor(y / 2), n) < 0.25;
+      const cc = lit ? c : mix(c, [10, 10, 20], 0.55);
+      put(xx, y, cc[0] + (FOG[0] - cc[0]) * fz, cc[1] + (FOG[1] - cc[1]) * fz, cc[2] + (FOG[2] - cc[2]) * fz);
+      refl[y * W + xx] = 0;
+    }
+  addLight(cx, cy, Math.max(3, 2.6 * s), c, 0.4 * (1 - fz));
 }
 
 // ---- a holographic koi swimming over the street ----
@@ -855,7 +1019,26 @@ function wallTex(B, u, v, front, mpp) {
     }
     TR = bc[0] * 1.3; TG = bc[1] * 1.3; TB = bc[2] * 1.3; return;
   }
-  if (mpp > 1.1 && v >= 3.8) { TR = B.avg[0]; TG = B.avg[1]; TB = B.avg[2]; return; }
+  if (B.style === 4) {                              // docklands: corrugated sheds, roller doors, a painted stripe
+    if (B.crown && v > B.h - 2.2 && v < B.h - 1.4) { TR = B.crown[0]; TG = B.crown[1]; TB = B.crown[2]; return; }
+    const cell = Math.floor(u / 9), cu = u - cell * 9;
+    if (v < 5.5 && cu > 1.5 && cu < 7.5) {
+      if (hash(cell, B.id, 9) < 0.35) { const k = 0.45 + 0.2 * (v / 5.5); TR = 255 * k; TG = 170 * k; TB = 90 * k; }
+      else { const sl = (v % 0.5) < 0.08; TR = bc[0] * (sl ? 0.6 : 1.1); TG = bc[1] * (sl ? 0.6 : 1.1); TB = bc[2] * (sl ? 0.6 : 1.1); }
+      return;
+    }
+    const rib = mpp < 0.3 && (u % 0.7) < 0.15 ? 0.75 : 1;
+    TR = bc[0] * rib; TG = bc[1] * rib; TB = bc[2] * rib; return;
+  }
+  if (B.style === 6 && v >= 3.8) {                  // holo gardens: planted balconies on every floor
+    const fl = Math.floor(v / 3.2), fv = v / 3.2 - fl;
+    if (fv < 0.2 && mpp < 0.9) {
+      const hh = hash(Math.floor(u * 2.5), fl, B.seed);
+      const c = hh < 0.35 ? [50, 200, 120] : hh < 0.5 ? [200, 80, 230] : hh < 0.62 ? [60, 220, 230] : [70, 64, 80];
+      TR = c[0] * (hh < 0.62 ? 0.8 : 1); TG = c[1] * (hh < 0.62 ? 0.8 : 1); TB = c[2] * (hh < 0.62 ? 0.8 : 1); return;
+    }
+  }
+  if (mpp > 0.75 && v >= 3.8) { TR = B.avg[0]; TG = B.avg[1]; TB = B.avg[2]; return; }
   if (v < 3.8) {
     const cell = Math.floor(u / 6), cu = u - cell * 6;
     if (v > 3.0 && v < 3.6) {
@@ -921,7 +1104,7 @@ function drawWall(k, side, n) {
   for (const sn of B.signs) if (sn.u >= u0 && sn.u < u0 + SEGL) drawSign(k, sn.u - u0, wx, -sg, sn);
   for (const b of B.bbs) {
     const uc = (b.u0 + b.u1) / 2;
-    if (uc >= u0 && uc < u0 + SEGL && projAt(k, uc - u0)) {
+    if (uc >= u0 && uc < u0 + SEGL && projAt(k, uc - u0) && PZ < 220) {
       addLight(PCX + wx * PS, PGY - (b.v0 + b.v1) / 2 * PS, (b.u1 - b.u0) * PS * 0.55, b.c1, 0.3 * (1 - fogAt(PZ)));
     }
   }
@@ -937,6 +1120,11 @@ function projAt(k, dz) {
 
 function drawSign(k, dz, wx, inward, sn) {
   if (!projAt(k, dz)) return;
+  if (PS < 1.4) {                                   // far away: a plain lit slab, no letters, no glow
+    const xa = PCX + wx * PS, xb = PCX + (wx + inward * 1.6) * PS;
+    rect(xa, xb, PGY - sn.v1 * PS, PGY - sn.v0 * PS, mix(sn.c, [0, 0, 0], 0.45), fogAt(PZ));
+    return;
+  }
   const s = PS, fz = fogAt(PZ);
   const xa = PCX + wx * s, xb = PCX + (wx + inward * 1.6) * s;
   const yt = PGY - sn.v1 * s, yb = PGY - sn.v0 * s;
@@ -974,10 +1162,12 @@ function drawLamp(k, n, sg) {
   const x = PCX + lat * s, x2 = PCX + lat2 * s, top = PGY - 7 * s;
   rect(x - w / 2, x + w / 2, top, PGY, [26, 22, 36], fz);
   rect(Math.min(x, x2), Math.max(x, x2), top - 0.2 * s - 1, top, [26, 22, 36], fz);
-  const lc = n % 18 === 0 ? [255, 70, 200] : [120, 240, 255];
+  const lc = district(n) === 4 ? [255, 150, 60] : n % 18 === 0 ? [255, 70, 200] : [120, 240, 255];
   rect(x2 - 0.5 * s, x2 + 0.5 * s, top, top + Math.max(1, 0.22 * s), mix(lc, [255, 255, 255], 0.5), fz * 0.6);
-  addLight(x2, top + 1, Math.max(3, 3.2 * s), lc, 0.75 * (1 - fz));
-  addLight(x2, PGY - 0.2 * s, Math.max(3, 3.5 * s), lc, 0.22 * (1 - fz));
+  if (PZ < 220) {
+    addLight(x2, top + 1, Math.min(14, Math.max(3, 1.8 * s)), lc, 0.55 * (1 - fz));
+    addLight(x2, PGY - 0.2 * s, Math.min(22, Math.max(3, 3 * s)), lc, 0.16 * (1 - fz));
+  }
 }
 
 function drawBridge(k) {
@@ -1037,6 +1227,7 @@ function drawCar(c, k, dz) {
     }
   }
   const ly = yb - h * 0.42;
+  if (PZ > 220) return;
   if (rear) {
     addLight(left + w * 0.14, ly, clamp(w * 0.45, 2, 16), lc, 0.55 * vis);
     addLight(left + w * 0.86, ly, clamp(w * 0.45, 2, 16), lc, 0.55 * vis);
@@ -1055,6 +1246,7 @@ const FONT = {
   'U': '101101101101111', 'T': '111010010010010', 'O': '111101101101111', 'N': '110101101101101', 'L': '100100100100111',
   'R': '110101110101101', 'I': '111010010010111', ' ': '000000000000000', 'E': '111100110100111', 'P': '111101111100100',
   'D': '110101101101110', 'S': '111100111001111', 'C': '111100100100111',
+  'V': '101101101101010', 'B': '110101110101110', 'Y': '101101010010010', 'G': '111100101101111',
 };
 function text(str, x, y, c, sc) {
   for (const ch of str) {
@@ -1197,6 +1389,13 @@ function render() {
   const camY = hill[b0] + (hill[b1] - hill[b0]) * frac + eye() + Math.sin(camZ * 0.9) * 0.015 * Math.min(1, speed / 20);
   const sh = shake * 3, hy = HOR + (Math.random() - 0.5) * sh;
   const camX = px + (Math.random() - 0.5) * shake * 0.4;
+  {
+    const z = zoneAt(base), a = CITIES[z[3]];
+    if (z[2] === 5) {
+      const b = CITIES[(z[3] + 1) % CITIES.length], t = smooth(0.25, 0.85, (base - z[0]) / (z[1] - z[0]));
+      FOG = mix(a.fog, b.fog, t); SKY = [0, 1, 2].map(i => mix(a.sky[i], b.sky[i], t)); TWC = [0, 1].map(i => mix(a.tw[i], b.tw[i], t));
+    } else { FOG = a.fog; SKY = a.sky; TWC = a.tw; }
+  }
 
   let x = 0, dx = -curve[b0] * frac;
   for (let k = 0; k <= DRAW; k++) {
@@ -1228,16 +1427,23 @@ function render() {
   for (let k = DRAW - 1; k >= 0; k--) {
     const n = (base + k) % NSEG;
     const d = district(n);
-    drawGround(k);
-    if (d === 3) {
+    drawGround(k, d);
+    if (d === 5) {
+      drawSkybridge(k, n);
+    } else if (d === 3) {
       drawTunnel(k, n);
       if (k > 0 && TUNNEL_STARTS.includes(n)) drawPortal(k);
     } else {
       drawWall(k, 0, n);
       drawWall(k, 1, n);
       if (d === 1 && n % 2 === 0) for (const sg of [-1, 1]) if (hash(n, sg + 5, 31) < 0.45) drawStall(k, sg, n);
-      if (n % 9 === 0 && d !== 1) { drawLamp(k, n, -1); drawLamp(k, n, 1); }
-      if (d !== 1 && hash(n, 7, 77) < 0.05) drawSteam(k, hash(n, 8, 78) < 0.5 ? -3.5 : 3.5, 0, n, 1);
+      if (n % 9 === 0 && d !== 1 && d !== 6) { drawLamp(k, n, -1); drawLamp(k, n, 1); }
+      if (d === 4) {
+        if (n % 3 === 0) for (const sg of [-1, 1]) if (hash(n, sg + 9, 41) < 0.6) drawContainers(k, sg, n);
+        if (n % 45 === 20) drawCrane(k, hash(n, 2, 43) < 0.5 ? -1 : 1, n);
+      }
+      if (d === 6 && n % 2 === 1) for (const sg of [-1, 1]) drawTree(k, sg, n);
+      if (d !== 1 && d !== 6 && hash(n, 7, 77) < 0.05) drawSteam(k, hash(n, 8, 78) < 0.5 ? -3.5 : 3.5, 0, n, 1);
     }
     const bk = buckets.get(k);
     if (bk) {
@@ -1247,8 +1453,10 @@ function render() {
     if (d === 0 || d === 2) drawMonorail(k, n);
     if (d === 0 && n % 7 === 3) drawWires(k, n);
     if (d === 1 && n % 3 === 0) drawLanterns(k, n);
-    if (d !== 1 && d !== 3 && n % 170 === 85) drawBridge(k);
-    if (d !== 3 && n % 300 === 150) drawKoi(k, n);
+    if ((d === 0 || d === 2) && n % 170 === 85) drawBridge(k);
+    if (d !== 3 && d !== 5 && n % 300 === 150) drawKoi(k, n);
+    if (d === 5 && n === zoneAt(n)[0] + 4) drawGantry(k, CITIES[(zoneAt(n)[3] + 1) % CITIES.length]);
+    if (d !== 5 && d !== 3 && n === zoneAt(n)[0] + 2 && zoneAt(n - 3)[2] === 5) drawGantry(k, CITIES[zoneAt(n)[3]]);
   }
 
   addLight(W / 2, hy + eye() * F / 14, Math.min(30, F * 2.4 / 14), [190, 215, 255], bike ? 0.22 : 0.28);
@@ -1262,7 +1470,9 @@ function render() {
     for (let x = 0; x < W; x++) {
       const i = y * W + x, k = refl[i]; if (!k) continue;
       const xs = clamp(x + wob, 0, W - 1), j = (ys * W + xs) * 3, o = i * 3;
-      col[o] += (col[j] - col[o]) * k * 0.5; col[o + 1] += (col[j + 1] - col[o + 1]) * k * 0.5; col[o + 2] += (col[j + 2] - col[o + 2]) * k * 0.5;
+      const lum = col[j] * 0.3 + col[j + 1] * 0.5 + col[j + 2] * 0.2, kk = k * 0.55 * smooth(70, 190, lum);
+      if (kk <= 0.01) continue;
+      col[o] += (col[j] - col[o]) * kk; col[o + 1] += (col[j + 1] - col[o + 1]) * kk; col[o + 2] += (col[j + 2] - col[o + 2]) * kk;
     }
   }
 
