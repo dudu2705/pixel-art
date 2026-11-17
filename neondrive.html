@@ -162,7 +162,6 @@ for (let n = 0; n < NSEG;) {
 const LH = [0, 35, 80], LAYER_NAMES = ['STREET LEVEL', 'SKY AVENUES', 'CROWN LEVEL'];
 const LAYER = new Int8Array(NSEG), ELEV = new Float32Array(NSEG), LAYERED = new Uint8Array(NSEG), BASE = new Float32Array(NSEG);
 const TRANS = [], TRANS_AT = new Int16Array(NSEG).fill(-1);
-const SPLIT = 24;                                    // how far the old and new roads sit beside the ramp
 {
   const fixed = new Int8Array(NSEG).fill(-1);
   for (const z of ZONES) {
@@ -294,7 +293,6 @@ for (let side = 0; side < 2; side++) {
     };
     if (B.style === 2 && !B.crown) B.crown = cn[0];
     if (el > 1) B.set += 5 + rng() * 10;              // a gap beside the elevated road so you can see down
-    for (let m = n; m < n + len; m++) if (TRANS_AT[m] >= 0) { B.set += SPLIT + 4; break; }
     B.roof = (rng() * 4) | 0;
     const wc = d === 2 || d === 8 ? [150, 190, 235] : d === 10 ? [40, 120, 80] : [220, 170, 120];
     B.avg = mix(B.base, wc, B.winP * 0.35);
@@ -362,7 +360,6 @@ let sky1, sky2, mtn, stars = [], holoX = 0;
 const Z = new Float32Array(DRAW + 2), S = new Float32Array(DRAW + 2), CX = new Float32Array(DRAW + 2), GY = new Float32Array(DRAW + 2);
 const EL = new Float32Array(DRAW + 2), GYL = new Float32Array(DRAW + 2);   // road height above the city floor, and the floor's screen y
 let gloom = 0, starK = 0;
-const OFF_OLD = new Float32Array(DRAW + 2), OFF_NEW = new Float32Array(DRAW + 2), LOW_OFF = new Float32Array(DRAW + 2);
 
 function setup() {
   PX = hd ? Math.max(1.5, Math.max(innerWidth, innerHeight) / 450) : Math.max(2, Math.round(Math.max(innerWidth, innerHeight) / 340));
@@ -998,7 +995,7 @@ function drawLower(k, d) {
   const water = d === D.CANALS, iN = 1 / Z[k], iF = 1 / Z[f];
   for (let y = Math.max(0, Math.ceil(yF)); y <= Math.min(H - 1, Math.ceil(yN) - 1); y++) {
     const t = (y - yF) / (yN - yF), iz = iF + (iN - iF) * t, z = 1 / iz, s = F * iz, pxw = 1 / s;
-    const cx = CX[f] + (CX[k] - CX[f]) * t + (LOW_OFF[f] + (LOW_OFF[k] - LOW_OFF[f]) * t) * s, wz = camZ + z, fz = fogAt(z), dash = (wz % 10) < 4.5, lw = Math.max(0.1, pxw * 0.55);
+    const cx = CX[f] + (CX[k] - CX[f]) * t, wz = camZ + z, fz = fogAt(z), dash = (wz % 10) < 4.5, lw = Math.max(0.1, pxw * 0.55);
     let lx = -cx * pxw;
     for (let x = 0; x < W; x++, lx += pxw) {
       const a = lx < 0 ? -lx : lx;
@@ -1036,48 +1033,8 @@ function drawBelow(k, n, deckW) {
       const cz = Math.ceil((wz0 - off) / sp) * sp + off;
       if (cz >= wz0 + SEGL || !projAt(k, cz - wz0)) continue;
       const c = dir > 0 ? [255, 40, 50] : [230, 235, 255], fz = fogAt(PZ), y = Math.round(PGL - 0.6 * PS);
-      for (const o of [-0.7, 0.7]) { const xx = Math.round(PCX + (L + o + LOW_OFF[k]) * PS); if (xx >= 0 && xx < W && y >= 0 && y < H) put(xx, y, ...mix(c, FOG, fz * 0.7)); }
-      if (PZ < 260) addLight(PCX + (L + LOW_OFF[k]) * PS, y, Math.min(14, Math.max(2, 1.4 * PS)), c, 0.35 * (1 - fz));
-    }
-  }
-}
-
-// ---- the road you left (or are about to join), running beside the ramp ----
-function drawSideRoad(k, offs, e) {
-  const f = k + 1, ok = offs[k], of = offs[f];
-  if (isNaN(ok) || isNaN(of)) return;
-  const yN = GYL[k] - e * S[k], yF = GYL[f] - e * S[f], iN = 1 / Z[k], iF = 1 / Z[f], half = RW + 1.5;
-  const above = yF < yN, y0 = above ? yF : yN, y1 = above ? yN : yF;
-  if (Math.abs(y1 - y0) < 0.01) return;
-  for (let y = Math.max(0, Math.ceil(y0)); y <= Math.min(H - 1, Math.ceil(y1) - 1); y++) {
-    const t = above ? (y - yF) / (yN - yF) : (yF - y) / (yF - yN), iz = iF + (iN - iF) * t, z = 1 / iz, s = F * iz, pxw = 1 / s;
-    const cx = CX[f] + (CX[k] - CX[f]) * t + (of + (ok - of) * t) * s, wz = camZ + z, fz = fogAt(z), lw = Math.max(0.1, pxw * 0.55), dash = (wz % 10) < 4.5;
-    for (let x = Math.max(0, Math.ceil(cx - half * s)); x <= Math.min(W - 1, Math.ceil(cx + half * s) - 1); x++) {
-      const a = Math.abs((x + 0.5 - cx) * pxw);
-      let c, op = 1;
-      if (!above) c = Math.abs(a - 3.5) < 0.6 && (wz % 8) < 0.8 ? [255, 210, 150] : [20, 18, 28];          // underside with lamps
-      else if (a > RW + 1.25) c = [120, 140, 160];
-      else if (Math.abs(a - 0.2) < lw) c = [235, 165, 40];
-      else if (dash && Math.abs(a - 3.5) < lw) c = [190, 190, 210];
-      else if (Math.abs(a - (RW - 0.3)) < lw) c = [200, 200, 215];
-      else if (a < RW) { c = [20, 34, 52]; op = 0.55; }
-      else { c = [46, 40, 60]; op = 0.6; }
-      const i = y * W + x, j = i * 3, r = c[0] + (FOG[0] - c[0]) * fz, g = c[1] + (FOG[1] - c[1]) * fz, b = c[2] + (FOG[2] - c[2]) * fz;
-      col[j] += (r - col[j]) * op; col[j + 1] += (g - col[j + 1]) * op; col[j + 2] += (b - col[j + 2]) * op;
-      refl[i] = 0;
-    }
-  }
-  if (above && Z[k] > 6) {                            // its traffic
-    const wz0 = camZ + Z[k];
-    for (const L of [-5.25, -1.75, 1.75, 5.25]) {
-      const dir = L > 0 ? 1 : -1, sp = 26 + Math.abs(L) * 4, off = ((T * 14 * dir + L * 23 + e) % sp + sp) % sp;
-      const cz = Math.ceil((wz0 - off) / sp) * sp + off;
-      if (cz >= wz0 + SEGL || !projAt(k, cz - wz0)) continue;
-      const tt = (cz - wz0) / SEGL, o = ok + (of - ok) * tt, c = dir > 0 ? [255, 40, 50] : [230, 235, 255], fz = fogAt(PZ);
-      const x = PCX + (L + o) * PS, y = PGL - (e + 0.6) * PS;
-      blob(x - 0.7 * PS, y, Math.max(0.6, 0.2 * PS), Math.max(0.6, 0.15 * PS), c, 1, fz * 0.6);
-      blob(x + 0.7 * PS, y, Math.max(0.6, 0.2 * PS), Math.max(0.6, 0.15 * PS), c, 1, fz * 0.6);
-      if (PZ < 220) addLight(x, y, Math.min(16, Math.max(2, 1.5 * PS)), c, 0.4 * (1 - fz));
+      for (const o of [-0.7, 0.7]) { const xx = Math.round(PCX + (L + o) * PS); if (xx >= 0 && xx < W && y >= 0 && y < H) put(xx, y, ...mix(c, FOG, fz * 0.7)); }
+      if (PZ < 260) addLight(PCX + (L) * PS, y, Math.min(14, Math.max(2, 1.4 * PS)), c, 0.35 * (1 - fz));
     }
   }
 }
@@ -1131,34 +1088,46 @@ function tunnelTex(wz, v) {
   const grout = (v % 1) < 0.08 || (wz % 2) < 0.08;
   TR = grout ? 36 : 64; TG = grout ? 34 : 60; TB = grout ? 44 : 74;
 }
-function drawTunnel(k, n) {
-  quadWall(k, -TW_, 0, TH_, tunnelTex);
-  quadWall(k, TW_, 0, TH_, tunnelTex);
+let liftUp = true;
+function liftTex(wz, v) {                            // level-change tunnel: dark panels, chevrons pointing the way
+  if (v > 4.6 && v < 4.85) { TR = liftUp ? 80 : 255; TG = liftUp ? 255 : 170; TB = liftUp ? 150 : 60; return; }
+  if (v > 1.4 && v < 3.4) {
+    const u = ((wz % 6) + 6) % 6, vv = (v - 2.4) * (liftUp ? 1 : -1);
+    if (Math.abs(u - 3 - Math.abs(vv) * 1.2) < 0.35) { const k = ((T * 3 - wz * 0.3) % 1 + 1) % 1 < 0.5 ? 1 : 0.35; TR = (liftUp ? 80 : 255) * k; TG = (liftUp ? 255 : 170) * k; TB = (liftUp ? 150 : 60) * k; return; }
+  }
+  const seam = (wz % 3) < 0.1 || (v % 1.6) < 0.06;
+  TR = seam ? 20 : 34; TG = seam ? 22 : 36; TB = seam ? 30 : 48;
+}
+function drawTunnel(k, n, lift) {
+  quadWall(k, -TW_, 0, TH_, lift ? liftTex : tunnelTex);
+  quadWall(k, TW_, 0, TH_, lift ? liftTex : tunnelTex);
   const f = k + 1, yN = GY[k] - TH_ * S[k], yF = GY[f] - TH_ * S[f];
   if (yN < yF) {
     const iN = 1 / Z[k], iF = 1 / Z[f];
     for (let y = Math.max(0, Math.ceil(yN)); y <= Math.min(H - 1, Math.ceil(yF) - 1); y++) {
       const t = (yF - y) / (yF - yN), iz = iF + (iN - iF) * t, z = 1 / iz, sc = F * iz;
       const cx = CX[f] + (CX[k] - CX[f]) * t, wz = camZ + z, fz = fogAt(z);
-      const lamp = (wz % 8) < 2.5;
+      const lamp = (wz % 8) < 2.5, lc = lift ? (liftUp ? [120, 255, 190] : [255, 190, 110]) : [255, 196, 120];
       for (let x = Math.max(0, Math.ceil(cx - TW_ * sc)); x <= Math.min(W - 1, Math.ceil(cx + TW_ * sc) - 1); x++) {
         const lx = (x + 0.5 - cx) / sc;
-        let c = Math.abs(lx) < 0.6 ? (lamp ? [255, 196, 120] : [30, 26, 36]) : ((Math.abs(lx) % 2.5) < 0.12 / Math.min(1, sc * 0.2) ? [28, 26, 34] : [44, 42, 52]);
+        let c = Math.abs(lx) < 0.6 ? (lamp ? lc : [30, 26, 36]) : ((Math.abs(lx) % 2.5) < 0.12 / Math.min(1, sc * 0.2) ? [28, 26, 34] : lift ? [30, 32, 44] : [44, 42, 52]);
         put(x, y, c[0] + (FOG[0] - c[0]) * fz, c[1] + (FOG[1] - c[1]) * fz, c[2] + (FOG[2] - c[2]) * fz);
         refl[y * W + x] = 0;
       }
     }
   }
   if (n % 2 === 0 && k < 70 && projAt(k, 0)) {
-    addLight(PCX, PGY - TH_ * PS + 1, Math.min(14, Math.max(3, 1.6 * PS)), [255, 170, 90], 0.28 * (1 - fogAt(PZ)));
-    addLight(PCX, PGY, Math.max(3, 3.5 * PS), [255, 170, 90], 0.12 * (1 - fogAt(PZ)));
+    const lc = lift ? (liftUp ? [90, 255, 170] : [255, 170, 80]) : [255, 170, 90];
+    addLight(PCX, PGY - TH_ * PS + 1, Math.min(14, Math.max(3, 1.6 * PS)), lc, 0.28 * (1 - fogAt(PZ)));
+    addLight(PCX, PGY, Math.max(3, 3.5 * PS), lc, 0.12 * (1 - fogAt(PZ)));
   }
 }
-function drawPortal(k) {
+function drawPortal(k, label, lc) {
   if (!projAt(k, 0)) return;
-  const s = PS, fz = fogAt(PZ);
+  const s = PS, fz = fogAt(PZ), rimC = label ? lc : [255, 46, 170];
   const xa = Math.max(0, Math.ceil(PCX - 50 * s)), xb = Math.min(W - 1, Math.ceil(PCX + 50 * s) - 1);
-  const ya = Math.max(0, Math.ceil(PGY - 24 * s)), yb = Math.min(H - 1, Math.ceil(PGY) - 1);
+  const ya = Math.max(0, Math.ceil(PGY - 24 * s)), yb = Math.min(H - 1, Math.ceil(Math.max(PGY, PGL)) - 1);
+  const cols = label ? label.length * 4 : 0;
   for (let x = xa; x <= xb; x++) {
     const lx = (x + 0.5 - PCX) / s;
     for (let y = ya; y <= yb; y++) {
@@ -1166,10 +1135,16 @@ function drawPortal(k) {
       if (Math.abs(lx) < TW_ && h < TH_) continue;                 // the opening
       let c;
       const rim = Math.abs(lx) < TW_ + 0.5 && h < TH_ + 0.5;
-      if (rim) c = [255, 46, 170];
-      else if (Math.abs(lx) < 10 && h > 8 && h < 11.5) {
-        const gi = Math.floor((lx + 10) / 20 * 30), gj = Math.floor((h - 8) / 3.5 * 5);
-        c = gi % 4 !== 3 && hash(gi >> 2, (gi & 3) + gj * 3, 4242) < 0.55 ? [0, 230, 255] : [16, 14, 22];
+      if (rim) c = rimC;
+      else if (Math.abs(lx) < 13 && h > 8 && h < 12.5) {
+        if (label) {                                   // TO LEVEL n, in big letters over the entrance
+          const gi = Math.floor((lx + 13) / 26 * (cols + 2)) - 1, gj = Math.floor((12.5 - h) / 4.5 * 7) - 1;
+          const g = gi >= 0 && gi < cols && gi % 4 !== 3 && gj >= 0 && gj < 5 ? FONT[label[gi >> 2]] || FONT[' '] : null;
+          c = g && g[gj * 3 + (gi & 3)] === '1' ? lc : [12, 12, 18];
+        } else {
+          const gi = Math.floor((lx + 10) / 20 * 30), gj = Math.floor((h - 8) / 3.5 * 5);
+          c = Math.abs(lx) < 10 && h < 11.5 && gi % 4 !== 3 && hash(gi >> 2, (gi & 3) + gj * 3, 4242) < 0.55 ? [0, 230, 255] : [16, 14, 22];
+        }
       } else {
         c = ((h % 3) < 0.15 || (Math.abs(lx) % 6) < 0.2) ? [26, 24, 32] : [46, 42, 54];
       }
@@ -1177,8 +1152,8 @@ function drawPortal(k) {
       refl[y * W + x] = 0;
     }
   }
-  addLight(PCX, PGY - 9.7 * s, Math.max(4, 9 * s), [0, 230, 255], 0.3 * (1 - fz));
-  addLight(PCX, PGY - TH_ * s, Math.max(4, 6 * s), [255, 46, 170], 0.3 * (1 - fz));
+  addLight(PCX, PGY - 10.2 * s, Math.max(4, 10 * s), label ? lc : [0, 230, 255], 0.32 * (1 - fz));
+  addLight(PCX, PGY - TH_ * s, Math.max(4, 6 * s), rimC, 0.3 * (1 - fz));
 }
 
 // ---- monorail ----
@@ -2126,14 +2101,7 @@ function render() {
     CX[k] = W / 2 + (x - camX) * S[k];
     GY[k] = hy - (hill[n] - camY) * S[k];
     EL[k] = LAYERED[n] ? ELEV[n] : 0; GYL[k] = GY[k] + EL[k] * S[k];
-    OFF_OLD[k] = NaN; OFF_NEW[k] = NaN; LOW_OFF[k] = 0;
-    const ti = TRANS_AT[n];
-    if (ti >= 0) {
-      const tr = TRANS[ti], t = (n - tr.s) / (tr.e - tr.s);
-      if (t > 0) OFF_OLD[k] = tr.side * (SPLIT * smooth(0, 0.35, t) + Math.max(0, n - tr.e) * 0.6);
-      if (t < 1) OFF_NEW[k] = -tr.side * (SPLIT * (1 - smooth(0.65, 1, t)) + Math.max(0, tr.s - n) * 0.6);
-      if (tr.from === 0 && t > 0) LOW_OFF[k] = OFF_OLD[k]; else if (tr.to === 0 && t < 1) LOW_OFF[k] = OFF_NEW[k];
-    }
+
     x += dx; dx += curve[n];
   }
 
@@ -2167,20 +2135,21 @@ function render() {
     const n = (base + k) % NSEG;
     const zz = zoneAt(n), d = zz[2], cty = CITIES[zz[3]];
     const elev = EL[k] > 0.4 || EL[k + 1] > 0.4, deckW = d === D.HIGHWAY ? RW + SW : RW + 1.5;
-    const sw = SKYW.get(n);
-    if (elev) drawLower(k, d);
-    if (d === D.BRIDGE) { drawGround(k, d, false); drawSkybridge(k, n); }
-    else if (d === D.TUNNEL) { drawGround(k, d, false); drawTunnel(k, n); if (k > 0 && TUNNEL_STARTS.includes(n)) drawPortal(k); }
+    const sw = SKYW.get(n), tri = TRANS_AT[n], lift = tri >= 0 && n >= TRANS[tri].s && n < TRANS[tri].e;
+    if (elev && !lift) drawLower(k, d);
+    if (lift) {
+      const tr = TRANS[tri];
+      liftUp = tr.to > tr.from;
+      drawGround(k, d, false); drawTunnel(k, n, true);
+      if (k > 0 && n === tr.s) drawPortal(k, 'TO LEVEL ' + (tr.to + 1) + (liftUp ? ' ^' : ' _'), liftUp ? [80, 255, 150] : [255, 170, 60]);
+    }
+    else if (d === D.BRIDGE) { drawGround(k, d, false); drawSkybridge(k, n); }
+    else if (d === D.TUNNEL) { drawGround(k, d, false); drawTunnel(k, n, false); if (k > 0 && TUNNEL_STARTS.includes(n)) drawPortal(k); }
     else if (d === D.TUBE) { drawGround(k, d, false); drawTube(k, n); }
     else {
       if (d === D.RAMP) quadWall(k, RW + SW + 3, -EL[k] - 2, 160, towerTex);
       else { drawWall(k, 0, n); drawWall(k, 1, n); }
       if (elev) { drawBelow(k, n, deckW); if (sw && sw.hb + 1.4 < EL[k]) drawSkywalk(k, n, sw); }
-      if (TRANS_AT[n] >= 0) {
-        const tr = TRANS[TRANS_AT[n]];
-        if (LH[tr.from] > 0 && LH[tr.from] <= EL[k] + 0.5) drawSideRoad(k, OFF_OLD, LH[tr.from]);
-        if (LH[tr.to] > 0 && LH[tr.to] <= EL[k] + 0.5) drawSideRoad(k, OFF_NEW, LH[tr.to]);
-      }
       drawGround(k, d, elev);
       if (elev && d !== D.HIGHWAY) { quadWall(k, -deckW, 0, 1.1, railTex); quadWall(k, deckW, 0, 1.1, railTex); }
       if (d === D.HIGHWAY) {
@@ -2216,11 +2185,6 @@ function render() {
       }
     }
     if (sw && sw.hb + 1.4 >= EL[k]) drawSkywalk(k, n, sw);
-    if (TRANS_AT[n] >= 0 && LAYERED[n]) {
-      const tr = TRANS[TRANS_AT[n]];
-      if (LH[tr.from] > EL[k] + 0.5) drawSideRoad(k, OFF_OLD, LH[tr.from]);
-      if (LH[tr.to] > EL[k] + 0.5) drawSideRoad(k, OFF_NEW, LH[tr.to]);
-    }
     if (d === D.SHRINE && n % 3 === 0) drawTorii(k, n);
     if (!elev) {
       if (d === D.STACK && n % 4 === 2) drawLaundry(k, n);
@@ -2232,8 +2196,7 @@ function render() {
     { const zz = zoneAt(n);
       if (zz[4] && zz[2] !== D.TUBE && n === zz[0] + 4) { const c2 = CITIES[(zz[3] + 1) % CITIES.length]; drawGantry(k, c2.name, c2.neon[0]); }
       if (!zz[4] && n === zz[0] + 2 && zoneAt(n - 3)[4] && zz[2] !== D.TUNNEL) drawGantry(k, CITIES[zz[3]].name, CITIES[zz[3]].neon[0]);
-      const ti = TRANS_AT[n];
-      if (ti >= 0 && n === TRANS[ti].s - 10) { const tr = TRANS[ti], up = tr.to > tr.from; drawGantry(k, 'TO LEVEL ' + (tr.to + 1) + (up ? ' ^' : ' _'), up ? [80, 255, 150] : [255, 170, 60]); } }
+    }
   }
 
   addLight(W / 2, hy + eye() * F / 14, Math.min(30, F * 2.4 / 14), [190, 215, 255], 0.22 + 0.3 * TH.dark);
