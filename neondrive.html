@@ -88,12 +88,14 @@ const CITIES = [
     neon: [[120, 255, 200], [160, 120, 255], [220, 250, 255], [60, 200, 255], [255, 150, 220], [120, 255, 120]] },
 ];
 const LINK_NAMES = { 5: 'SKYBRIDGE', 13: 'AQUA TUBE', 8: 'MEGA-HIGHWAY' };
+const CITY_SCALE = 2, LINK_SCALE = 1.5;            // how long each district and each link between cities runs
 const ZONES = [];                       // [start, end, district, city, isLink]
 const NSEG = (() => {
   let n = 0;
   CITIES.forEach((c, ci) => {
-    for (const [d, len] of c.zones) { ZONES.push([n, n + len, d, ci, false]); n += len; }
-    ZONES.push([n, n + c.link[1], c.link[0], ci, true]); n += c.link[1];
+    for (const [d, len0] of c.zones) { const len = Math.round(len0 * CITY_SCALE); ZONES.push([n, n + len, d, ci, false]); n += len; }
+    const ll = Math.round(c.link[1] * LINK_SCALE);
+    ZONES.push([n, n + ll, c.link[0], ci, true]); n += ll;
   });
   return n;
 })();
@@ -156,7 +158,7 @@ for (let n = 0; n < NSEG;) {
   for (let i = 0; i < len; i++) curve[n + i] = c * Math.sin(Math.PI * i / len);
   n += len;
 }
-for (let n = 0; n < NSEG; n++) hill[n] = 4 * Math.sin(n * 2 * Math.PI * 14 / NSEG) + 1.5 * Math.sin(n * 2 * Math.PI * 45 / NSEG);
+for (let n = 0; n < NSEG; n++) hill[n] = 4 * Math.sin(n * 2 * Math.PI * 28 / NSEG) + 1.5 * Math.sin(n * 2 * Math.PI * 90 / NSEG);
 for (const z of ZONES) {
   const L = z[1] - z[0];
   for (let n = z[0]; n < z[1]; n++) {
@@ -267,7 +269,7 @@ for (let side = 0; side < 2; side++) {
 
 // people with glowing umbrellas walking the sidewalks
 const peds = [];
-for (let i = 0; i < 300; i++) {
+for (let i = 0; i < 560; i++) {
   const side = rng() < 0.5 ? -1 : 1;
   peds.push({ z: rng() * LEN, x: side * (RW + 0.8 + rng() * (SW - 1.4)), v: (rng() < 0.5 ? -1 : 1) * (0.9 + rng() * 0.8),
     umb: rng() < 0.7 ? NEON[(rng() * 6) | 0] : null, coat: hsl(rng() * 360, 0.2, 0.12 + rng() * 0.1), ph: rng() * 6 });
@@ -276,7 +278,7 @@ let train = { z: 500, v: -26 };
 
 // traffic
 const cars = [];
-for (let i = 0; i < 120; i++) {
+for (let i = 0; i < 220; i++) {
   const dir = rng() < 0.68 ? 1 : -1;
   cars.push({
     z: rng() * LEN, dir, x: dir * (rng() < 0.5 ? 1.75 : 5.25),
