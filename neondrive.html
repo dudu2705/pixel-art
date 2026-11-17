@@ -178,10 +178,15 @@ const SPLIT = 24;                                    // how far the old and new 
     }
   }
   const lr = mulberry(31337);
-  let cur = fixed[NSEG - 1] >= 0 ? fixed[NSEG - 1] : 0, left = 300;
+  const nextFixed = new Int32Array(NSEG);
+  for (let n = NSEG - 1, d = 1e9; n >= 0; n--) { d = fixed[n] >= 0 ? 0 : d + 1; nextFixed[n] = d; }
+  let cur = fixed[NSEG - 1] >= 0 ? fixed[NSEG - 1] : 0, left = 700;
   for (let n = 0; n < NSEG; n++) {
-    if (fixed[n] >= 0) { cur = fixed[n]; left = 260 + lr() * 240; LAYER[n] = cur; continue; }
-    if (left <= 0) { const o = [0, 1, 2].filter(v => v !== cur); cur = o[(lr() * 2) | 0]; left = 280 + lr() * 300; }   // any level to any other
+    if (fixed[n] >= 0) { cur = fixed[n]; left = 600 + lr() * 400; LAYER[n] = cur; continue; }
+    if (left <= 0) {
+      if (nextFixed[n] < 420) left = nextFixed[n] + 1;   // a tunnel or city exit is coming that sets the level anyway
+      else { const o = [0, 1, 2].filter(v => v !== cur); cur = o[(lr() * 2) | 0]; left = 600 + lr() * 450; }   // any level to any other
+    }
     left--; LAYER[n] = cur;
   }
   for (let n = 0; n < NSEG; n++) ELEV[n] = LH[LAYER[n]];
