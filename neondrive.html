@@ -26,22 +26,20 @@
   .btn.on { background: rgba(255, 60, 190, 0.45); }
   #bl { left: 18px; } #br { left: 104px; }
   #bb { right: 104px; } #bg { right: 18px; border-color: rgba(0, 230, 255, 0.7); color: #a8f6ff; }
-  #ba, #bv { right: 18px; top: 18px; bottom: auto; height: 44px; width: 74px; font-size: 13px; }
-  #bv { top: 72px; } #br2 { top: 126px; } #bq { top: 180px; }
-  #ba, #bv, #br2, #bq { right: 18px; bottom: auto; height: 44px; width: 74px; font-size: 13px; }
+  #ba, #br2, #bq { right: 18px; top: 18px; bottom: auto; height: 44px; width: 74px; font-size: 13px; }
+  #br2 { top: 72px; } #bq { top: 126px; }
   #zone { left: 50%; top: 58px; transform: translateX(-50%); font-size: 16px; letter-spacing: 6px; color: #9ff4ff;
     border-color: #1d4f5a; transition: opacity 1.2s; opacity: 0; }
 </style>
 </head>
 <body>
 <canvas id="c"></canvas>
-<div id="hint" class="tag">&larr; &rarr; steer &nbsp;&middot;&nbsp; &uarr; gas &nbsp;&middot;&nbsp; &darr; brake &nbsp;&middot;&nbsp; A autopilot &nbsp;&middot;&nbsp; V bike/car &nbsp;&middot;&nbsp; R rain &nbsp;&middot;&nbsp; H HD</div>
+<div id="hint" class="tag">&larr; &rarr; steer &nbsp;&middot;&nbsp; &uarr; gas &nbsp;&middot;&nbsp; &darr; brake &nbsp;&middot;&nbsp; A autopilot &nbsp;&middot;&nbsp; R rain &nbsp;&middot;&nbsp; H HD</div>
 <div id="zone" class="tag"></div>
 <div id="pad">
   <div class="btn" id="bl">&#9664;</div><div class="btn" id="br">&#9654;</div>
   <div class="btn" id="bb">BRK</div><div class="btn" id="bg">GAS</div>
   <div class="btn on" id="ba">AUTO</div>
-  <div class="btn" id="bv">CAR</div>
   <div class="btn on" id="br2">RAIN</div>
   <div class="btn on" id="bq">HD</div>
 </div>
@@ -80,9 +78,9 @@ function zoneEnd(n) { return zoneAt(n)[1]; }
 const TUNNEL_STARTS = ZONES.filter(z => z[2] === 3).map(z => z[0]);
 let FOG = CITIES[0].fog.slice(), SKY = CITIES[0].sky, TWC = CITIES[0].tw;
 const RW = 7, SW = 3.2, NEAR = 0.7;
-let bike = true, roll = 0, hd = true;
-const maxV = () => bike ? 62 : 50;
-const eye = () => bike ? 1.4 : 1.15;
+let roll = 0, hd = true;
+const maxV = () => 62;
+const eye = () => 1.4;
 const NEON = [[255, 46, 170], [0, 234, 255], [255, 214, 64], [170, 90, 255], [70, 255, 150], [255, 110, 50]];
 const WIN = [[255, 200, 120], [255, 170, 90], [120, 220, 255], [255, 120, 200], [200, 190, 255], [255, 236, 190]];
 
@@ -204,21 +202,12 @@ for (let i = 0; i < 46; i++) {
 }
 
 // ---------- buffers ----------
-let W, H, N, PX, F, HOR, HB, PW, img, fb, col, lb, refl, dmask, dcol;
+let W, H, N, PX, F, HOR, HB, PW, img, fb, col, lb, refl;
 let OW, OH, SWD, SHD, MX, MY, colS, colO, bmask, bcol, vmask, vcol;
 function useScene() { W = SWD; H = SHD; N = W * H; col = colS; }
 function useOut() { W = OW; H = OH; N = W * H; col = colO; }
 let sky1, sky2, flyers = [], holoX = 0;
 const Z = new Float32Array(DRAW + 2), S = new Float32Array(DRAW + 2), CX = new Float32Array(DRAW + 2), GY = new Float32Array(DRAW + 2);
-
-function dashTopAt(x) {
-  const u = x / W - 0.5;
-  let t = H * 0.8 + u * u * H * 0.16;
-  if (Math.abs(u) < 0.15) t -= Math.cos(u / 0.15 * Math.PI / 2) * H * 0.03;
-  return t;
-}
-function roofAt(x) { const u = x / W - 0.5; return H * 0.05 + u * u * H * 0.1; }
-function pillarAt(y) { const t = clamp(1 - y / (H * 0.8), 0, 1); return W * 0.02 + t * t * W * 0.11; }
 
 function setup() {
   PX = hd ? Math.max(1.5, Math.max(innerWidth, innerHeight) / 450) : Math.max(2, Math.round(Math.max(innerWidth, innerHeight) / 340));
@@ -258,38 +247,6 @@ function setup() {
   flyers = [];
   for (let i = 0; i < 14; i++) flyers.push({ pc: r() * PW, y: MY + HB * (0.12 + r() * 0.5), v: (r() < 0.5 ? -1 : 1) * (12 + r() * 40), c: NEON[(r() * 6) | 0] });
 
-  // static cockpit overlay
-  dmask = new Uint8Array(N); dcol = new Float32Array(N * 3);
-  const set = (x, y, c) => { const i = y * W + x; dmask[i] = 1; dcol[i * 3] = c[0]; dcol[i * 3 + 1] = c[1]; dcol[i * 3 + 2] = c[2]; };
-  const mw = Math.round(W * 0.17), mh = Math.max(6, Math.round(H * 0.065));
-  const mx0 = Math.round(W / 2 - mw / 2), my0 = Math.round(roofAt(W / 2)) + 3;
-  for (let y = 0; y < H; y++) {
-    const pl = pillarAt(y);
-    for (let x = 0; x < W; x++) {
-      const dt = dashTopAt(x), rf = roofAt(x);
-      if (y >= dt) {
-        const k = (y - dt) / (H - dt);
-        let c = mix([28, 22, 42], [8, 6, 14], Math.min(1, k * 1.6));
-        if (y - dt < 1) c = [86, 60, 128];
-        else if (hash(x, y, 4) < 0.08) c = mix(c, [0, 0, 0], 0.3);
-        set(x, y, c);
-      } else if (y < rf) {
-        set(x, y, rf - y < 1 ? [52, 40, 76] : [10, 8, 16]);
-      } else if (x < pl || x >= W - pl) {
-        const edge = x < pl ? pl - x : x - (W - pl);
-        set(x, y, edge < 1 ? [48, 36, 70] : [12, 9, 18]);
-      } else if (x >= mx0 && x < mx0 + mw && y >= my0 && y < my0 + mh) {
-        const bx = x === mx0 || x === mx0 + mw - 1 || y === my0 || y === my0 + mh - 1;
-        const t = (y - my0) / mh;
-        set(x, y, bx ? [20, 16, 28] : mix([40, 18, 60], [120, 40, 110], t));
-      } else if (Math.abs(x - W / 2) < 1 && y >= rf && y < my0) {
-        set(x, y, [20, 16, 28]);
-      }
-    }
-  }
-  // the mirror shows a pair of headlights far behind
-  for (const sx of [-2, 2]) set(Math.round(W / 2 + sx), my0 + Math.round(mh * 0.62), [255, 240, 220]);
-
   // static motorcycle overlay: windscreen (tint), fairing, tank, mirrors; and the helmet visor frame
   bmask = new Uint8Array(N); bcol = new Float32Array(N * 3); vmask = new Uint8Array(N); vcol = new Float32Array(N * 3);
   const setB = (x, y, c, type) => {
@@ -319,20 +276,6 @@ function setup() {
     if (e > 0.94) c = [60, 46, 90];
     setB(x, y, c, 1);
   }
-  for (const sd of [-1, 1]) {
-    const mcx = W / 2 + sd * W * 0.34, mcy = H * 0.63, mrx = W * 0.07, mry = H * 0.05;
-    const sx0 = W / 2 + sd * W * 0.27, sy0 = H * 0.8;
-    for (let t = 0; t <= 1; t += 0.02) { setB(sx0 + (mcx - sx0) * t, sy0 + (mcy + mry - sy0) * t, [20, 18, 28], 1); setB(sx0 + (mcx - sx0) * t + 1, sy0 + (mcy + mry - sy0) * t, [36, 30, 48], 1); }
-    for (let y = Math.floor(mcy - mry - 1); y <= mcy + mry + 1; y++) for (let x = Math.floor(mcx - mrx - 1); x <= mcx + mrx + 1; x++) {
-      const e = ((x - mcx) / mrx) ** 2 + ((y - mcy) / mry) ** 2;
-      if (e > 1.15) continue;
-      if (e > 0.82) { setB(x, y, [24, 20, 34], 1); continue; }
-      const ty = (y - (mcy - mry)) / (2 * mry);
-      let c = mix([20, 8, 34], [130, 40, 120], ty);
-      setB(x, y, c, 1);
-    }
-    for (const hx of [-2, 2]) setB(mcx + hx - sd * 3, mcy + mry * 0.2, [255, 240, 220], 1);
-  }
   for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
     const e = Math.pow(Math.abs(x - W / 2) / (W * 0.54), 4) + Math.pow(Math.abs(y - H * 0.5) / (H * 0.6), 4);
     if (e < 0.9) continue;
@@ -347,7 +290,7 @@ function setup() {
 let T = 0, last = performance.now();
 let camZ = 0, speed = 30, px = 3.5, steer = 0, bgX = 0, shake = 0, crashFlash = 0;
 let auto = true, autoLane = 3.5 > 3 ? 5.25 : 1.75, laneCool = 0, idle = 0;
-let rainOn = true, wet = 1, drops = [], streaks = [], wT = 0, wAng = Math.PI;
+let rainOn = true, wet = 1, drops = [], streaks = [];
 let curZone = -1, zoneT = 0;
 const zoneEl = document.getElementById('zone');
 const keys = { left: false, right: false, gas: false, brake: false };
@@ -373,7 +316,7 @@ function laneInfo(lx) {
 function update(dt) {
   const n = Math.floor(camZ / SEGL) % NSEG;
   const kappa = curve[n] / (SEGL * SEGL);
-  const latMax = (bike ? 8.5 : 7) * Math.min(1, speed / 12 + 0.05);
+  const latMax = 8.5 * Math.min(1, speed / 12 + 0.05);
   let steerT;
 
   if (!auto) { idle += dt; if (idle > 10) setAuto(true); }
@@ -391,7 +334,7 @@ function update(dt) {
     steerT = clamp(want / latMax, -1, 1);
   } else {
     steerT = (keys.right ? 1 : 0) - (keys.left ? 1 : 0);
-    if (keys.gas) speed += (bike ? 17 : 11) * dt * (1 - 0.6 * speed / maxV());
+    if (keys.gas) speed += 17 * dt * (1 - 0.6 * speed / maxV());
     else if (keys.brake) speed -= 26 * dt;
     else speed -= 2.5 * dt;
   }
@@ -400,7 +343,7 @@ function update(dt) {
   px += steer * latMax * dt;
   px -= kappa * speed * speed * dt * 0.35;
   // a motorcycle leans into turns: the whole view rolls
-  const rollT = bike ? clamp((steer * latMax * Math.min(speed, 40) * 0.05 + kappa * speed * speed) / 9.8, -0.26, 0.26) : 0;
+  const rollT = clamp((steer * latMax * Math.min(speed, 40) * 0.05 + kappa * speed * speed) / 9.8, -0.26, 0.26);
   roll += (rollT - roll) * Math.min(1, dt * 4);
   if (Math.abs(px) > RW - 1) { px = Math.sign(px) * (RW - 1); speed *= 1 - dt * 1.5; shake = Math.max(shake, 0.15 * Math.min(1, speed / 20)); }
 
@@ -410,7 +353,7 @@ function update(dt) {
   for (const c of cars) {
     c.z = ((c.z + c.dir * c.speed * dt) % LEN + LEN) % LEN;
     const r = rel(c.z);
-    if (r < 3.2 && Math.abs(c.x - px) < (bike ? 1.3 : 1.9)) {
+    if (r < 3.2 && Math.abs(c.x - px) < 1.3) {
       if (c.dir > 0) { if (speed > c.speed) { speed = c.speed * 0.6; c.z = (camZ + 5) % LEN; shake = 0.7; crashFlash = 0.6; } }
       else { speed *= 0.25; c.z = (camZ - 6 + LEN) % LEN; shake = 1; crashFlash = 1; }
     }
@@ -445,20 +388,8 @@ function update(dt) {
   }
   for (let i = drops.length - 1; i >= 0; i--) {
     const d = drops[i];
-    if (bike) { d.y -= speed * 0.06 * dt * (1 + d.s); d.x += (d.x - W / 2) * 0.012 * speed * dt; }
-    else { d.y -= speed * 0.04 * dt * (1 + d.s); d.x += (d.x - W / 2) * 0.004 * speed * dt; }
+    d.y -= speed * 0.06 * dt * (1 + d.s); d.x += (d.x - W / 2) * 0.012 * speed * dt;
     if (d.y < 0 || d.x < 0 || d.x >= W) drops.splice(i, 1);
-  }
-  // wiper
-  if (!bike && (rainOn || wT % 3.4 < 1.4)) wT += dt;
-  const ph = wT % 3.4;
-  wAng = ph < 1.4 ? Math.PI + Math.sin(ph / 1.4 * Math.PI) * Math.PI * 0.62 : Math.PI;
-  if (!bike && ph < 1.4) {
-    const pvx = W * 0.62, pvy = dashTopAt(W * 0.62) + 1, ca = Math.cos(wAng), sa = Math.sin(wAng), L = H * 0.66;
-    for (let i = drops.length - 1; i >= 0; i--) {
-      const dx = drops[i].x - pvx, dy = drops[i].y - pvy, along = dx * ca + dy * sa;
-      if (along > 0 && along < L && Math.abs(-dx * sa + dy * ca) < 3) drops.splice(i, 1);
-    }
   }
 }
 
@@ -1261,52 +1192,6 @@ function text(str, x, y, c, sc) {
   }
 }
 
-function drawCockpit() {
-  for (let i = 0; i < N; i++) if (dmask[i]) { const j = i * 3; col[j] = dcol[j]; col[j + 1] = dcol[j + 1]; col[j + 2] = dcol[j + 2]; }
-  // neon reflections on the dash top edge
-  for (let x = 0; x < W; x++) {
-    const y = Math.ceil(dashTopAt(x)) + 1, j = ((y - 3) * W + x) * 3;
-    if (y < H && y > 3) addc(x, y, [col[j], col[j + 1], col[j + 2]], 0.15);
-  }
-  // speed + mode readout inside the wheel
-  const R = Math.min(W * 0.27, H * 0.42), cx = W / 2, cy = H + R * 0.55;
-  const kmh = String(Math.round(speed * 3.6)).padStart(3, ' ');
-  const sc = H > 200 ? 3 : 2, ty = Math.round(cy - R + 6);
-  text(kmh, Math.round(cx - 6 * sc), ty, [0, 235, 255], sc);
-  text('KM/H', Math.round(cx - 7), ty + 6 * sc + 1, [0, 140, 170], 1);
-  text(auto ? 'AUTO' : 'MANUAL', Math.round(cx - (auto ? 7 : 11)), ty + 6 * sc + 8, auto ? [80, 255, 150] : [255, 150, 60], 1);
-  const segs = 14, bw = 3, bx0 = Math.round(cx - segs * bw / 2);
-  for (let i = 0; i < segs; i++) {
-    const on = i < Math.round(speed / maxV() * segs), c = mix([0, 230, 255], [255, 40, 170], i / segs);
-    for (let a = 0; a < bw - 1; a++) putc(bx0 + i * bw + a, ty - 3, on ? c : [30, 22, 44]);
-  }
-  // nav screen: the road ahead
-  const nx0 = Math.round(W * 0.72), nw = Math.round(W * 0.13), ny0 = Math.round(dashTopAt(W * 0.78) + 4), nh = Math.min(Math.round(H * 0.11), H - ny0 - 3);
-  if (nh > 6) {
-    for (let x = nx0; x < nx0 + nw; x++) for (let y = ny0; y < ny0 + nh; y++)
-      putc(x, y, x === nx0 || y === ny0 || x === nx0 + nw - 1 || y === ny0 + nh - 1 ? [60, 30, 90] : [8, 10, 22]);
-    let lx = 0, ldx = 0;
-    for (let k = 0; k < DRAW; k++) {
-      const n = (Math.floor(camZ / SEGL) + k) % NSEG;
-      const sx = Math.round(nx0 + nw / 2 + lx * 0.12 - px * 0.12), sy = Math.round(ny0 + nh - 2 - k * (nh - 3) / DRAW);
-      if (sx > nx0 && sx < nx0 + nw - 1) putc(sx, sy, k % 18 < 2 ? [255, 60, 200] : [0, 200, 255]);
-      lx += ldx; ldx += curve[n];
-    }
-    putc(Math.round(nx0 + nw / 2), ny0 + nh - 2, [255, 255, 255]);
-  }
-  // steering wheel
-  const a = steer * 0.9;
-  for (let y = Math.max(0, Math.floor(cy - R - 3)); y < H; y++) for (let x = Math.floor(cx - R - 3); x <= cx + R + 3; x++) {
-    const dx = x - cx, dy = y - cy, d = Math.hypot(dx, dy);
-    if (Math.abs(d - R) > 2.4) continue;
-    let ang = Math.atan2(dy, dx) - a + Math.PI / 2;
-    ang = Math.atan2(Math.sin(ang), Math.cos(ang));
-    let c = d < R - 0.8 ? [18, 15, 26] : d > R + 1.2 ? [12, 10, 18] : [40, 34, 56];
-    if (Math.abs(ang) < 0.05) c = [0, 235, 255];
-    putc(x, y, c);
-  }
-}
-
 function drawGlass() {
   // rain streaks outside
   for (const s of streaks) {
@@ -1321,13 +1206,6 @@ function drawGlass() {
     const j = (y * W + x) * 3;
     put(x, y, col[j] * 1.15 + 22, col[j + 1] * 1.15 + 24, col[j + 2] * 1.15 + 30);
     if (d.s === 2) { const k = ((y + 1) * W + x) * 3; put(x, y + 1, col[k] * 0.7, col[k + 1] * 0.7, col[k + 2] * 0.7); }
-  }
-  if (bike) return;
-  // wiper
-  const pvx = W * 0.62, pvy = dashTopAt(W * 0.62) + 1, ca = Math.cos(wAng), sa = Math.sin(wAng), L = H * 0.66;
-  for (let t = 0; t < L; t += 0.5) {
-    const x = Math.round(pvx + ca * t), y = Math.round(pvy + sa * t);
-    putc(x, y, [6, 5, 10]); putc(x, y + 1, [6, 5, 10]);
   }
 }
 
@@ -1359,30 +1237,17 @@ function drawBike() {
     const on = i < Math.round(speed / maxV() * segs), c = mix([0, 230, 255], [255, 40, 170], i / segs);
     for (let a = 0; a < bw - 1; a++) putc(Math.round(W / 2 - segs * bw / 2) + i * bw + a, sy0 + 2, on ? c : [30, 22, 44]);
   }
-  // handlebars turn a little with the steering, gloved hands on the grips
+  // handlebars turn a little with the steering; rubber grips with neon bar-end caps
   const a = steer * 0.07, pcx = W / 2, pcy = H * 0.87, r = Math.max(1, Math.round(H * 0.008));
   for (const sd of [-1, 1]) {
     const ex = W * 0.37 * sd, ey = -H * 0.075;
     const gx = pcx + ex * Math.cos(a) - ey * Math.sin(a), gy = pcy + ex * Math.sin(a) + ey * Math.cos(a);
     thick(pcx + sd * W * 0.05, pcy, gx, gy, r, [28, 26, 38], [80, 72, 104]);
-    // a gloved fist wrapped around the grip: boxy back of the hand, four fingers curling under
-    const grx = W * 0.055, gry = H * 0.065, stripe = sd < 0 ? [0, 230, 255] : [255, 50, 180];
-    const gcx = gx - sd * grx * 0.15, gcy = gy - gry * 0.15;
-    for (let y = Math.floor(gcy - gry - 1); y <= gcy + gry + 1; y++) for (let x = Math.floor(gcx - grx - 1); x <= gcx + grx + 1; x++) {
-      const nx = (x - gcx) / grx, ny = (y - gcy) / gry, e = nx ** 4 + ny ** 4;
-      if (e > 1) continue;
-      let c;
-      if (ny > 0.15) {                                   // fingers
-        const f = Math.floor((nx * sd + 1) / 2 * 4), fx = ((nx * sd + 1) / 2 * 4) % 1;
-        c = fx < 0.18 ? [8, 6, 12] : f === 3 ? [26, 22, 34] : mix([36, 32, 48], [16, 14, 22], (ny - 0.15) / 0.85);
-      } else {                                           // back of the hand
-        c = mix([44, 40, 58], [26, 22, 36], clamp(ny + 1, 0, 1));
-        if (ny > -0.2 && ny < 0.02) c = stripe;          // neon knuckle strip
-        else if (ny < -0.7) c = [64, 58, 84];
-      }
-      if (e > 0.82) c = [8, 6, 12];
-      putc(x, y, c);
-    }
+    const gx2 = pcx + (ex * 1.12) * Math.cos(a) - (ey * 1.12) * Math.sin(a), gy2 = pcy + (ex * 1.12) * Math.sin(a) + (ey * 1.12) * Math.cos(a);
+    const gx1 = pcx + (ex * 0.86) * Math.cos(a) - (ey * 0.86) * Math.sin(a), gy1 = pcy + (ex * 0.86) * Math.sin(a) + (ey * 0.86) * Math.cos(a);
+    thick(gx1, gy1, gx2, gy2, r + 2, [16, 14, 22], [48, 42, 62]);
+    const ec = sd < 0 ? [0, 230, 255] : [255, 50, 180];
+    thick(gx2, gy2, gx2 + sd * 1.5, gy2, r + 1, ec, mix(ec, [255, 255, 255], 0.4));
   }
   // helmet visor frame
   for (let i = 0; i < N; i++) if (vmask[i]) { const j = i * 3; col[j] = vcol[j]; col[j + 1] = vcol[j + 1]; col[j + 2] = vcol[j + 2]; }
@@ -1466,7 +1331,7 @@ function render() {
     if (d !== 5 && d !== 3 && n === zoneAt(n)[0] + 2 && zoneAt(n - 3)[2] === 5) drawGantry(k, CITIES[zoneAt(n)[3]]);
   }
 
-  addLight(W / 2, hy + eye() * F / 14, Math.min(30, F * 2.4 / 14), [190, 215, 255], bike ? 0.22 : 0.28);
+  addLight(W / 2, hy + eye() * F / 14, Math.min(30, F * 2.4 / 14), [190, 215, 255], 0.22);
 
   // glow, then wet-road reflections of everything above the horizon
   for (let i = 0; i < N * 3; i++) col[i] += lb[i];
@@ -1498,7 +1363,7 @@ function render() {
   }
   useOut();
   drawGlass();
-  if (bike) drawBike(); else drawCockpit();
+  drawBike();
 
   const fl = crashFlash * 120;
   for (let i = 0, j = 0; i < N; i++, j += 3) {
@@ -1509,14 +1374,9 @@ function render() {
   ctx.putImageData(img, 0, 0);
 }
 
-let perfT = 0, perfN = 0, perfDone = false, hdChosen = false;
 function frame(now) {
   const rawDt = (now - last) / 1000;
   const dt = Math.min(0.05, rawDt); last = now;
-  if (!perfDone && !hdChosen && T > 1.5) {          // after warming up, measure ~3 s; fall back if under ~32 fps
-    perfT += rawDt; perfN++;
-    if (perfT > 3) { perfDone = true; if (hd && perfN / perfT < 32) setHD(false); }
-  }
   T += dt;
   update(dt);
   render();
@@ -1536,8 +1396,7 @@ addEventListener('keydown', e => {
   if (KEYMAP[e.key]) { keys[KEYMAP[e.key]] = true; manual(); e.preventDefault(); }
   else if (e.key === 'a' || e.key === 'A') setAuto(!auto);
   else if (e.key === 'r' || e.key === 'R') toggleRain();
-  else if (e.key === 'v' || e.key === 'V') toggleVehicle();
-  else if (e.key === 'h' || e.key === 'H') { hdChosen = true; setHD(!hd); }
+  else if (e.key === 'h' || e.key === 'H') setHD(!hd);
 });
 addEventListener('keyup', e => { if (KEYMAP[e.key]) keys[KEYMAP[e.key]] = false; });
 function hold(id, key) {
@@ -1549,15 +1408,12 @@ function hold(id, key) {
 }
 hold('bl', 'left'); hold('br', 'right'); hold('bg', 'gas'); hold('bb', 'brake');
 btnA.addEventListener('pointerdown', e => { e.preventDefault(); setAuto(!auto); });
-const btnV = document.getElementById('bv');
-function toggleVehicle() { bike = !bike; roll = 0; drops = []; btnV.textContent = bike ? 'CAR' : 'BIKE'; }
-btnV.addEventListener('pointerdown', e => { e.preventDefault(); toggleVehicle(); });
 const btnR = document.getElementById('br2');
 function toggleRain() { rainOn = !rainOn; if (!rainOn) drops = []; btnR.classList.toggle('on', rainOn); }
 btnR.addEventListener('pointerdown', e => { e.preventDefault(); toggleRain(); });
 const btnQ = document.getElementById('bq');
 function setHD(on) { hd = on; btnQ.classList.toggle('on', on); drops = []; streaks = []; setup(); }
-btnQ.addEventListener('pointerdown', e => { e.preventDefault(); hdChosen = true; setHD(!hd); });
+btnQ.addEventListener('pointerdown', e => { e.preventDefault(); setHD(!hd); });
 setTimeout(() => { document.getElementById('hint').style.opacity = 0; }, 9000);
 
 requestAnimationFrame(frame);
