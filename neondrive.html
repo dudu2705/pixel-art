@@ -185,7 +185,10 @@ for (const z of ZONES) {
 }
 const IXZ = IX.map(n => n * SEGL);
 const LIGHT_PERIOD = 30;
-function lightPhase(i) { return ((T + hash(IX[i], 3, 3) * LIGHT_PERIOD) % LIGHT_PERIOD); }
+const LOFF = IX.map(n => hash(n, 3, 3) * LIGHT_PERIOD);
+function lightPhase(i) { return ((T + LOFF[i]) % LIGHT_PERIOD + LIGHT_PERIOD) % LIGHT_PERIOD; }
+function setPhase(i, p) { LOFF[i] = p - T; }
+let decidedIx = -1;
 function lightState(i) { const p = lightPhase(i); return p < 16 ? 0 : p < 19 ? 1 : 2; }   // 0 green, 1 yellow, 2 red
 function nextIx(z) {                                  // index of the first intersection whose stop line is ahead of world z
   for (let i = 0; i < IXZ.length; i++) if (IXZ[i] - 5 > z) return i;
@@ -516,6 +519,11 @@ function update(dt) {
       else { speed *= 0.25; c.z = (camZ - 6 + LEN) % LEN; shake = 1; crashFlash = 1; }
     }
   }
+  // when an intersection comes into view, roll the dice: about one in four turns red for you
+  if (IX.length) {
+    const i = nextIx(camZ), dist = ((IXZ[i] - 5 - camZ) % LEN + LEN) % LEN;
+    if (dist < 170 && decidedIx !== i) { decidedIx = i; setPhase(i, Math.random() < 0.25 ? 16.5 : 0); }
+  }
   waitLight = false;
   if (IX.length) {
     const i = nextIx(camZ - 8), dist = ((IXZ[i] - 5 - camZ) % LEN + LEN) % LEN;
@@ -533,13 +541,10 @@ function update(dt) {
   {
     const dz_ = district(Math.floor(camZ / SEGL)), inCity = !zoneAt(Math.floor(camZ / SEGL))[4] && ![D.TUNNEL, D.TUBE, D.RAMP].includes(dz_);
     if ((lifeT.drone -= dt) <= 0) { lifeT.drone = 18 + Math.random() * 20; if (inCity) { const z0 = camZ + 190; drones.push({ z: z0, x: -2.6, ph: 0 }, { z: z0 + 4, x: 2.6, ph: 1.7 }); } }
-    if ((lifeT.bike -= dt) <= 0) { lifeT.bike = 9 + Math.random() * 12; if (speed > 15) bikes.push({ z: camZ - 25, x: clamp(px > 3.5 ? px - 2.4 : px + 2.4, 0.9, 6.3), v: speed + 13 + Math.random() * 6, c: NEON[(Math.random() * 6) | 0] }); }
     if ((lifeT.xfly -= dt) <= 0) { lifeT.xfly = 5 + Math.random() * 7; if (inCity) { const dir = Math.random() < 0.5 ? 1 : -1; xfly.push({ z: camZ + 110 + Math.random() * 110, h: 13 + Math.random() * 14, x: -dir * 85, vx: dir * (26 + Math.random() * 14), c: NEON[(Math.random() * 6) | 0] }); } }
     for (const o of drones) o.z += 24 * dt;
-    for (const o of bikes) o.z += o.v * dt;
     for (const o of xfly) o.x += o.vx * dt;
     drones = drones.filter(o => { const r = o.z - camZ; return r > -10 && r < 600; });
-    bikes = bikes.filter(o => { const r = o.z - camZ; return r > -40 && r < 420; });
     xfly = xfly.filter(o => Math.abs(o.x) < 95 && o.z - camZ > -10);
   }
   { const r = rel(train.z); if (r > LEN - 90) train.z = (camZ + 500 + Math.random() * 300) % LEN; }
@@ -1312,8 +1317,8 @@ function racerTex(wz, v) {
   TR = 220; TG = 226; TB = 236;
 }
 let racer = { z: 0, off: 40 };
-let drones = [], bikes = [], xfly = [];
-const lifeT = { drone: 6, bike: 5, xfly: 3 };
+let drones = [], xfly = [];
+const lifeT = { drone: 6, xfly: 3 };
 
 // ---- stilt canals: little lantern boats ----
 function drawBoat(k, n) {
@@ -1430,29 +1435,6 @@ function drawDrone(o, k, dz) {
   blob(x - 0.55 * s, y, 0.15 * s + 0.6, 0.15 * s + 0.6, red ? [255, 30, 40] : [40, 20, 20], 1, 0);
   blob(x + 0.55 * s, y, 0.15 * s + 0.6, 0.15 * s + 0.6, red ? [20, 20, 40] : [40, 90, 255], 1, 0);
   addLight(red ? x - 0.55 * s : x + 0.55 * s, y, Math.min(24, Math.max(4, 2.5 * s)), red ? [255, 30, 40] : [40, 90, 255], 0.7 * (1 - fz * 0.5));
-}
-
-// ---- other riders overtaking you, with light trails ----
-let FRAC = 0;
-function projRel(r) { const k = Math.floor(r / SEGL + FRAC); if (k < 0 || k >= DRAW) return false; return projAt(k, r - Z[k]); }
-function drawRider(o, k, dz) {
-  const r0 = Z[k] + dz;
-  let px0 = null, py0 = null;
-  for (let i = 0; i <= 14; i++) {                   // light trail streaming behind
-    if (!projRel(r0 - i * 1.4)) break;
-    const x = PCX + o.x * PS, y = PGY - 0.85 * PS;
-    if (px0 !== null) { const a = 0.55 * (1 - i / 14); for (let t = 0; t <= 1; t += 0.2) addc(Math.round(px0 + (x - px0) * t), Math.round(py0 + (y - py0) * t), o.c, a); }
-    px0 = x; py0 = y;
-  }
-  if (!projAt(k, dz)) return;
-  const s = PS, fz = fogAt(PZ), x = PCX + o.x * s, yb = PGY;
-  rect(x - 0.08 * s - 0.5, x + 0.08 * s + 0.5, yb - 0.7 * s, yb, [10, 10, 12], fz);                // rear wheel
-  rect(x - 0.3 * s, x + 0.3 * s, yb - 1.0 * s, yb - 0.55 * s, [24, 22, 30], fz);                   // bike tail
-  rect(x - 0.26 * s, x + 0.26 * s, yb - 1.55 * s, yb - 0.95 * s, [16, 14, 22], fz);                // rider
-  blob(x, yb - 1.7 * s, 0.17 * s + 0.5, 0.16 * s + 0.5, [40, 40, 56], 1, fz);                     // helmet
-  rect(x - 0.12 * s, x + 0.05 * s, yb - 1.78 * s, yb - 1.72 * s, o.c, fz * 0.5);
-  rect(x - 0.28 * s, x + 0.28 * s, yb - 0.9 * s, yb - 0.8 * s, [255, 40, 60], fz * 0.4);           // tail light
-  addLight(x, yb - 0.85 * s, Math.min(18, Math.max(2, 0.9 * s)), [255, 40, 60], 0.5 * (1 - fz));
 }
 
 // ---- flying cars crossing the street between the towers ----
@@ -1998,7 +1980,6 @@ function render() {
     for (const c of crossers(i)) { const rc = rel(c.z); if (rc > NEAR) put_(Math.floor(rc / SEGL + frac), { xp: c, r: rc }); }
   }
   for (const o of drones) { const r = o.z - camZ; if (r > NEAR) put_(Math.floor(r / SEGL + frac), { dr: o, r }); }
-  for (const o of bikes) { const r = o.z - camZ; if (r > NEAR) put_(Math.floor(r / SEGL + frac), { bk: o, r }); }
   for (const o of xfly) { const r = o.z - camZ; if (r > NEAR) put_(Math.floor(r / SEGL + frac), { xf: o, r }); }
   for (const p of peds) {
     const r = rel(p.z), k = Math.floor(r / SEGL + frac);
@@ -2052,7 +2033,7 @@ function render() {
       for (const o of bk) {
         const dz = o.r - Z[k];
         if (o.c) drawCar(o.c, k, dz); else if (o.p) drawPed(o.p, k, dz); else if (o.sig !== undefined) drawSignal(o.sig, k, dz);
-        else if (o.xp) drawCrosser(o.xp, k, dz); else if (o.dr) drawDrone(o.dr, k, dz); else if (o.bk) drawRider(o.bk, k, dz); else if (o.xf) drawFlyer(o.xf, k, dz);
+        else if (o.xp) drawCrosser(o.xp, k, dz); else if (o.dr) drawDrone(o.dr, k, dz); else if (o.xf) drawFlyer(o.xf, k, dz);
       }
     }
     if (d === D.SHRINE && n % 3 === 0) drawTorii(k, n);
