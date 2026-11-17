@@ -522,7 +522,7 @@ function update(dt) {
   // when an intersection comes into view, roll the dice: about one in four turns red for you
   if (IX.length) {
     const i = nextIx(camZ), dist = ((IXZ[i] - 5 - camZ) % LEN + LEN) % LEN;
-    if (dist < 170 && decidedIx !== i) { decidedIx = i; setPhase(i, Math.random() < 0.25 ? 16.5 : 0); }
+    if (dist < 320 && decidedIx !== i) { decidedIx = i; setPhase(i, Math.random() < 0.25 ? 14.5 : 2); }
   }
   waitLight = false;
   if (IX.length) {
@@ -540,11 +540,8 @@ function update(dt) {
   racer.off = 25 + Math.sin(T * 0.12) * 45; racer.z = camZ + racer.off;
   {
     const dz_ = district(Math.floor(camZ / SEGL)), inCity = !zoneAt(Math.floor(camZ / SEGL))[4] && ![D.TUNNEL, D.TUBE, D.RAMP].includes(dz_);
-    if ((lifeT.drone -= dt) <= 0) { lifeT.drone = 18 + Math.random() * 20; if (inCity) { const z0 = camZ + 190; drones.push({ z: z0, x: -2.6, ph: 0 }, { z: z0 + 4, x: 2.6, ph: 1.7 }); } }
     if ((lifeT.xfly -= dt) <= 0) { lifeT.xfly = 5 + Math.random() * 7; if (inCity) { const dir = Math.random() < 0.5 ? 1 : -1; xfly.push({ z: camZ + 110 + Math.random() * 110, h: 13 + Math.random() * 14, x: -dir * 85, vx: dir * (26 + Math.random() * 14), c: NEON[(Math.random() * 6) | 0] }); } }
-    for (const o of drones) o.z += 24 * dt;
     for (const o of xfly) o.x += o.vx * dt;
-    drones = drones.filter(o => { const r = o.z - camZ; return r > -10 && r < 600; });
     xfly = xfly.filter(o => Math.abs(o.x) < 95 && o.z - camZ > -10);
   }
   { const r = rel(train.z); if (r > LEN - 90) train.z = (camZ + 500 + Math.random() * 300) % LEN; }
@@ -1317,8 +1314,8 @@ function racerTex(wz, v) {
   TR = 220; TG = 226; TB = 236;
 }
 let racer = { z: 0, off: 40 };
-let drones = [], xfly = [];
-const lifeT = { drone: 6, xfly: 3 };
+let xfly = [];
+const lifeT = { xfly: 3 };
 
 // ---- stilt canals: little lantern boats ----
 function drawBoat(k, n) {
@@ -1416,25 +1413,6 @@ function drawSignal(i, k, dz) {
 function drawCrosser(c, k, dz) {
   const p = { x: c.x, umb: c.umb, coat: c.coat, ph: c.ph, v: c.v };
   drawPed(p, k, dz);
-}
-
-// ---- police drones ----
-function drawDrone(o, k, dz) {
-  if (!projAt(k, dz) || PZ > 400) return;
-  const s = PS, fz = fogAt(PZ), h = 9 + Math.sin(T * 2 + o.ph) * 0.4, x = PCX + o.x * s, y = PGY - h * s;
-  // searchlight sweeping the road
-  const gx = PCX + (o.x + Math.sin(T * 0.9 + o.ph) * 3) * s, gy = PGY;
-  for (let yy = Math.max(0, Math.ceil(y)); yy <= Math.min(H - 1, gy); yy++) {
-    const t = (yy - y) / Math.max(1, gy - y), cx = x + (gx - x) * t, w = (0.2 + t * 2.2) * s;
-    for (let xx = Math.max(0, Math.floor(cx - w)); xx <= Math.min(W - 1, cx + w); xx++) addc(xx, yy, [200, 220, 255], 0.05 * (1 - fz));
-  }
-  addLight(gx, gy, Math.min(26, 2.6 * s), [200, 220, 255], 0.3 * (1 - fz));
-  rect(x - 0.6 * s, x + 0.6 * s, y - 0.18 * s - 0.5, y + 0.18 * s + 0.5, [22, 22, 30], fz);
-  lineS(x - 1.1 * s, y - 0.25 * s, x + 1.1 * s, y - 0.25 * s, [60, 60, 70], fz);
-  const red = Math.floor(T * 8) % 2 === 0;
-  blob(x - 0.55 * s, y, 0.15 * s + 0.6, 0.15 * s + 0.6, red ? [255, 30, 40] : [40, 20, 20], 1, 0);
-  blob(x + 0.55 * s, y, 0.15 * s + 0.6, 0.15 * s + 0.6, red ? [20, 20, 40] : [40, 90, 255], 1, 0);
-  addLight(red ? x - 0.55 * s : x + 0.55 * s, y, Math.min(24, Math.max(4, 2.5 * s)), red ? [255, 30, 40] : [40, 90, 255], 0.7 * (1 - fz * 0.5));
 }
 
 // ---- flying cars crossing the street between the towers ----
@@ -1979,7 +1957,6 @@ function render() {
     if (r > NEAR && r < DRAW * SEGL) put_(Math.floor(r / SEGL + frac), { sig: i, r });
     for (const c of crossers(i)) { const rc = rel(c.z); if (rc > NEAR) put_(Math.floor(rc / SEGL + frac), { xp: c, r: rc }); }
   }
-  for (const o of drones) { const r = o.z - camZ; if (r > NEAR) put_(Math.floor(r / SEGL + frac), { dr: o, r }); }
   for (const o of xfly) { const r = o.z - camZ; if (r > NEAR) put_(Math.floor(r / SEGL + frac), { xf: o, r }); }
   for (const p of peds) {
     const r = rel(p.z), k = Math.floor(r / SEGL + frac);
@@ -2033,7 +2010,7 @@ function render() {
       for (const o of bk) {
         const dz = o.r - Z[k];
         if (o.c) drawCar(o.c, k, dz); else if (o.p) drawPed(o.p, k, dz); else if (o.sig !== undefined) drawSignal(o.sig, k, dz);
-        else if (o.xp) drawCrosser(o.xp, k, dz); else if (o.dr) drawDrone(o.dr, k, dz); else if (o.xf) drawFlyer(o.xf, k, dz);
+        else if (o.xp) drawCrosser(o.xp, k, dz); else if (o.xf) drawFlyer(o.xf, k, dz);
       }
     }
     if (d === D.SHRINE && n % 3 === 0) drawTorii(k, n);
