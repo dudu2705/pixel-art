@@ -11,7 +11,8 @@
     position: fixed; font: 12px ui-monospace, Menlo, monospace; color: #ff9ce6; letter-spacing: 1px;
     background: rgba(10, 4, 14, 0.66); padding: 5px 10px; border: 1px solid #5a1d4f; pointer-events: none;
   }
-  #hint { left: 50%; top: 14px; transform: translateX(-50%); white-space: nowrap; transition: opacity 1.5s; }
+  #hint { left: 50%; top: 14px; transform: translateX(-50%); white-space: nowrap; display: none; }
+  body.hints #hint { display: block; }
   #pad { display: none; }
   @media (pointer: coarse) {
     #pad { display: block; }
@@ -26,15 +27,15 @@
   .btn.on { background: rgba(255, 60, 190, 0.45); }
   #bl { left: 18px; } #br { left: 104px; }
   #bb { right: 104px; } #bg { right: 18px; border-color: rgba(0, 230, 255, 0.7); color: #a8f6ff; }
-  #ba, #br2, #bs { right: 18px; top: 18px; bottom: auto; height: 44px; width: 74px; font-size: 13px; }
-  #br2 { top: 72px; } #bs { top: 126px; }
+  #ba, #br2, #bs, #bv { right: 18px; top: 18px; bottom: auto; height: 44px; width: 74px; font-size: 13px; }
+  #br2 { top: 72px; } #bs { top: 126px; } #bv { top: 180px; }
   #zone { left: 50%; top: 58px; transform: translateX(-50%); font-size: 16px; letter-spacing: 6px; color: #9ff4ff;
     border-color: #1d4f5a; transition: opacity 1.2s; opacity: 0; }
 </style>
 </head>
 <body>
 <canvas id="c"></canvas>
-<div id="hint" class="tag">&larr; &rarr; steer &nbsp;&middot;&nbsp; &uarr; gas &nbsp;&middot;&nbsp; &darr; brake &nbsp;&middot;&nbsp; A autopilot &nbsp;&middot;&nbsp; W weather &nbsp;&middot;&nbsp; S style</div>
+<div id="hint" class="tag">&larr; &rarr; steer &nbsp;&middot;&nbsp; &uarr; gas &nbsp;&middot;&nbsp; &darr; brake &nbsp;&middot;&nbsp; A autopilot &nbsp;&middot;&nbsp; W weather &nbsp;&middot;&nbsp; S style &nbsp;&middot;&nbsp; V cruise &nbsp;&middot;&nbsp; H hide this</div>
 <div id="zone" class="tag"></div>
 <div id="pad">
   <div class="btn" id="bl">&#9664;</div><div class="btn" id="br">&#9654;</div>
@@ -42,6 +43,7 @@
   <div class="btn on" id="ba">AUTO</div>
   <div class="btn on" id="br2">WX</div>
   <div class="btn" id="bs">BIKE</div>
+  <div class="btn" id="bv">CRZ</div>
 </div>
 <script>
 // Pseudo-3D city street rendered into a small pixel buffer; CSS scales it up with nearest-neighbour.
@@ -147,11 +149,14 @@ function district(n) { return zoneAt(n)[2]; }
 function zoneEnd(n) { return zoneAt(n)[1]; }
 const TUNNEL_STARTS = ZONES.filter(z => z[2] === 3).map(z => z[0]);
 let FOG = CITIES[0].fog.slice(), SKY = CITIES[0].sky, TWC = CITIES[0].tw;
-const TH = { aurora: 0, mountains: 0, elevator: 0, fireworks: 0, dark: 0, water: 0, deep: 0, kites: 0, shimmer: 0 };
+const TH = { aurora: 0, mountains: 0, elevator: 0, fireworks: 0, dark: 0, water: 0, deep: 0, kites: 0, shimmer: 0, night: 0 };
 let fogK = 1;
 const RW = 7, SW = 3.2, NEAR = 0.7;
 let roll = 0;
-const BIKE_NAMES = ['CAFE RACER', 'SUPERBIKE', 'CYBER CHOPPER', 'HOVER BIKE', 'NEO SCOOTER'];
+const BIKE_NAMES = ['CAFE RACER', 'SUPERBIKE', 'CYBER CHOPPER', 'HOVER BIKE', 'NEO SCOOTER', 'NO BIKE'];
+const CRUISE = [22, 36, 53], CRUISE_KMH = [80, 130, 190];   // autopilot cruise speeds, V cycles them
+let cruise = 2, wakeLock = null;
+const DAY = 3600, DAY0 = rng() * DAY;                  // one slow day-night cycle per hour, starting anywhere in it
 let bikeStyle = 2, bikeGeo = {}, horizY = 0;          // the chopper is the default ride
 const maxV = () => district(Math.floor(camZ / SEGL) % NSEG) === D.VAC ? 95 : 62;   // the vactrain lets you fly
 const eye = () => 1.4;
@@ -574,6 +579,16 @@ function blendTheme(seg) {
     FOG = mix(FOG, [6, 34, 58], uw); SKY = SKY.map(c => mix(c, [4, 30, 52], uw)); TH.water = uw;
   }
   wx = TH.water > 0.5 ? 'none' : z[4] && LINK_WX[z[2]] ? LINK_WX[z[2]] : (t > 0.5 ? b.weather : a.weather);
+  // the hour: dusk, deep night, a pre-dawn glow, back to dusk
+  const p = ((T + DAY0) / DAY) % 1, sea = 1 - TH.deep * 0.7;
+  const night = smooth(0.08, 0.3, p) * (1 - smooth(0.62, 0.8, p)), dawn = smooth(0.66, 0.8, p) * (1 - smooth(0.86, 0.98, p));
+  const dusk = 1 - smooth(0, 0.14, p) + smooth(0.94, 1, p), nk = night * 0.55 * sea;
+  SKY = SKY.map(c => mix(c, [c[0] * 0.3, c[1] * 0.3, c[2] * 0.4], nk));
+  SKY[2] = mix(SKY[2], [210, 96, 70], dusk * 0.3 * sea); SKY[1] = mix(SKY[1], [120, 50, 70], dusk * 0.15 * sea);
+  SKY[2] = mix(SKY[2], [150, 140, 190], dawn * 0.45 * sea); SKY[1] = mix(SKY[1], [60, 60, 110], dawn * 0.3 * sea);
+  FOG = mix(FOG, [FOG[0] * 0.5, FOG[1] * 0.5, FOG[2] * 0.6], nk);
+  FOG = mix(FOG, [110, 100, 140], dawn * 0.2 * sea);
+  TH.night = night * sea;
   return { a, b, t, z };
 }
 
@@ -629,7 +644,7 @@ function update(dt) {
     const other = autoLane > 3 ? 1.75 : 5.25;
     const cur = laneInfo(autoLane), alt = laneInfo(other);
     if (laneCool <= 0 && cur.d < 90 && alt.d > cur.d + 20 && !alt.blocked) { autoLane = other; laneCool = 2.5; }
-    let target = maxV() * 0.86;
+    let target = Math.min(maxV() * 0.86, CRUISE[cruise] * (district(n) === D.VAC ? 1.6 : 1));
     const now = laneInfo(autoLane);
     if (now.d < 80) target = Math.min(target, now.v + (now.d - 16) * 0.55);
     // traffic lights: brake smoothly to the stop line, wait for green and for people to finish crossing
@@ -832,7 +847,7 @@ function drawSky(hy) {
     }
   }
   // stars, more of them the higher you ride
-  const sk = starK * (1 - gloom * 0.8) * (1 - TH.deep) * (rainOn && (wx === 'rain' || wx === 'monsoon') ? 0.35 : rainOn && (wx === 'fog' || wx === 'sand') ? 0.2 : 1);
+  const sk = Math.max(starK, TH.night * 0.7) * (1 - gloom * 0.8) * (1 - TH.deep) * (rainOn && (wx === 'rain' || wx === 'monsoon') ? 0.35 : rainOn && (wx === 'fog' || wx === 'sand') ? 0.2 : 1);
   if (sk > 0.02) {
     const bxs = Math.floor(bgX), yTop = hy - HB * 0.3;
     for (const st of stars) {
@@ -2733,7 +2748,7 @@ function buildBike() {
       const top = H * 0.86 + Math.pow((x - cx) / (W / 2), 2) * H * 0.05;
       if (y >= top - 1) setB(x, y, y < top ? [0, 200, 210] : mix([20, 22, 32], [10, 10, 16], (y - top) / (H * 0.14)));
     }
-  } else {                                           // neo scooter: pink cowl, round speedo, phone on a mount
+  } else if (s === 4) {                             // neo scooter: pink cowl, round speedo, phone on a mount
     const body = [236, 150, 182];
     ell(cx, H * 1.03, W * 0.3, H * 0.2, (x, y, nx, ny, e) => {
       let c = mix(body, [150, 70, 100], clamp(e * 0.7 + (nx + 1) * 0.15, 0, 1));
@@ -2927,7 +2942,7 @@ function drawBike() {
       thick(tx, ty, tx, ty - 1.5, r + 1, [110, 112, 124], [200, 202, 214]);
       putc(Math.round(tx), Math.round(ty - r - 2), [220, 40, 40]);                     // thumb trigger
     }
-  } else {                                           // neo scooter: the speedo sits in the bar housing, so it goes over the bar
+  } else if (s === 4) {                             // neo scooter: the speedo sits in the bar housing, so it goes over the bar
     barSet(H * 0.885, [[0.1, 0], [0.3, -0.01], [0.38, -0.012]], r);
     const [sx, sy] = g.sp, sr = g.sr;
     for (let y = -sr; y <= sr; y++) for (let x = -sr; x <= sr; x++) if (x * x + y * y <= sr * sr) putc(sx + x, sy + y, [16, 16, 26]);
@@ -3092,7 +3107,9 @@ function render() {
   if (TH.dark > 0.3) addLight(W / 2, hy + eye() * F / 30, 24, [190, 215, 255], 0.25 * TH.dark);
 
   // glow, then wet-road reflections of everything above the horizon
-  for (let i = 0; i < N * 3; i++) col[i] += lb[i];
+  // deep in the night the city itself sinks into shadow while the neon carries further
+  const glowK = 1 + 0.35 * TH.night, dimK = 1 - 0.38 * TH.night;
+  for (let i = 0; i < N * 3; i++) col[i] = col[i] * dimK + lb[i] * glowK;
   const hr = Math.round(hy);
   if (rainOn) for (let y = hr + 1; y < H; y++) {   // weather off also turns off the wet-road reflections
     const ys = 2 * hr - y; if (ys < 0) break;
@@ -3155,6 +3172,8 @@ addEventListener('keydown', e => {
   else if (e.key === 'a' || e.key === 'A') setAuto(!auto);
   else if ('rRwW'.includes(e.key)) toggleRain();
   else if (e.key === 's' || e.key === 'S') cycleBike();
+  else if (e.key === 'v' || e.key === 'V') cycleCruise();
+  else if (e.key === 'h' || e.key === 'H') document.body.classList.toggle('hints');
 });
 addEventListener('keyup', e => { if (KEYMAP[e.key]) keys[KEYMAP[e.key]] = false; });
 function hold(id, key) {
@@ -3174,7 +3193,17 @@ function cycleBike() {
   zoneEl.textContent = 'BIKE · ' + BIKE_NAMES[bikeStyle]; zoneEl.style.opacity = 1; zoneT = 2.5;
 }
 document.getElementById('bs').addEventListener('pointerdown', e => { e.preventDefault(); cycleBike(); });
-setTimeout(() => { document.getElementById('hint').style.opacity = 0; }, 9000);
+function cycleCruise() {
+  cruise = (cruise + 1) % CRUISE.length;
+  zoneEl.textContent = 'CRUISE · ' + CRUISE_KMH[cruise] + ' KMH' + (auto ? '' : ' (AUTOPILOT)'); zoneEl.style.opacity = 1; zoneT = 2.5;
+}
+document.getElementById('bv').addEventListener('pointerdown', e => { e.preventDefault(); cycleCruise(); });
+// keep the screen from dimming or sleeping while it plays (where the browser supports it); the lock drops
+// whenever the tab is hidden, so take it again on return, and on the first key or tap in case the first try was refused
+async function requestWake() { if (wakeLock || !navigator.wakeLock) return; try { wakeLock = await navigator.wakeLock.request('screen'); wakeLock.addEventListener('release', () => { wakeLock = null; }); } catch (e) { wakeLock = null; } }
+requestWake();
+document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') requestWake(); });
+addEventListener('keydown', requestWake); addEventListener('pointerdown', requestWake);
 
 requestAnimationFrame(frame);
 </script>
