@@ -26,22 +26,21 @@
   .btn.on { background: rgba(255, 60, 190, 0.45); }
   #bl { left: 18px; } #br { left: 104px; }
   #bb { right: 104px; } #bg { right: 18px; border-color: rgba(0, 230, 255, 0.7); color: #a8f6ff; }
-  #ba, #br2, #bq { right: 18px; top: 18px; bottom: auto; height: 44px; width: 74px; font-size: 13px; }
-  #br2 { top: 72px; } #bq { top: 126px; }
+  #ba, #br2 { right: 18px; top: 18px; bottom: auto; height: 44px; width: 74px; font-size: 13px; }
+  #br2 { top: 72px; }
   #zone { left: 50%; top: 58px; transform: translateX(-50%); font-size: 16px; letter-spacing: 6px; color: #9ff4ff;
     border-color: #1d4f5a; transition: opacity 1.2s; opacity: 0; }
 </style>
 </head>
 <body>
 <canvas id="c"></canvas>
-<div id="hint" class="tag">&larr; &rarr; steer &nbsp;&middot;&nbsp; &uarr; gas &nbsp;&middot;&nbsp; &darr; brake &nbsp;&middot;&nbsp; A autopilot &nbsp;&middot;&nbsp; W weather &nbsp;&middot;&nbsp; H HD</div>
+<div id="hint" class="tag">&larr; &rarr; steer &nbsp;&middot;&nbsp; &uarr; gas &nbsp;&middot;&nbsp; &darr; brake &nbsp;&middot;&nbsp; A autopilot &nbsp;&middot;&nbsp; W weather</div>
 <div id="zone" class="tag"></div>
 <div id="pad">
   <div class="btn" id="bl">&#9664;</div><div class="btn" id="br">&#9654;</div>
   <div class="btn" id="bb">BRK</div><div class="btn" id="bg">GAS</div>
   <div class="btn on" id="ba">AUTO</div>
   <div class="btn on" id="br2">WX</div>
-  <div class="btn on" id="bq">HD</div>
 </div>
 <script>
 // Pseudo-3D city street rendered into a small pixel buffer; CSS scales it up with nearest-neighbour.
@@ -50,9 +49,12 @@ const SEGL = 4, DRAW = 120;
 // eight cities, each a run of districts, joined by a link (skybridge, aqua tube or mega-highway)
 const ZONE_NAMES = ['NEON DOWNTOWN', 'LANTERN MARKET', 'GLASS SPIRES', 'UNDERPASS', 'DOCKLANDS', 'SKYBRIDGE', 'HOLO GARDENS',
   'ARCADE ROW', 'MEGA-HIGHWAY', 'STACKTOWN', 'DATA CANYON', 'CONSTRUCTION ZONE', 'SHRINE STREET', 'AQUA TUBE', 'STILT CANALS',
-  'CANYON ROAD', 'SPIRAL RAMP'];
+  'CANYON ROAD', 'SPIRAL RAMP', 'FOUNDRY', 'TERRACES', 'REEF', 'FAIRGROUND', 'OVERGROWN', 'CITADEL', 'BAZAAR',
+  'VACTRAIN', 'FERRY', 'VOLCANO RIM', 'CLOUD CAUSEWAY', 'PONTOON ROAD', 'SALT FLATS'];
 const D = { DOWNTOWN: 0, MARKET: 1, SPIRES: 2, TUNNEL: 3, DOCKS: 4, BRIDGE: 5, GARDENS: 6, ARCADE: 7, HIGHWAY: 8, STACK: 9,
-  DATA: 10, BUILD: 11, SHRINE: 12, TUBE: 13, CANALS: 14, CANYON: 15, RAMP: 16 };
+  DATA: 10, BUILD: 11, SHRINE: 12, TUBE: 13, CANALS: 14, CANYON: 15, RAMP: 16,
+  FORGE: 17, TERRACE: 18, REEF: 19, FAIR: 20, RUIN: 21, CITADEL: 22, BAZAAR: 23,
+  VAC: 24, FERRY: 25, VOLCANO: 26, CLOUDS: 27, PONTOON: 28, SALT: 29 };
 const CITIES = [
   { name: 'VANTA BAY', weather: 'rain', storm: 1, link: [5, 200],
     zones: [[0, 220], [3, 50], [1, 190], [7, 170], [2, 190], [4, 150]],
@@ -86,14 +88,51 @@ const CITIES = [
     zones: [[0, 170], [2, 150], [6, 140], [3, 60], [11, 120]],
     sky: [[2, 6, 16], [10, 30, 50], [40, 90, 110]], fog: [36, 60, 76], tw: [[40, 60, 80], [22, 34, 48]], hue: [190, 230],
     neon: [[120, 255, 200], [160, 120, 255], [220, 250, 255], [60, 200, 255], [255, 150, 220], [120, 255, 120]] },
+  { name: 'MONSOON TERRACES', weather: 'monsoon', storm: 1, link: [5, 200],
+    zones: [[D.TERRACE, 220], [1, 160], [D.TERRACE, 180], [6, 150], [12, 130]],
+    sky: [[4, 10, 10], [16, 40, 36], [60, 110, 96]], fog: [30, 60, 54], tw: [[30, 56, 50], [16, 30, 28]], hue: [100, 160],
+    neon: [[120, 255, 170], [255, 200, 90], [90, 200, 255], [255, 120, 160], [200, 255, 120], [255, 240, 200]] },
+  { name: 'EMBER FOUNDRY', weather: 'ash', link: [8, 200],
+    zones: [[D.FORGE, 220], [9, 160], [11, 150], [D.FORGE, 180], [4, 150]],
+    sky: [[12, 4, 2], [50, 16, 6], [160, 60, 20]], fog: [70, 30, 14], tw: [[50, 24, 16], [26, 12, 8]], hue: [10, 35],
+    neon: [[255, 120, 30], [255, 200, 60], [255, 60, 20], [80, 220, 255], [255, 240, 200], [255, 90, 60]] },
+  { name: 'CORAL DEEP', weather: 'bubbles', deep: 1, link: [13, 180],
+    zones: [[D.REEF, 220], [14, 160], [D.REEF, 180], [6, 150]],
+    sky: [[0, 8, 20], [2, 30, 56], [10, 80, 110]], fog: [4, 40, 66], tw: [[10, 50, 70], [4, 26, 40]], hue: [170, 220],
+    neon: [[80, 255, 230], [255, 120, 200], [120, 180, 255], [255, 200, 120], [180, 255, 120], [200, 140, 255]] },
+  { name: 'CARNIVAL ISLE', weather: 'clear', fireworks: 1, link: [5, 200],
+    zones: [[D.FAIR, 230], [7, 170], [D.FAIR, 180], [1, 150]],
+    sky: [[10, 4, 24], [40, 14, 70], [140, 60, 150]], fog: [60, 24, 80], tw: [[60, 30, 80], [34, 16, 46]], hue: [270, 330],
+    neon: [[255, 80, 80], [255, 220, 60], [80, 200, 255], [255, 120, 220], [120, 255, 140], [255, 255, 255]] },
+  { name: 'VERDANT RUIN', weather: 'fireflies', dark: 1, link: [5, 200],
+    zones: [[D.RUIN, 240], [6, 170], [D.RUIN, 180], [3, 50], [9, 140]],
+    sky: [[2, 8, 6], [10, 30, 20], [40, 80, 56]], fog: [20, 44, 32], tw: [[22, 40, 30], [12, 22, 16]], hue: [90, 150],
+    neon: [[200, 255, 120], [255, 180, 80], [120, 255, 200], [255, 90, 90], [180, 140, 255], [240, 255, 200]] },
+  { name: 'STORM CITADEL', weather: 'rain', storm: 2, link: [5, 200],
+    zones: [[D.CITADEL, 230], [0, 170], [2, 170], [D.CITADEL, 160]],
+    sky: [[4, 4, 14], [16, 16, 40], [50, 50, 90]], fog: [26, 26, 50], tw: [[30, 30, 56], [16, 16, 30]], hue: [220, 260],
+    neon: [[150, 180, 255], [255, 255, 255], [120, 255, 255], [200, 120, 255], [255, 220, 120], [255, 80, 120]] },
+  { name: 'MIRAGE BAZAAR', weather: 'clear', kites: 1, shimmer: 1, link: [8, 200],
+    zones: [[D.BAZAAR, 230], [1, 170], [D.BAZAAR, 170], [15, 140]],
+    sky: [[8, 4, 20], [40, 20, 50], [200, 110, 80]], fog: [90, 50, 50], tw: [[80, 40, 40], [44, 22, 26]], hue: [20, 50],
+    neon: [[255, 190, 90], [60, 220, 255], [255, 100, 160], [255, 240, 170], [140, 255, 180], [200, 120, 255]] },
 ];
-const LINK_NAMES = { 5: 'SKYBRIDGE', 13: 'AQUA TUBE', 8: 'MEGA-HIGHWAY' };
-const CITY_SCALE = 2, LINK_SCALE = 1.5;            // how long each district and each link between cities runs
+const LINK_NAMES = { 5: 'SKYBRIDGE', 13: 'AQUA TUBE', 8: 'MEGA-HIGHWAY', 24: 'VACTRAIN', 25: 'FERRY', 26: 'VOLCANO RIM',
+  27: 'CLOUD CAUSEWAY', 28: 'PONTOON ROAD', 29: 'SALT FLATS' };
+// every run is a new journey: cities in a new order, districts reshuffled, links picked at random
+const rng = mulberry((Math.random() * 2 ** 31) | 0);
+function shuffle(a) { for (let i = a.length - 1; i > 0; i--) { const j = (rng() * (i + 1)) | 0; [a[i], a[j]] = [a[j], a[i]]; } return a; }
+shuffle(CITIES);
+const LINKS = [[5, 200], [13, 180], [8, 200], [24, 160], [25, 180], [26, 200], [27, 200], [28, 170], [29, 200]];
+// every connector type shows up at least once per loop; the leftover links are random
+const linkDeck = shuffle([...LINKS, ...CITIES.slice(LINKS.length).map(() => LINKS[(rng() * LINKS.length) | 0])]);
+CITIES.forEach((c, i) => { shuffle(c.zones); c.link = linkDeck[i]; });
+const CITY_SCALE = 3.5, LINK_SCALE = 1.5;            // how long each district and each link between cities runs
 const ZONES = [];                       // [start, end, district, city, isLink]
 const NSEG = (() => {
   let n = 0;
   CITIES.forEach((c, ci) => {
-    for (const [d, len0] of c.zones) { const len = Math.round(len0 * CITY_SCALE); ZONES.push([n, n + len, d, ci, false]); n += len; }
+    for (const [d, len0] of c.zones) { const len = Math.round(len0 * CITY_SCALE * (0.7 + rng() * 0.6)); ZONES.push([n, n + len, d, ci, false]); n += len; }
     const ll = Math.round(c.link[1] * LINK_SCALE);
     ZONES.push([n, n + ll, c.link[0], ci, true]); n += ll;
   });
@@ -107,11 +146,11 @@ function district(n) { return zoneAt(n)[2]; }
 function zoneEnd(n) { return zoneAt(n)[1]; }
 const TUNNEL_STARTS = ZONES.filter(z => z[2] === 3).map(z => z[0]);
 let FOG = CITIES[0].fog.slice(), SKY = CITIES[0].sky, TWC = CITIES[0].tw;
-const TH = { aurora: 0, mountains: 0, elevator: 0, fireworks: 0, dark: 0, water: 0 };
+const TH = { aurora: 0, mountains: 0, elevator: 0, fireworks: 0, dark: 0, water: 0, deep: 0, kites: 0, shimmer: 0 };
 let fogK = 1;
 const RW = 7, SW = 3.2, NEAR = 0.7;
-let roll = 0, hd = true;
-const maxV = () => 62;
+let roll = 0;
+const maxV = () => district(Math.floor(camZ / SEGL) % NSEG) === D.VAC ? 95 : 62;   // the vactrain lets you fly
 const eye = () => 1.4;
 const NEON = [[255, 46, 170], [0, 234, 255], [255, 214, 64], [170, 90, 255], [70, 255, 150], [255, 110, 50]];
 const WIN = [[255, 200, 120], [255, 170, 90], [120, 220, 255], [255, 120, 200], [200, 190, 255], [255, 236, 190]];
@@ -150,7 +189,6 @@ function hsl(h, s, l) {
 function fogAt(z) { return smooth(50 * fogK, DRAW * SEGL * (0.42 + 0.4 * fogK), z) * 0.97; }
 
 // ---------- the city (generated once) ----------
-const rng = mulberry(2077);
 const curve = new Float32Array(NSEG), hill = new Float32Array(NSEG);
 for (let n = 0; n < NSEG;) {
   const len = Math.min(NSEG - n, 40 + Math.floor(rng() * 90));
@@ -167,33 +205,64 @@ const TRANS = [], TRANS_AT = new Int16Array(NSEG).fill(-1);
   for (const z of ZONES) {
     const L = z[1] - z[0];
     for (let n = z[0]; n < z[1]; n++) {
-      if (z[4]) fixed[n] = z[2] === D.TUBE ? 0 : -2;           // links: tube on the sea floor; bridges and highways at level 2 or 3
+      // links: sea-level ones at the street, the cloud causeway at the crown, bridges, highways and the volcano rim up high
+      if (z[4]) fixed[n] = [D.TUBE, D.VAC, D.FERRY, D.PONTOON, D.SALT].includes(z[2]) ? 0 : z[2] === D.CLOUDS ? 2 : -2;
       else {
         LAYERED[n] = 1;
         if (z[2] === D.RAMP) fixed[n] = (n - z[0]) < L * 0.62 ? 0 : 2;   // the spiral climbs from the street to the crown
       }
     }
   }
-  const lr = mulberry(31337);
+  const lr = rng;
   const nextFixed = new Int32Array(NSEG), nextHigh = new Int32Array(NSEG);
   for (let n = NSEG - 1, d = 1e9, e = 1e9; n >= 0; n--) { d = fixed[n] >= 0 ? 0 : d + 1; e = fixed[n] === -2 ? 0 : e + 1; nextFixed[n] = d; nextHigh[n] = e; }
-  let cur = 1, left = 1200;
+  let cur = (lr() * 3) | 0, left = 300 + lr() * 300;
+  const seen = CITIES.map(() => new Set());           // levels each city has used so far
+  const cityLen = CITIES.map((c, ci) => ZONES.reduce((a, z) => a + (z[3] === ci && !z[4] ? z[1] - z[0] : 0), 0));
+  const cityEnd = CITIES.map((c, ci) => ZONES.reduce((a, z) => z[3] === ci && !z[4] ? Math.max(a, z[1]) : a, 0));
+  // long stays on each level, cut short only when the levels a city hasn't shown yet would no longer fit
+  const run = (ci, n) => {
+    const r = clamp(cityLen[ci] / 3.3 * (0.8 + lr() * 0.4), 500, 1200), todo = 3 - seen[ci].size;
+    return todo > 0 ? Math.min(r, Math.max(200, (cityEnd[ci] - n - 450) / (todo + 0.3))) : r;   // 450: room before a raised link
+  };
+  let lastCi = -1;
   for (let n = 0; n < NSEG; n++) {
-    if (fixed[n] >= 0) { cur = fixed[n]; left = 900 + lr() * 500; LAYER[n] = cur; continue; }
+    const ci = zoneAt(n)[3];
+    if (ci !== lastCi && !zoneAt(n)[4]) { lastCi = ci; seen[ci].add(cur); left = Math.min(left, run(ci, n)); }   // a new city begins
+    if (fixed[n] >= 0) { cur = fixed[n]; seen[ci].add(cur); left = run(ci, n); LAYER[n] = cur; continue; }
     if (fixed[n] === -2) {                           // a bridge or highway: stay up if you're up, otherwise climb
       if (cur === 0) { cur = lr() < 0.5 ? 1 : 2; left = 1200 + lr() * 800; }
       LAYER[n] = cur; left--; continue;
     }
     if (left <= 0) {
-      if (nextFixed[n] < 700) left = nextFixed[n] + 1;   // the sea tube or the spiral is coming and sets the level anyway
+      if (nextFixed[n] < 300) left = nextFixed[n] + 1;   // the sea tube or the spiral is coming and sets the level anyway
       else {
         let o = [0, 1, 2].filter(v => v !== cur);
-        if (nextHigh[n] < 900) o = o.filter(v => v !== 0);   // don't drop to the street right before a bridge
-        cur = o[(lr() * o.length) | 0]; left = 1400 + lr() * 900;   // any level to any other
+        if (nextHigh[n] < 400) o = o.filter(v => v !== 0);   // don't drop to the street right before a bridge
+        const fresh = o.filter(v => !seen[ci].has(v));
+        if (fresh.length) o = fresh;                    // make sure every city shows all three levels
+        cur = o[(lr() * o.length) | 0]; seen[ci].add(cur); left = run(ci, n);
       }
     }
-    left--; LAYER[n] = cur;
+    left--; LAYER[n] = cur; seen[ci].add(cur);
   }
+  CITIES.forEach((c, ci) => {                          // a level still missing? carve it out of the city's longest stretch
+    const has = new Set();
+    for (const z of ZONES) if (z[3] === ci && !z[4]) for (let n = z[0]; n < z[1]; n++) has.add(LAYER[n]);
+    for (const L of [0, 1, 2]) {
+      if (has.has(L)) continue;
+      let best = null, st = -1;
+      for (let n = 0; n <= NSEG; n++) {
+        const ok = n < NSEG && zoneAt(n)[3] === ci && !zoneAt(n)[4] && fixed[n] === -1;
+        if (st >= 0 && (!ok || LAYER[n] !== LAYER[st])) { if (!best || n - st > best[1] - best[0]) best = [st, n]; st = -1; }
+        if (ok && st < 0) st = n;
+      }
+      if (best && best[1] - best[0] > 500) {
+        const cut = Math.round((best[1] - best[0]) * 0.3);
+        for (let n = best[0] + cut; n < best[1] - cut; n++) LAYER[n] = L;
+      }
+    }
+  });
   { let r = NSEG - 1; while (r > 0 && LAYER[r - 1] === LAYER[NSEG - 1]) r--;   // the loop must end on the level it starts on
     if (LAYER[NSEG - 1] !== LAYER[0] && fixed[NSEG - 1] < 0) for (let n = r; n < NSEG; n++) LAYER[n] = LAYER[0]; }
   for (let n = 0; n < NSEG; n++) ELEV[n] = LH[LAYER[n]];
@@ -217,6 +286,11 @@ for (const z of ZONES) {
     else if (z[2] === D.HIGHWAY) curve[n] *= 0.6;
     else if (z[2] === D.TUBE) { hill[n] -= 10 * edge; curve[n] *= 0.5; }
     else if (z[2] === D.CANYON) curve[n] *= 1.5;
+    else if (z[2] === D.VOLCANO) curve[n] *= 1.7;
+    else if (z[2] === D.CLOUDS) curve[n] *= 0.4;
+    else if (z[2] === D.VAC) curve[n] *= 0.3;
+    else if (z[2] === D.FERRY || z[2] === D.SALT) curve[n] = 0;
+    else if (z[2] === D.PONTOON) { hill[n] += 0.35 * Math.sin(n * 0.7); curve[n] *= 0.5; }
     else if (z[2] === D.RAMP) curve[n] = 0.05 * smooth(0, 0.08, t) * smooth(0, 0.08, 1 - t);   // a tight spiral around a tower
   }
 }
@@ -226,7 +300,7 @@ for (const tr of TRANS) {                              // ramps are straight or 
 }
 
 // intersections with traffic lights and a zebra crossing; buildings leave a gap for the cross street
-const LIGHT_D = new Set([0, 1, 2, 6, 7, 9, 10, 12, 14]);
+const LIGHT_D = new Set([0, 1, 2, 6, 7, 9, 10, 12, 14, 17, 18, 19, 20, 21, 22, 23]);
 const IX = [];
 const XROAD = new Uint8Array(NSEG);
 for (const z of ZONES) {
@@ -242,10 +316,14 @@ for (const z of ZONES) {
 const IXZ = IX.map(n => n * SEGL);
 const LIGHT_PERIOD = 30;
 const LOFF = IX.map(n => hash(n, 3, 3) * LIGHT_PERIOD);
+const IXR = IX.map(n => district(n) === D.RUIN);
 function lightPhase(i) { return ((T + LOFF[i]) % LIGHT_PERIOD + LIGHT_PERIOD) % LIGHT_PERIOD; }
 function setPhase(i, p) { LOFF[i] = p - T; }
 let decidedIx = -1;
-function lightState(i) { const p = lightPhase(i); return p < 16 ? 0 : p < 19 ? 1 : 2; }   // 0 green, 1 yellow, 2 red
+function lightState(i) {                             // 0 green, 1 yellow, 2 red, 3 dark (the ruin's lights just blink yellow)
+  if (IXR[i]) return (T * 1.5) % 1 < 0.5 ? 1 : 3;
+  const p = lightPhase(i); return p < 16 ? 0 : p < 19 ? 1 : 2;
+}
 function nextIx(z) {                                  // index of the first intersection whose stop line is ahead of world z
   for (let i = 0; i < IXZ.length; i++) if (IXZ[i] - 5 > z) return i;
   return 0;
@@ -254,9 +332,19 @@ function nextIx(z) {                                  // index of the first inte
 const WARM = [[255, 60, 40], [255, 150, 40], [255, 214, 64], [255, 90, 140]];
 const COOL = [[180, 210, 255], [140, 200, 255], [210, 230, 255], [120, 180, 240]];
 
+// the new districts: height range, setback from the sidewalk (room for props), facade colour, lit windows
+const STYLE_NEW = {
+  [D.FORGE]: { h0: 20, hr: 40, set: 9, base: () => hsl(14 + rng() * 12, 0.25, 0.07 + rng() * 0.04), winP: 0.4 },
+  [D.TERRACE]: { h0: 18, hr: 30, set: 4, base: () => hsl(30 + rng() * 20, 0.15, 0.16 + rng() * 0.06), winP: 0.45 },
+  [D.REEF]: { h0: 20, hr: 40, set: 0, base: () => hsl(rng() < 0.5 ? 340 + rng() * 30 : 170 + rng() * 30, 0.4, 0.16 + rng() * 0.08), winP: 0.4 },
+  [D.FAIR]: { h0: 16, hr: 30, set: 32, base: () => hsl(rng() * 360, 0.35, 0.16), winP: 0.5 },
+  [D.RUIN]: { h0: 20, hr: 60, set: 1, base: () => hsl(80 + rng() * 60, 0.08, 0.12 + rng() * 0.06), winP: 0.3, noCrown: 1 },
+  [D.CITADEL]: { h0: 30, hr: 60, set: 2, base: () => hsl(225 + rng() * 25, 0.12, 0.1 + rng() * 0.05), winP: 0.5, noCrown: 1 },
+  [D.BAZAAR]: { h0: 14, hr: 26, set: 1, base: () => hsl(28 + rng() * 14, 0.35, 0.24 + rng() * 0.08), winP: 0.55 },
+};
 const blocks = [];
 const SIDE = [new Int32Array(NSEG).fill(-1), new Int32Array(NSEG).fill(-1)];
-const NOBLD = new Set([D.TUNNEL, D.BRIDGE, D.TUBE, D.RAMP]);
+const NOBLD = new Set([D.TUNNEL, D.BRIDGE, D.TUBE, D.RAMP, D.VAC, D.FERRY, D.VOLCANO, D.CLOUDS, D.PONTOON, D.SALT]);
 for (let side = 0; side < 2; side++) {
   for (let n = 0; n < NSEG;) {
     const zz = zoneAt(n), d = zz[2], city = CITIES[zz[3]], cn = city.neon, dark = city.dark ? 1 : 0;
@@ -275,7 +363,8 @@ for (let side = 0; side < 2; side++) {
       : d === 15 ? 35 + r1 * 60 : 12 + Math.pow(r1, 1.7) * 75;
     const pal = d === 1 || d === 12 ? WARM : cn;
     const hue = city.hue[0] + r2 * (city.hue[1] - city.hue[0]);
-    const el = ELEV[n], tall = el > 20 && rng() < 0.55 ? el + 12 + rng() * 50 : 0;
+    // most blocks rise past the crown level, so every district reads as a three-level city; the rest stay low podiums
+    const el = ELEV[n], tower = rng() < 0.78 ? LH[2] + 12 + Math.pow(rng(), 1.3) * 95 : 0;
     const base = d === 1 ? hsl(10 + rng() * 30, 0.28, 0.1 + rng() * 0.07)
       : d === 2 || d === 8 ? hsl(hue, 0.35, 0.12 + rng() * 0.06)
       : d === 4 ? hsl(rng() < 0.5 ? 15 + rng() * 20 : 170 + rng() * 30, 0.3, 0.13 + rng() * 0.06)
@@ -289,7 +378,7 @@ for (let side = 0; side < 2; side++) {
       : hsl(hue, 0.22, 0.09 + rng() * 0.08);
     const styleOf = { 8: 2 };
     const B = {
-      id: blocks.length, start: n, len, h: Math.max(h, tall), style: styleOf[d] !== undefined ? styleOf[d] : d, seed: (rng() * 1e6) | 0, base, dark,
+      id: blocks.length, start: n, len, h: Math.max(h, tower), style: styleOf[d] !== undefined ? styleOf[d] : d, seed: (rng() * 1e6) | 0, base, dark,
       set: d === 1 || d === 9 || d === 12 ? rng() * 0.6 : d === 2 ? 1 + rng() * 3 : d === 4 ? 3 + rng() * 4 : d === 8 ? 45 + rng() * 40
         : d === 14 ? 3 + rng() * 4 : d === 15 ? rng() * 3 : rng() * 2.5,
       winP: (d === 2 || d === 8 ? 0.45 + rng() * 0.3 : d === 1 || d === 6 || d === 9 ? 0.35 + rng() * 0.3 : d === 4 ? 0.08
@@ -300,6 +389,12 @@ for (let side = 0; side < 2; side++) {
       bbs: [], signs: [],
     };
     if (B.style === 2 && !B.crown) B.crown = cn[0];
+    B.lobby = cn[(rng() * 6) | 0];
+    const sn = STYLE_NEW[d];
+    if (sn) {
+      B.h = Math.max(sn.h0 + r1 * sn.hr, tower); B.base = sn.base(); B.set = sn.set + rng() * 3; B.winP = sn.winP * (dark ? 0.12 : 1);
+      if (sn.noCrown) B.crown = null;
+    }
     if (el > 1) B.set += 5 + rng() * 10;              // a gap beside the elevated road so you can see down
     B.roof = (rng() * 4) | 0;
     const wc = d === 2 || d === 8 ? [150, 190, 235] : d === 10 ? [40, 120, 80] : [220, 170, 120];
@@ -331,7 +426,7 @@ for (const z of ZONES) {
   for (let n = z[0] + 20; n < z[1] - 10; n += (ELEV[n] === 0 ? 14 : 28) + Math.floor(rng() * (ELEV[n] === 0 ? 16 : 30))) {
     if (XROAD[n] || XROAD[n + 1] || XROAD[n + 2] || XROAD[n + 3] || XROAD[n - 1] || TRANS_AT[n] >= 0) continue;
     const e = Math.max(ELEV[n], ELEV[n + 2]), e0 = Math.min(ELEV[n], ELEV[n + 2]);
-    const cands = [12, 20, 27, 50, 58, 66, 98, 112].filter(h => h > e + 7 || h + 1.4 < e0 - 3);
+    const cands = [12, 20, 27, 50, 58, 66].filter(h => h > e + 7 || h + 1.4 < e0 - 3);
     if (!cands.length) continue;
     SKYW.set(n, { hb: cands[Math.floor(rng() * cands.length)], kind: rng() < 0.6 ? 0 : 1, seed: (rng() * 1e6) | 0 });
   }
@@ -339,7 +434,7 @@ for (const z of ZONES) {
 
 // people with glowing umbrellas walking the sidewalks
 const peds = [];
-for (let i = 0; i < 560; i++) {
+for (let i = 0; i < 980; i++) {
   const side = rng() < 0.5 ? -1 : 1;
   peds.push({ z: rng() * LEN, x: side * (RW + 0.8 + rng() * (SW - 1.4)), v: (rng() < 0.5 ? -1 : 1) * (0.9 + rng() * 0.8),
     umb: rng() < 0.7 ? NEON[(rng() * 6) | 0] : null, coat: hsl(rng() * 360, 0.2, 0.12 + rng() * 0.1), ph: rng() * 6 });
@@ -348,7 +443,7 @@ let train = { z: 500, v: -26 };
 
 // traffic
 const cars = [];
-for (let i = 0; i < 220; i++) {
+for (let i = 0; i < 380; i++) {
   const dir = rng() < 0.68 ? 1 : -1;
   cars.push({
     z: rng() * LEN, dir, x: dir * (rng() < 0.5 ? 1.75 : 5.25),
@@ -357,6 +452,20 @@ for (let i = 0; i < 220; i++) {
     tail: rng() < 0.6 ? [255, 36, 60] : [255, 40, 170],
     under: NEON[(rng() * 6) | 0], neon: rng() < 0.4,
   });
+}
+for (const c of cars) c.cur = c.speed;              // set up front: a car queueing behind one not yet updated read undefined and went NaN
+
+// hover cars in two air lanes between the levels (never above the crown)
+const FLY_H = [17, 57];
+const flyers = [];
+for (let i = 0; i < 190; i++) {
+  const dir = rng() < 0.5 ? 1 : -1;
+  flyers.push({ z: rng() * LEN, h: FLY_H[(rng() * 2) | 0] + (rng() - 0.5) * 3, x: dir * (1.5 + rng() * 4.5), dir, v: 22 + rng() * 26,
+    body: hsl(rng() * 360, 0.3, 0.2 + rng() * 0.12), glow: NEON[(rng() * 6) | 0], bob: rng() * 6 });
+}
+function airOk(n) {                                   // no air traffic inside tunnels, the sea tube, ramps or the spiral
+  const d = district(n);
+  return d !== D.TUNNEL && d !== D.TUBE && d !== D.RAMP && TRANS_AT[n] < 0;
 }
 
 // ---------- buffers ----------
@@ -370,7 +479,7 @@ const EL = new Float32Array(DRAW + 2), GYL = new Float32Array(DRAW + 2);   // ro
 let gloom = 0, starK = 0;
 
 function setup() {
-  PX = hd ? Math.max(1.5, Math.max(innerWidth, innerHeight) / 450) : Math.max(2, Math.round(Math.max(innerWidth, innerHeight) / 340));
+  PX = Math.max(1.5, Math.max(innerWidth, innerHeight) / 450);
   OW = Math.ceil(innerWidth / PX); OH = Math.ceil(innerHeight / PX);
   // the scene is rendered with a margin so it can be rolled (motorcycle lean) without empty corners
   const th = 0.27;
@@ -459,24 +568,45 @@ let rainOn = true, wet = 1, drops = [], streaks = [];
 let curZone = -1, zoneT = 0, shownLayer = -1;
 const zoneEl = document.getElementById('zone');
 const keys = { left: false, right: false, gas: false, brake: false };
+{ // start somewhere new each run: a random city, on a random level
+  const ci = (rng() * CITIES.length) | 0, byL = [[], [], []];
+  for (const z of ZONES) if (z[3] === ci && !z[4] && z[2] !== D.TUNNEL && z[2] !== D.RAMP)
+    for (let n = z[0]; n < z[1]; n++) if (TRANS_AT[n] < 0 && ELEV[n] === LH[LAYER[n]]) byL[LAYER[n]].push(n);
+  const ls = [0, 1, 2].filter(l => byL[l].length);
+  if (ls.length) { const pool = byL[ls[(rng() * ls.length) | 0]]; camZ = pool[(rng() * pool.length) | 0] * SEGL; }
+  else camZ = ZONES.find(z => z[3] === ci)[0] * SEGL;
+  train.z = (camZ + 500) % LEN;
+}
 
 setup();
 addEventListener('resize', setup);
 
 // ---------- theme of the current place ----------
+const PED_NO = new Set([D.TUNNEL, D.VAC, D.SALT, D.VOLCANO, D.CLOUDS]);
+const LINK_TINT = {
+  [D.VOLCANO]: { fog: [80, 26, 12], sky: [[20, 4, 4], [70, 20, 10], [170, 60, 20]] },
+  [D.CLOUDS]: { fog: [54, 62, 96], sky: [[4, 6, 20], [20, 30, 64], [80, 96, 150]] },
+};
+const LINK_WX = { [D.VOLCANO]: 'ash', [D.CLOUDS]: 'clear', [D.SALT]: 'clear', [D.VAC]: 'none' };
 let wx = 'rain', flash = 0, bolt = null, fw = [];
 function blendTheme(seg) {
   const z = zoneAt(seg), a = CITIES[z[3]];
   let b = a, t = 0;
   if (z[4]) { b = CITIES[(z[3] + 1) % CITIES.length]; t = smooth(0.25, 0.85, (seg - z[0]) / (z[1] - z[0])); }
   FOG = mix(a.fog, b.fog, t); SKY = [0, 1, 2].map(i => mix(a.sky[i], b.sky[i], t)); TWC = [0, 1].map(i => mix(a.tw[i], b.tw[i], t));
-  for (const key of ['aurora', 'mountains', 'elevator', 'fireworks', 'dark']) TH[key] = (a[key] || 0) * (1 - t) + (b[key] || 0) * t;
+  for (const key of ['aurora', 'mountains', 'elevator', 'fireworks', 'dark', 'deep', 'kites', 'shimmer']) TH[key] = (a[key] || 0) * (1 - t) + (b[key] || 0) * t;
   TH.water = 0;
+  const tint = LINK_TINT[z[2]];
+  if (z[4] && (tint || z[2] === D.SALT)) {
+    const L = z[1] - z[0], l = seg - z[0], uw = smooth(0, 18, l) * smooth(0, 18, L - l);
+    if (tint) { FOG = mix(FOG, tint.fog, uw); SKY = SKY.map((c, i) => mix(c, tint.sky[i], uw)); }
+    else TH.shimmer = Math.max(TH.shimmer, uw);         // the salt flat shimmers in the heat
+  }
   if (z[2] === D.TUBE) {
     const L = z[1] - z[0], l = seg - z[0], uw = smooth(0, 18, l) * smooth(0, 18, L - l);
     FOG = mix(FOG, [6, 34, 58], uw); SKY = SKY.map(c => mix(c, [4, 30, 52], uw)); TH.water = uw;
   }
-  wx = TH.water > 0.5 ? 'none' : (t > 0.5 ? b.weather : a.weather);
+  wx = TH.water > 0.5 ? 'none' : z[4] && LINK_WX[z[2]] ? LINK_WX[z[2]] : (t > 0.5 ? b.weather : a.weather);
   return { a, b, t, z };
 }
 
@@ -504,7 +634,7 @@ function crossersRaw(i) {
   return out;
 }
 function pedsOn(i) { return crossers(i).some(c => Math.abs(c.x) < RW + 0.6); }
-function mustStop(i, dist) { const st = lightState(i); return st === 2 || (st === 1 && dist > 20) || pedsOn(i); }
+function mustStop(i, dist) { if (IXR[i]) return pedsOn(i); const st = lightState(i); return st === 2 || (st === 1 && dist > 20) || pedsOn(i); }
 let waitLight = false;
 
 function laneInfo(lx) {
@@ -549,12 +679,13 @@ function update(dt) {
     else if (keys.brake) speed -= 26 * dt;
     else speed -= 2.5 * dt;
   }
-  speed = clamp(speed, 0, maxV());
+  speed = Math.max(0, Math.min(speed, Math.max(maxV(), speed - 25 * dt)));
   steer += (steerT - steer) * Math.min(1, dt * 6);
   px += steer * latMax * dt;
   px -= kappa * speed * speed * dt * 0.35;
   // a motorcycle leans into turns: the whole view rolls
-  const rollT = clamp((steer * latMax * Math.min(speed, 40) * 0.05 + kappa * speed * speed) / 9.8, -0.26, 0.26);
+  const rock = district(n) === D.PONTOON ? Math.sin(T * 0.9) * 0.05 : 0;      // the barges sway under you
+  const rollT = clamp((steer * latMax * Math.min(speed, 40) * 0.05 + kappa * speed * speed) / 9.8 + rock, -0.26, 0.26);
   roll += (rollT - roll) * Math.min(1, dt * 4);
   if (Math.abs(px) > RW - 1) { px = Math.sign(px) * (RW - 1); speed *= 1 - dt * 1.5; shake = Math.max(shake, 0.15 * Math.min(1, speed / 20)); }
 
@@ -563,7 +694,7 @@ function update(dt) {
 
   for (const c of cars) {
     if (c.cur === undefined) c.cur = c.speed;
-    let tgt = c.speed;
+    let tgt = c.speed * (district(Math.floor(c.z / SEGL) % NSEG) === D.VAC ? 3 : 1);
     if (IX.length) {
       if (c.dir > 0) {
         const i = nextIx(c.z), dist = ((IXZ[i] - 5 - c.z) % LEN + LEN) % LEN;
@@ -609,14 +740,18 @@ function update(dt) {
   shake *= Math.exp(-dt * 4); crashFlash *= Math.exp(-dt * 5);
 
   for (const p of peds) p.z = ((p.z + p.v * dt) % LEN + LEN) % LEN;
+  for (const f of flyers) f.z = ((f.z + f.dir * f.v * dt) % LEN + LEN) % LEN;
   train.z = ((train.z + train.v * dt) % LEN + LEN) % LEN;
   racer.off = 25 + Math.sin(T * 0.12) * 45; racer.z = camZ + racer.off;
   { const r = rel(train.z); if (r > LEN - 90) train.z = (camZ + 500 + Math.random() * 300) % LEN; }
   const th = blendTheme(Math.floor(camZ / SEGL));
-  const W_ = rainOn ? wx : 'off';
-  const wetT = { rain: 1, snow: 0.5, fog: 0.6, clear: 0.3, sand: 0.12, petals: 0.35, none: 0.4, off: 0.3 }[W_];
+  // under a roof (underpass, level-change tunnel, vactrain, sea tube) nothing falls; the road outside stays wet
+  const sgw = Math.floor(camZ / SEGL) % NSEG, dw = district(sgw), trw = TRANS_AT[sgw];
+  const covered = dw === D.TUNNEL || dw === D.VAC || dw === D.TUBE || (trw >= 0 && sgw >= TRANS[trw].s && sgw < TRANS[trw].e);
+  const Wsky = rainOn ? wx : 'off', W_ = covered ? 'none' : Wsky;
+  const wetT = { rain: 1, monsoon: 1, snow: 0.5, fog: 0.6, clear: 0.3, sand: 0.12, petals: 0.35, ash: 0.15, bubbles: 0.5, fireflies: 0.45, none: 0.4, off: 0.3 }[Wsky];
   wet += (wetT - wet) * Math.min(1, dt * 0.6);
-  const fogT = rainOn && (wx === 'fog' || wx === 'sand') ? 0.42 : 1;
+  const fogT = rainOn && (wx === 'fog' || wx === 'sand') ? 0.42 : rainOn && wx === 'monsoon' ? 0.65 : 1;
   fogK += (fogT - fogK) * Math.min(1, dt * 0.5);
   const zr = th.z, zn = ZONES.indexOf(zr);
   if (zn !== curZone) {
@@ -625,7 +760,8 @@ function update(dt) {
     zoneEl.style.opacity = 1; zoneT = 3.5;
   }
   // lightning in stormy cities
-  if (rainOn && wx === 'rain' && (th.t > 0.5 ? th.b : th.a).storm && Math.random() < dt / 9) {
+  const storm = (th.t > 0.5 ? th.b : th.a).storm || 0;
+  if (rainOn && !covered && (wx === 'rain' || wx === 'monsoon') && storm && Math.random() < dt / 9 * storm) {
     flash = 1; bolt = { pc: bgX + Math.random() * W, seed: (Math.random() * 1e6) | 0 };
   }
   flash *= Math.exp(-dt * 4);
@@ -647,25 +783,31 @@ function update(dt) {
   if ((zoneT -= dt) < 0) zoneEl.style.opacity = 0;
 
   // weather particles: rain, snow, sand or petals
-  const want = Math.round(W * ({ rain: 0.6, snow: 0.5, sand: 0.4, petals: 0.14 }[W_] || 0));
+  const want = Math.round(W * ({ rain: 0.6, monsoon: 1.1, snow: 0.5, ash: 0.45, sand: 0.4, petals: 0.14, bubbles: 0.25, fireflies: 0.12 }[W_] || 0));
   const respawn = s => {
     s.kind = W_;
     if (W_ === 'sand') { s.x = -Math.random() * 40; s.y = Math.random() * H; }
-    else if (W_ === 'rain') { s.x = Math.random() * W; s.y = Math.random() * H * 0.3; }
+    else if (W_ === 'rain' || W_ === 'monsoon') { s.x = Math.random() * W; s.y = Math.random() * H * 0.3; }
+    else if (W_ === 'bubbles') { s.x = Math.random() * W; s.y = H * (0.6 + Math.random() * 0.4); }
     else { s.x = W / 2 + (Math.random() - 0.5) * W * 0.6; s.y = H * 0.42 + (Math.random() - 0.5) * H * 0.5; }
   };
   while (streaks.length < want) { const s = { v: 140 + Math.random() * 80, l: 2 + Math.random() * 4, ph: Math.random() * 6 }; respawn(s); s.y = Math.random() * H; streaks.push(s); }
   if (streaks.length > want) streaks.length = want;
   for (const s of streaks) {
-    if (s.kind === 'rain') { s.y += s.v * dt; s.x += (s.x - W / 2) * dt * speed * 0.02 - steer * 20 * dt; }
-    else if (s.kind === 'snow' || s.kind === 'petals') {
-      const k = s.kind === 'snow' ? 1 : 0.6;
+    if (s.kind === 'rain' || s.kind === 'monsoon') { s.y += s.v * dt * (s.kind === 'monsoon' ? 1.5 : 1); s.x += (s.x - W / 2) * dt * speed * 0.02 - steer * 20 * dt; }
+    else if (s.kind === 'bubbles') { s.y -= (30 + s.v * 0.15) * dt; s.x += ((s.x - W / 2) * speed * 0.015 + Math.sin(T * 3 + s.ph) * 8) * dt; }
+    else if (s.kind === 'fireflies') {
+      s.x += ((s.x - W / 2) * speed * 0.02 + Math.sin(T * 0.7 + s.ph * 3) * 10) * dt;
+      s.y += ((s.y - H * 0.42) * speed * 0.02 + Math.cos(T * 0.9 + s.ph * 2) * 8) * dt;
+    }
+    else if (s.kind === 'snow' || s.kind === 'petals' || s.kind === 'ash') {
+      const k = s.kind === 'snow' ? 1 : s.kind === 'ash' ? 0.8 : 0.6;
       s.x += ((s.x - W / 2) * speed * 0.025 + Math.sin(T * 2 + s.ph) * 14 * (2 - k) - steer * 15) * dt;
       s.y += ((s.y - H * 0.42) * speed * 0.025 + 18 * k) * dt;
     } else if (s.kind === 'sand') { s.x += (s.v * 1.6 + (s.x - W / 2) * speed * 0.01) * dt; s.y += Math.sin(T * 3 + s.ph) * 10 * dt; }
     if (s.kind !== W_ || s.y > H || s.y < -5 || s.x < -50 || s.x >= W + 5) respawn(s);
   }
-  if (rainOn && W_ === 'rain' && drops.length < 60) for (let i = 0; i < 18 * dt * (1 + Math.random()); i++) {
+  if (rainOn && (W_ === 'rain' || W_ === 'monsoon') && drops.length < 60) for (let i = 0; i < (W_ === 'monsoon' ? 36 : 18) * dt * (1 + Math.random()); i++) {
     const a = Math.random() * Math.PI * 2, r = 0.62 + Math.random() * 0.45;
     const x = W / 2 + Math.cos(a) * r * W * 0.5, y = H * 0.42 + Math.sin(a) * r * H * 0.5;
     if (x > 0 && x < W && y > 0 && y < H * 0.8) drops.push({ x, y, s: Math.random() < 0.25 ? 2 : 1 });
@@ -723,7 +865,7 @@ function drawSky(hy) {
     }
   }
   // stars, more of them the higher you ride
-  const sk = starK * (1 - gloom * 0.8) * (rainOn && wx === 'rain' ? 0.35 : rainOn && (wx === 'fog' || wx === 'sand') ? 0.2 : 1);
+  const sk = starK * (1 - gloom * 0.8) * (1 - TH.deep) * (rainOn && (wx === 'rain' || wx === 'monsoon') ? 0.35 : rainOn && (wx === 'fog' || wx === 'sand') ? 0.2 : 1);
   if (sk > 0.02) {
     const bxs = Math.floor(bgX), yTop = hy - HB * 0.3;
     for (const st of stars) {
@@ -773,7 +915,7 @@ function drawSky(hy) {
   const bx = Math.floor(bgX);
   {
     const mx = ((Math.round(PW * 0.62) - bx) % PW + PW) % PW, my = Math.round(hy - HB * 0.72), mr = Math.max(6, Math.round(HB * 0.12));
-    if (mx > -mr && mx < W + mr) {
+    if (mx > -mr && mx < W + mr && TH.deep < 0.5) {
       const mc = mix([240, 236, 250], hz, 0.15);
       for (let dy = -mr; dy <= mr; dy++) for (let dx = -mr; dx <= mr; dx++) {
         if (dx * dx + dy * dy > mr * mr) continue;
@@ -822,6 +964,25 @@ function drawSky(hy) {
       addLight(ex, cy, 5, [255, 200, 120], 0.5 * TH.elevator);
     }
   }
+  // coral deep: light shafts from the surface far above, whales gliding over the city
+  if (TH.deep > 0.02) {
+    for (let x = 0; x < W; x++) {
+      const k = Math.sin((x + bx * 0.2) * 0.045 + T * 0.25) * Math.sin((x + bx * 0.2) * 0.017 - T * 0.1);
+      if (k < 0.3) continue;
+      for (let y = 0; y < hy; y++) addc(x + Math.round(y * 0.25), y, [120, 220, 255], (k - 0.3) * 0.12 * TH.deep * (1 - y / hy));
+    }
+    if (TH.deep > 0.5) for (let i = 0; i < 2; i++) {
+      const L = HB * (0.45 - i * 0.12), x0 = ((Math.round(PW * (0.3 + i * 0.45) + T * (3 + i) - bx)) % PW + PW) % PW, y0 = hy - HB * (0.55 + i * 0.2);
+      if (x0 < -L || x0 > W + L * 2) continue;
+      const c = mix(SKY[1], [0, 0, 0], 0.55);
+      for (let q = 0; q <= L; q++) {
+        const t = q / L, th = Math.sin(Math.PI * Math.pow(t, 0.7)) * L * 0.13, yy = y0 + Math.sin(T * 1.2 - t * 3) * L * 0.03 * t, x = Math.round(x0 - q);
+        for (let dy = -th; dy <= th * 0.7; dy++) putc(x, Math.round(yy + dy), c);
+      }
+      const ty = y0 + Math.sin(T * 1.2 - 3) * L * 0.03;
+      for (let f = 0; f < L * 0.12; f++) for (const sg of [-1, 1]) putc(Math.round(x0 - L - f * 0.6), Math.round(ty + sg * f * 0.8), c);
+    }
+  }
   towers(sky1, TWC[0], 0.6, mix(hz, TWC[0], 0.4));
   // hologram jellyshroom above the skyline
   const hx = ((holoX - bx) % PW + PW) % PW;
@@ -843,6 +1004,61 @@ function drawSky(hy) {
     addLight(cx, cy, R * 1.6, hc, 0.12);
   }
   towers(sky2, TWC[1], 0.35, mix(hz, TWC[1], 0.6));
+  // an advertising blimp drifting over the skyline
+  {
+    const rx = Math.max(12, Math.round(HB * 0.17)), ry = Math.max(4, Math.round(rx * 0.3));
+    const bxp = ((Math.round(PW * 0.45 + T * 4) - bx) % PW + PW) % PW, by = Math.round(hy - HB * 0.8 + Math.sin(T * 0.3) * 2);
+    if (bxp > -rx * 2 && bxp < W + rx * 2 && TH.deep < 0.5) {
+      const ad = Math.floor(T / 4), c1 = NEON[ad % 6], c2 = NEON[(ad + 3) % 6];
+      for (let dy = -ry - 3; dy <= -ry + 1; dy++) for (let dx = -rx - 2; dx <= -rx + 3; dx++)    // tail fin
+        if (dx - (-rx - 2) >= (dy + ry + 3) * 0.6) putc(bxp + dx, by + dy, [30, 28, 44]);
+      for (let dy = -ry; dy <= ry; dy++) for (let dx = -rx; dx <= rx; dx++) {
+        const e = (dx / rx) ** 2 + (dy / ry) ** 2; if (e > 1) continue;
+        let c = mix([58, 54, 78], [14, 12, 22], (dy + ry) / (2 * ry));
+        const u = (dx + rx * 0.55) / (rx * 1.1), v = (dy + ry * 0.6) / (ry * 1.2);
+        if (u > 0 && u < 1 && v > 0 && v < 1) {         // the ad screen on its flank
+          const t = ((u * 2 - T * 0.6) % 1 + 1) % 1;
+          c = mix(c1, c2, t < 0.5 ? t * 2 : 2 - t * 2);
+          if (hash(Math.floor(u * 12), Math.floor(v * 4), ad) < 0.25) c = mix(c, [255, 255, 255], 0.5);
+          if (Math.floor(v * 8) & 1) c = mix(c, [0, 0, 0], 0.3);
+        }
+        putc(bxp + dx, by + dy, c);
+      }
+      for (let dx = -3; dx <= 3; dx++) { putc(bxp + dx, by + ry + 1, [26, 24, 36]); putc(bxp + dx, by + ry + 2, dx & 1 ? [255, 220, 150] : [26, 24, 36]); }
+      if ((T * 1.4) % 1 < 0.4) { putc(bxp + rx, by, [255, 60, 60]); addLight(bxp + rx, by, 4, [255, 50, 50], 0.6); }
+      addLight(bxp, by, rx * 1.3, c1, 0.12);
+    }
+  }
+  // a drone light show morphing between shapes
+  {
+    const R = HB * 0.17, dxp = ((Math.round(PW * 0.78) - bx) % PW + PW) % PW, cy = hy - HB * 0.6;
+    if (dxp > -R * 2 && dxp < W + R * 2) {
+      const m = (T * 0.12) % 4, a0 = Math.floor(m), f = smooth(0.65, 1, m - a0);
+      const shape = (q, p) => {
+        const t = p * 2 * Math.PI;
+        if (q === 0) return [Math.cos(t + T * 0.4) * R, Math.sin(t + T * 0.4) * R * 0.8];
+        if (q === 1) return [Math.pow(Math.sin(t), 3) * R, -(13 * Math.cos(t) - 5 * Math.cos(2 * t) - 2 * Math.cos(3 * t) - Math.cos(4 * t)) / 17 * R];
+        if (q === 2) return [(p - 0.5) * 2.4 * R, Math.sin(p * 4 * Math.PI + T * 2) * R * 0.35];
+        const r = R * (0.25 + 0.75 * p); return [Math.cos(t * 3 + T) * r, Math.sin(t * 3 + T) * r * 0.8];
+      };
+      for (let i = 0; i < 72; i++) {
+        const p = i / 72, A = shape(a0, p), B = shape((a0 + 1) % 4, p);
+        const x = Math.round(dxp + A[0] + (B[0] - A[0]) * f), y = Math.round(cy + A[1] + (B[1] - A[1]) * f);
+        const c = NEON[(a0 + (i >> 4)) % 6];
+        addc(x, y, c, 0.9);
+        if (i % 9 === 0) addLight(x, y, 3, c, 0.3);
+      }
+    }
+  }
+  // lantern kites over the bazaar
+  if (TH.kites > 0.02) for (let i = 0; i < 16; i++) {
+    const x = ((Math.round(PW * (0.05 + i * 0.061) + Math.sin(T * 0.3 + i) * 6 - bx)) % PW + PW) % PW;
+    if (x > W + 4) continue;
+    const y = Math.round(hy - HB * (0.35 + 0.35 * hash(i, 1, 81)) + Math.sin(T * 0.8 + i * 2) * 3), c = NEON[i % 6], r = 2 + (i % 3);
+    for (let dy = -r; dy <= r; dy++) { const hw = r - Math.abs(dy); for (let dx = -hw; dx <= hw; dx++) addc(x + dx, y + dy, c, 0.7 * TH.kites); }
+    for (let t = 1; t < 12; t++) addc(x + Math.round(Math.sin(t * 0.5 + T) * 1.5), y + r + t, [200, 180, 150], 0.15 * TH.kites);
+    addLight(x, y, 6, c, 0.25 * TH.kites);
+  }
   // fireworks
   for (const f of fw) {
     const x = ((Math.round(f.pc - bx)) % PW + PW) % PW, y = Math.round(f.y);
@@ -861,12 +1077,23 @@ function drawSky(hy) {
       for (let x = Math.max(0, Math.floor(cxl - hw)); x <= Math.min(W - 1, cxl + hw); x++)
         addc(x, y, c, 0.07 * (1 - d / base) * (1 - Math.abs(x - cxl) / (hw + 1)));
     }
+  }  // heat shimmer: the rows near the horizon wobble sideways
+  if (TH.shimmer > 0.02) {
+    const y0 = Math.max(0, Math.floor(hy - HB * 0.4)), y1 = Math.min(H - 1, Math.floor(hy + 1)), tmp = new Float32Array(W * 3);
+    for (let y = y0; y <= y1; y++) {
+      const off = Math.round(Math.sin(y * 0.9 + T * 5) * 1.6 * TH.shimmer * (y - y0) / (y1 - y0 + 1));
+      if (!off) continue;
+      const row = y * W * 3; tmp.set(col.subarray(row, row + W * 3));
+      for (let x = 0; x < W; x++) { const sx = clamp(x - off, 0, W - 1) * 3, o = row + x * 3; col[o] = tmp[sx]; col[o + 1] = tmp[sx + 1]; col[o + 2] = tmp[sx + 2]; }
+    }
   }
 }
 
 function drawGround(k, d, deckOnly) {
   const deckW = d === D.HIGHWAY ? RW + SW : RW + 1.5;
-  const water = d === D.BRIDGE || d === D.CANALS, deck = d === D.HIGHWAY || d === D.RAMP, sand = d === D.CANYON;
+  const water = d === D.BRIDGE || d === D.CANALS || d === D.FERRY || d === D.PONTOON, deck = d === D.HIGHWAY || d === D.RAMP, sand = d === D.CANYON;
+  const lava = d === D.VOLCANO, cloud = d === D.CLOUDS, salt = d === D.SALT, forge = d === D.FORGE, ruin = d === D.RUIN;
+  const pontoon = d === D.PONTOON, ferry = d === D.FERRY;
   const f = k + 1, yN = GY[k], yF = GY[f];
   if (yF >= yN) return;
   const y0 = Math.max(0, Math.ceil(yF)), y1 = Math.min(H - 1, Math.ceil(yN) - 1);
@@ -919,8 +1146,35 @@ function drawGround(k, d, deckOnly) {
       } else if (water) {
         const sp = pxw < 0.4 && hash(Math.floor(lx * 2), zq, 21) < 0.012;
         r = sp ? 120 : 6; g = sp ? 130 : 10; b = sp ? 170 : 24; rf = 0.85;
+      } else if (lava) {                                  // a rock shoulder, then the lava lake far below the rim
+        if (a < RW + SW + 2.5) { r = 40; g = 26; b = 24; }
+        else {
+          const v = vnoise(lx * 0.12, wz * 0.06 - T * 0.15, 61) * 0.7 + vnoise(lx * 0.4, wz * 0.2, 62) * 0.3;
+          if (v > 0.52) { const h = smooth(0.52, 0.75, v); r = 200 + 55 * h; g = 60 + 120 * h; b = 10 + 40 * h; } else { r = 34; g = 16; b = 12; }
+        }
+      } else if (cloud) {                                 // a moonlit sea of clouds
+        const v = vnoise(lx * 0.035 + T * 0.04, wz * 0.012, 71) * 0.7 + vnoise(lx * 0.11, wz * 0.04 - T * 0.05, 72) * 0.3, h = smooth(0.3, 0.75, v);
+        r = 40 + 170 * h; g = 46 + 166 * h; b = 80 + 160 * h;
+      } else if (salt) {                                  // a mirror-flat salt lake cracked into plates
+        const rz = Math.floor(wz / 3.5), cu = lx / 4 + (rz & 1) * 0.5, fx = cu - Math.floor(cu), fzz = wz / 3.5 - rz;
+        const edge = pxw < 0.6 && (fx < 0.05 || fzz < 0.05);
+        r = edge ? 150 : 200; g = edge ? 152 : 204; b = edge ? 165 : 218; rf = 0.85;
       } else if (sand) { r = 110; g = 60; b = 34; }
       else { r = 18; g = 14; b = 26; }
+      if (forge) {                                        // molten gutters and glowing grates in the lanes
+        if (a >= RW && a < RW + 0.3) { const fl = 0.75 + 0.25 * Math.sin(wz * 1.3 - T * 4); r = 255 * fl; g = 110 * fl; b = 20; rf = 0.1; }
+        else if (a < RW && ((wz % 12) + 12) % 12 < 1.6 && (Math.abs(a - 1.75) < 0.8 || Math.abs(a - 5.25) < 0.8)) {
+          const bar = pxw < 0.25 && (Math.floor(lx * 5) & 1), fl = 0.7 + 0.3 * Math.sin(wz * 2 + T * 3 + lx);
+          r = bar ? 30 : 255 * fl; g = bar ? 20 : 120 * fl; b = bar ? 16 : 30 * fl; rf = 0;
+        }
+      }
+      if (ruin && a < RW + SW && pxw < 0.5) {             // grass pushing up through the cracks
+        const hc = hash(Math.floor(lx * 2.5), Math.floor(wz * 2.5), 44);
+        if (hc < 0.05) { r = 40; g = 90; b = 40; rf = 0; } else if (hc < 0.09) { r = 10; g = 10; b = 12; }
+      }
+      if (pontoon && a >= RW + 0.3 && a < RW + SW) { r = 90; g = 50; b = 34; rf = 0.1; }
+      if (pontoon && a < RW + SW && ((wz % 24) + 24) % 24 < 0.5) { r = 8; g = 8; b = 12; rf = 0; }   // gap between barges
+      if (ferry && a >= RW + 0.3 && a < RW + SW) { r = 40; g = 70; b = 60; rf = 0.15; }
       const i = y * W + x, j = i * 3;
       r += (FOG[0] - r) * fz; g += (FOG[1] - g) * fz; b += (FOG[2] - b) * fz;
       if (op < 1) { col[j] += (r - col[j]) * op; col[j + 1] += (g - col[j + 1]) * op; col[j + 2] += (b - col[j + 2]) * op; }
@@ -1106,9 +1360,10 @@ function liftTex(wz, v) {                            // level-change tunnel: dar
   const seam = (wz % 3) < 0.1 || (v % 1.6) < 0.06;
   TR = seam ? 20 : 34; TG = seam ? 22 : 36; TB = seam ? 30 : 48;
 }
-function drawTunnel(k, n, lift) {
-  quadWall(k, -TW_, 0, TH_, lift ? liftTex : tunnelTex);
-  quadWall(k, TW_, 0, TH_, lift ? liftTex : tunnelTex);
+function drawTunnel(k, n, lift, vac) {
+  const wt = lift ? liftTex : vac ? vacTex : tunnelTex;
+  quadWall(k, -TW_, 0, TH_, wt);
+  quadWall(k, TW_, 0, TH_, wt);
   const f = k + 1, yN = GY[k] - TH_ * S[k], yF = GY[f] - TH_ * S[f];
   if (yN < yF) {
     const iN = 1 / Z[k], iF = 1 / Z[f];
@@ -1118,13 +1373,15 @@ function drawTunnel(k, n, lift) {
       const lamp = (wz % 8) < 2.5, lc = lift ? (liftUp ? [120, 255, 190] : [255, 190, 110]) : [255, 196, 120];
       for (let x = Math.max(0, Math.ceil(cx - TW_ * sc)); x <= Math.min(W - 1, Math.ceil(cx + TW_ * sc) - 1); x++) {
         const lx = (x + 0.5 - cx) / sc;
-        let c = Math.abs(lx) < 0.6 ? (lamp ? lc : [30, 26, 36]) : ((Math.abs(lx) % 2.5) < 0.12 / Math.min(1, sc * 0.2) ? [28, 26, 34] : lift ? [30, 32, 44] : [44, 42, 52]);
+        let c = vac ? ((((wz % 28) + 28) % 28) < 0.8 ? [80, 220, 255] : [12, 14, 22])
+          : Math.abs(lx) < 0.6 ? (lamp ? lc : [30, 26, 36]) : ((Math.abs(lx) % 2.5) < 0.12 / Math.min(1, sc * 0.2) ? [28, 26, 34] : lift ? [30, 32, 44] : [44, 42, 52]);
         put(x, y, c[0] + (FOG[0] - c[0]) * fz, c[1] + (FOG[1] - c[1]) * fz, c[2] + (FOG[2] - c[2]) * fz);
         refl[y * W + x] = 0;
       }
     }
   }
-  if (n % 2 === 0 && k < 70 && projAt(k, 0)) {
+  if (vac) { if (n % 7 === 0 && k < 90 && projAt(k, 0)) addLight(PCX, PGY - TH_ * PS * 0.5, Math.min(30, Math.max(4, 5 * PS)), [80, 210, 255], 0.35 * (1 - fogAt(PZ))); }
+  else if (n % 2 === 0 && k < 70 && projAt(k, 0)) {
     const lc = lift ? (liftUp ? [90, 255, 170] : [255, 170, 80]) : [255, 170, 90];
     addLight(PCX, PGY - TH_ * PS + 1, Math.min(14, Math.max(3, 1.6 * PS)), lc, 0.28 * (1 - fogAt(PZ)));
     addLight(PCX, PGY, Math.max(3, 3.5 * PS), lc, 0.12 * (1 - fogAt(PZ)));
@@ -1312,7 +1569,7 @@ function drawSkybridge(k, n) {
       if ((T * 1.2 + l) % 2 < 1) addLight(xc, PGY - 79 * s, Math.max(3, 3 * s), [255, 40, 40], 0.7 * (1 - fz));
       rect(xc - 0.5 * s, xc + 0.5 * s, PGY - 80 * s, PGY - 78 * s, [255, 60, 60], fz * 0.5);
     }
-    for (const bh of [44, 72]) rect(PCX - (RW + SW + 3) * s, PCX + (RW + SW + 3) * s, PGY - (bh + 2.5) * s, PGY - bh * s, [30, 28, 42], fz);
+    if (ELEV[n] < LH[2] - 1) for (const bh of [44, 72]) rect(PCX - (RW + SW + 3) * s, PCX + (RW + SW + 3) * s, PGY - (bh + 2.5) * s, PGY - bh * s, [30, 28, 42], fz);
   }
   if (n % 23 === 0 && Z[k] < 400) {                 // boats on the water
     const sg = hash(n, 1, 61) < 0.5 ? -1 : 1, lat = sg * (40 + hash(n, 2, 62) * 140) + Math.sin(T * 0.1 + n) * 10;
@@ -1373,6 +1630,8 @@ function drawCrane(k, sg, n) {
 // ---- holo gardens: glowing trees on the sidewalks ----
 const LEAF = [[60, 255, 180], [200, 90, 255], [90, 200, 255], [255, 90, 200]];
 const PINK = [[255, 170, 210], [255, 200, 228], [255, 120, 180], [240, 236, 255]];
+const RUINLEAF = [[90, 160, 70], [60, 130, 60], [120, 180, 80], [70, 140, 90]];
+const CORAL = [[255, 110, 160], [120, 255, 220], [255, 170, 90], [200, 120, 255]];
 function drawTree(k, sg, n, pal) {
   if (!projAt(k, 0) || PZ > 260) return;
   const s = PS, fz = fogAt(PZ), x = PCX + sg * (RW + 0.9) * s, c = (pal || LEAF)[(hash(n, sg + 3, 71) * 4) | 0];
@@ -1493,7 +1752,7 @@ function drawHighway(k, n, z) {
   quadWall(k, RW + SW, 0, 1.1, barrierTex);
   const l = n - z[0];
   quadWall(k, RW + SW + 6, -1.5, 0.4, (wz, v) => { TR = 46; TG = 44; TB = 56; });
-  if (l % 70 === 35) drawOverpass(k, n);
+  if (l % 70 === 35 && ELEV[n] < LH[2] - 1) drawOverpass(k, n);
   if (n % 9 === 0) { drawLamp(k, n, -1); drawLamp(k, n, 1); }
 }
 function drawOverpass(k, n) {
@@ -1558,6 +1817,221 @@ function drawLaser(k, n, sg, h) {
   if (!projAt(k, 0) || PZ > 300) return;
   const x0 = PCX + sg * (RW + SW + 2) * PS, y0 = PGL - h * PS, ang = Math.sin(T * 0.5 + n) * 0.6 - sg * 0.3;
   for (let d = 0; d < y0; d += 1) addc(Math.round(x0 + d * Math.tan(ang)), Math.round(y0 - d), [80, 255, 120], 0.35 * (1 - d / (y0 + 1)));
+}
+
+// ---- hover cars and the light gates of their air lanes ----
+function drawFlyer(f, k, dz) {
+  if (!projAt(k, dz) || PZ > 420) return;
+  const s = PS, fz = fogAt(PZ), x = PCX + f.x * s, y = PGL - (f.h + Math.sin(T * 1.7 + f.bob) * 0.3) * s;
+  const w = 2.3 * s, h = 0.7 * s, lc = f.dir < 0 ? [230, 240, 255] : [255, 40, 70];
+  if (w < 4) {
+    const xx = Math.round(x), yy = Math.round(y);
+    if (xx >= 0 && xx < W && yy >= 0 && yy < H) putc(xx, yy, mix(lc, FOG, fz * 0.6));
+    addLight(x, y, 3, f.glow, 0.35 * (1 - fz));
+    return;
+  }
+  rect(x - w * 0.3, x + w * 0.3, y - h * 1.7, y - h, mix(f.body, [0, 0, 0], 0.35), fz);          // canopy
+  rect(x - w * 0.24, x + w * 0.24, y - h * 1.55, y - h * 1.1, f.dir < 0 ? [50, 70, 100] : [140, 210, 255], fz * 0.7);
+  rect(x - w / 2, x + w / 2, y - h, y, f.body, fz);                                                // hull
+  rect(x - w / 2, x + w / 2, y - h, y - h + Math.max(1, 0.1 * s), mix(f.body, [255, 255, 255], 0.3), fz);
+  rect(x - w / 2, x + w / 2, y - Math.max(1, 0.12 * s), y, f.glow, fz * 0.4);                    // underglow strip
+  for (const sx of [-0.4, 0.4]) {
+    const lx = x + sx * w;
+    rect(lx - 0.18 * s, lx + 0.18 * s, y - h * 0.75, y - h * 0.35, lc, fz * 0.3);
+    if (PZ < 260) addLight(lx, y - h * 0.55, clamp(w * 0.4, 2, 16), lc, (f.dir < 0 ? 0.7 : 0.45) * (1 - fz));
+  }
+  addLight(x, y + 0.4 * s, clamp(w * 0.9, 3, 28), f.glow, 0.35 * (1 - fz));                     // thrusters wash
+}
+function drawGates(k, n) {
+  if (!projAt(k, 0) || PZ > 400) return;
+  const s = PS, fz = fogAt(PZ), c = CITIES[zoneAt(n)[3]].neon[((n / 60) | 0) % 6];
+  for (const h of FLY_H) for (const sg of [-1, 1]) {
+    const cx = PCX + sg * 3.8 * s, cy = PGL - h * s, r = 3.3 * s, steps = Math.max(16, Math.ceil(r * 7));
+    if (cx + r < 0 || cx - r >= W || cy + r < 0 || cy - r >= H) continue;
+    for (let i = 0; i < steps; i++) {
+      const a = i / steps * 2 * Math.PI, on = ((i / steps * 8 - T * 2 * sg) % 1 + 1) % 1 < 0.55;
+      addc(Math.round(cx + Math.cos(a) * r), Math.round(cy + Math.sin(a) * r), c, (on ? 1 : 0.3) * (1 - fz));
+    }
+    if (PZ < 280) addLight(cx, cy - r, clamp(2 * s, 3, 20), c, 0.25 * (1 - fz));
+  }
+}
+
+// ---- ember foundry: smokestacks with glowing lips ----
+function drawStack(k, sg, n) {
+  if (!projAt(k, 0)) return;
+  const s = PS, fz = fogAt(PZ), x = PCX + sg * (RW + SW + 6) * s, hgt = 70 + hash(n, 4, 14) * 50, w = 1.6 * s, top = PGL - hgt * s;
+  rect(x - w, x + w, top, PGL, [44, 30, 28], fz);
+  for (const b of [0.25, 0.6]) rect(x - w, x + w, PGL - hgt * b * s - Math.max(1, 0.5 * s), PGL - hgt * b * s, [90, 50, 30], fz);
+  rect(x - w * 1.15, x + w * 1.15, top, top + Math.max(1, 1.2 * s), [255, 110, 30], fz * 0.4);
+  addLight(x, top, clamp(4 * s, 3, 28), [255, 120, 40], 0.5 * (1 - fz));
+  for (let i = 0; i < 5; i++) {
+    const ph = (T * 0.25 + i / 5 + hash(n, i, 15)) % 1, r = (1.5 + ph * 5) * s;
+    if (r < 0.8) continue;
+    blob(x + (ph * 6 + Math.sin(T + i)) * s, top - (ph * 14 + 1) * s, r, r * 0.8, [70, 50, 46], 0.35 * (1 - ph), fz);
+  }
+}
+
+// ---- monsoon terraces: waterfalls pouring from the crown to the street ----
+function fallTex(wz, v) {
+  const st = ((v * 0.9 + T * 14 + Math.sin(wz * 3) * 2) % 3 + 3) % 3, k = st < 0.6 ? 1 : 0.6 + 0.15 * Math.sin(wz * 5 + v);
+  TR = 150 * k; TG = 210 * k; TB = 230 * k;
+}
+function drawFall(k, n, sg) {
+  quadWall(k, sg * (RW + SW + 2.5), -EL[k], 92 - EL[k], fallTex);
+  if (n % 45 === 1 && projAt(k, 0)) {
+    const s = PS, fz = fogAt(PZ), x = PCX + sg * (RW + SW + 2.5) * s;
+    for (let i = 0; i < 4; i++) { const ph = (T * 0.5 + i / 4) % 1, r = (1.5 + ph * 3) * s; blob(x + Math.sin(i * 2 + T) * s, PGL - (0.5 + ph * 3) * s, r, r * 0.7, [200, 230, 240], 0.3 * (1 - ph), fz); }
+    if (PZ < 320) addLight(x, PGL - 2 * s, clamp(5 * s, 3, 30), [160, 220, 255], 0.3 * (1 - fz));
+  }
+}
+
+// ---- carnival isle: a ferris wheel and a rollercoaster ----
+function drawWheel(k, n) {
+  if (!projAt(k, 0) || PZ > 700) return;
+  const s = PS, fz = fogAt(PZ), R = 14 * s, cx = PCX + (RW + SW + 17) * s, cy = PGL - 17 * s;
+  if (cx - R > W || cx + R < 0 || R > W * 2) return;
+  const rot = T * 0.12 + n, cn = CITIES[zoneAt(n)[3]].neon;
+  lineS(cx, cy, cx - 6 * s, PGL, [60, 60, 80], fz); lineS(cx, cy, cx + 6 * s, PGL, [60, 60, 80], fz);
+  for (let i = 0; i < 16; i++) { const a = rot + i / 16 * 2 * Math.PI; lineS(cx, cy, cx + Math.cos(a) * R, cy + Math.sin(a) * R, [80, 80, 110], fz); }
+  const steps = Math.max(24, Math.ceil(R * 6));
+  for (let i = 0; i < steps; i++) {
+    const a = i / steps * 2 * Math.PI, on = ((i * 16 / steps - T * 6) % 3 + 3) % 3 < 1;
+    const c = on ? cn[(i * 6 / steps) | 0] : [90, 70, 110], xx = Math.round(cx + Math.cos(a) * R), yy = Math.round(cy + Math.sin(a) * R);
+    if (xx >= 0 && xx < W && yy >= 0 && yy < H) put(xx, yy, ...mix(c, FOG, fz * 0.6));
+  }
+  for (let i = 0; i < 12; i++) {                      // gondolas stay level as the wheel turns
+    const a = rot + i / 12 * 2 * Math.PI, gx = cx + Math.cos(a) * R, gy = cy + Math.sin(a) * R;
+    rect(gx - 0.9 * s, gx + 0.9 * s, gy + 0.2 * s, gy + 1.6 * s, NEON[i % 6], fz * 0.5);
+  }
+  addLight(cx, cy, clamp(R * 0.5, 4, 30), [255, 200, 120], 0.25 * (1 - fz));
+}
+const coH = n => 20 + 12 * Math.sin(n * 0.09) + 6 * Math.sin(n * 0.23 + 1);
+function drawCoaster(k, n, zz) {
+  const lat = -(RW + SW + 6), f = k + 1, fz = fogAt(Z[k]);
+  const x0 = CX[k] + lat * S[k], x1 = CX[f] + lat * S[f], y0 = GYL[k] - coH(n) * S[k], y1 = GYL[f] - coH(n + 1) * S[f];
+  lineS(x0, y0, x1, y1, [230, 60, 80], fz);
+  if (S[k] > 2) lineS(x0, y0 + 0.5 * S[k], x1, y1 + 0.5 * S[f], [230, 60, 80], fz);
+  if (n % 4 === 0 && Z[k] < 400) lineS(x0, y0, x0, GYL[k], [70, 66, 90], fz);
+  const pos = zz[0] + Math.floor((T * 9) % (zz[1] - zz[0]));
+  if (n >= pos && n < pos + 4 && projAt(k, 0)) {
+    const x = PCX + lat * PS, y = PGL - coH(n) * PS, c = NEON[n % 6];
+    rect(x - 0.9 * PS, x + 0.9 * PS, y - 1.4 * PS, y, c, fz * 0.5);
+    if (PZ < 300) addLight(x, y - 0.7 * PS, clamp(2 * PS, 3, 18), c, 0.4 * (1 - fz));
+  }
+}
+
+// ---- mirage bazaar domes, storm citadel tesla coils ----
+function drawDome(B, wx, sg) {
+  const s = PS, fz = fogAt(PZ), cx = PCX + (wx + sg * 6) * s, base = PGL - B.h * s, R = 5 * s, c = B.seed & 1 ? [210, 170, 70] : [50, 170, 170];
+  for (let y = Math.max(0, Math.floor(base - R * 1.15)); y <= Math.min(H - 1, base); y++) {
+    const ny = (base - y) / (R * 1.15), half = R * Math.sqrt(Math.max(0, 1 - ny * ny)) * (1 - ny * 0.15);
+    for (let x = Math.max(0, Math.ceil(cx - half)); x <= Math.min(W - 1, cx + half); x++) {
+      const sh = 0.55 + 0.45 * (1 - (x - cx + half) / (2 * half + 0.01));
+      put(x, y, ...mix([c[0] * sh, c[1] * sh, c[2] * sh], FOG, fz));
+    }
+  }
+  lineS(cx, base - R * 1.15, cx, base - R * 1.6, [220, 190, 90], fz);
+  if (PZ < 300) addLight(cx, base - R * 1.6, Math.max(2, 1.2 * s), [255, 210, 120], 0.4 * (1 - fz));
+}
+function drawCoil(B, wx, sg) {
+  const s = PS, fz = fogAt(PZ), cx = PCX + (wx + sg * 5) * s, base = PGL - B.h * s, ht = 9 * s;
+  rect(cx - 0.6 * s, cx + 0.6 * s, base - ht, base, [50, 54, 70], fz);
+  for (let i = 1; i < 6; i++) rect(cx - 0.9 * s, cx + 0.9 * s, base - ht * i / 6 - Math.max(1, 0.15 * s), base - ht * i / 6, [160, 120, 60], fz);
+  const ty = base - ht - 0.8 * s, tick = Math.floor(T * 14);
+  blob(cx, ty, 1.6 * s + 0.5, 0.7 * s + 0.5, [120, 130, 150], 1, fz);
+  for (let a = 0; a < 3; a++) {                       // arcs crackling off the torus, wilder when lightning strikes
+    if (hash(tick, a, B.id) < 0.45 - flash * 0.4) continue;
+    let x = cx, y = ty; const dir = hash(tick, a + 5, B.id) < 0.5 ? -1 : 1;
+    for (let j = 0; j < 6; j++) {
+      const nx = x + dir * (0.8 + hash(tick, j + a * 9, B.id + 1) * 1.2) * s, ny = y + (hash(tick, j + a * 7, B.id + 2) - 0.6) * 1.4 * s;
+      for (let t = 0; t <= 1; t += 0.2) addc(Math.round(x + (nx - x) * t), Math.round(y + (ny - y) * t), [190, 220, 255], 0.9 * (1 - fz));
+      x = nx; y = ny;
+    }
+  }
+  addLight(cx, ty, clamp(4 * s, 3, 26), [150, 190, 255], (0.25 + 0.35 * flash) * (1 - fz));
+}
+
+// ---- connectors ----
+function vacTex(wz, v) {
+  const u = ((wz % 28) + 28) % 28;
+  if (u < 0.8) { const p = 0.7 + 0.3 * Math.sin(T * 8); TR = 80 * p; TG = 220 * p; TB = 255 * p; return; }
+  if (v > 3.1 && v < 3.25) { TR = 40; TG = 90; TB = 160; return; }
+  const seam = (wz % 4) < 0.08 || (v % 1.5) < 0.05;
+  TR = seam ? 8 : 16; TG = seam ? 9 : 18; TB = seam ? 14 : 28;
+}
+function hullTex(wz, v) {
+  if (v > 1.9) { TR = 230; TG = 230; TB = 235; return; }
+  if (v > 1.6) { TR = 40; TG = 40; TB = 50; return; }
+  const port = ((wz % 5) + 5) % 5;
+  if (v > 0.6 && v < 1.2 && port > 2 && port < 3) { TR = 255; TG = 220; TB = 150; return; }
+  TR = 160; TG = 30; TB = 36;
+}
+function drawFerry(k, n, zz) {
+  for (const sg of [-1, 1]) quadWall(k, sg * (RW + SW + 0.3), 0, 2.2, hullTex);
+  const l = n - zz[0];
+  if (l % 60 === 30 && projAt(k, 0)) {              // funnels trailing smoke
+    const s = PS, fz = fogAt(PZ);
+    for (const sg of [-1, 1]) {
+      const x = PCX + sg * (RW + SW + 4) * s, w = 2.2 * s, top = PGY - 22 * s;
+      rect(x - w, x + w, top, PGY, [200, 40, 40], fz);
+      rect(x - w, x + w, top, top + 3 * s, [20, 20, 26], fz);
+      rect(x - w, x + w, top + 5 * s, top + 6.5 * s, [235, 235, 240], fz);
+      for (let i = 0; i < 4; i++) { const ph = (T * 0.2 + i / 4) % 1, r = (2 + ph * 6) * s; if (r >= 0.8) blob(x + sg * ph * 8 * s, top - ph * 10 * s, r, r * 0.8, [90, 90, 100], 0.3 * (1 - ph), fz); }
+      if ((T * 1.2 + l) % 2 < 1) addLight(x, top - 1, clamp(2 * s, 3, 16), [255, 40, 40], 0.6 * (1 - fz));
+    }
+  }
+  if (l % 15 === 7 && projAt(k, 0)) {               // lifeboats and deck lights along the rail
+    const s = PS, fz = fogAt(PZ);
+    for (const sg of [-1, 1]) {
+      const x = PCX + sg * (RW + SW + 0.6) * s;
+      rect(x - 0.8 * s, x + 0.8 * s, PGY - 3.6 * s, PGY - 2.6 * s, [255, 130, 30], fz);
+      if (PZ < 220) addLight(x, PGY - 2.2 * s, clamp(2 * s, 3, 18), [255, 220, 160], 0.35 * (1 - fz));
+    }
+  }
+}
+function drawVolcano(k, n) {
+  quadWall(k, -(RW + SW), 0, 1.1, barrierTex); quadWall(k, RW + SW, 0, 1.1, barrierTex);
+  if (n % 9 === 0) { drawLamp(k, n, -1); drawLamp(k, n, 1); }
+  if (!projAt(k, 0)) return;
+  const s = PS, fz = fogAt(PZ);
+  if (n % 4 === 2 && PZ < 400) { const sg = n % 8 === 2 ? -1 : 1; addLight(PCX + sg * (RW + SW + 16) * s, PGY, clamp(8 * s, 4, 30), [255, 90, 20], 0.35 * (1 - fz)); }
+  if (n % 13 === 0) {                                // jagged rock spires lit from the lava below
+    const sg = hash(n, 1, 91) < 0.5 ? -1 : 1, x = PCX + sg * (RW + SW + 8 + hash(n, 2, 92) * 40) * s, hh = 8 + hash(n, 3, 93) * 30, w = (2 + hash(n, 4, 94) * 3) * s;
+    for (let y = Math.max(0, Math.ceil(PGY - hh * s)); y <= Math.min(H - 1, Math.ceil(PGY) - 1); y++) {
+      const t = (PGY - y) / (hh * s), half = w * (1 - t * 0.85), c = t < 0.12 ? [200, 70, 20] : mix([46, 26, 22], [20, 12, 12], t);
+      for (let xx = Math.max(0, Math.ceil(x - half)); xx <= Math.min(W - 1, Math.ceil(x + half) - 1); xx++) put(xx, y, ...mix(c, FOG, fz));
+    }
+  }
+}
+function drawClouds(k, n) {
+  quadWall(k, -(RW + SW), 0, 1.1, railTex); quadWall(k, RW + SW, 0, 1.1, railTex);
+  if (n % 9 === 0) { drawLamp(k, n, -1); drawLamp(k, n, 1); }
+  if (n % 11 !== 5 || !projAt(k, 0)) return;
+  // the top of a tower poking up through the cloud sea
+  const s = PS, fz = fogAt(PZ), sg = hash(n, 1, 95) < 0.5 ? -1 : 1, x = PCX + sg * (RW + SW + 12 + hash(n, 2, 96) * 60) * s;
+  const w = (5 + hash(n, 3, 97) * 6) * s, top = PGY - (4 + hash(n, 4, 98) * 26) * s, base = PGY + 2 * s, c = CITIES[zoneAt(n)[3]].neon[n % 6];
+  rect(x - w, x + w, top, base, [24, 26, 44], fz);
+  const st = Math.max(2, Math.round(1.2 * s));
+  if (s > 0.8) for (let y = Math.max(0, Math.ceil(top + st)); y < Math.min(H, base); y += st)
+    for (let xx = Math.max(0, Math.ceil(x - w + 1)); xx < Math.min(W, x + w - 1); xx += st)
+      if (hash(Math.round((xx - x) / st), Math.round((y - top) / st), n) < 0.35) put(xx, y, ...mix(WIN[(n + xx) % 6], FOG, fz));
+  rect(x - w, x + w, top, top + Math.max(1, 0.4 * s), c, fz * 0.5);
+  if ((T + n) % 1.5 < 0.5) addLight(x, top - 1, clamp(2 * s, 3, 16), [255, 40, 40], 0.6 * (1 - fz));
+  blob(x, base, w * 1.3, 1.5 * s + 0.5, [180, 190, 220], 0.6, fz);
+}
+function drawPontoon(k, n) {
+  if (n % 9 === 0) { drawLamp(k, n, -1); drawLamp(k, n, 1); }
+  if (n % 7 === 0) drawBoat(k, n);
+  if (n % 6 === 0 && projAt(k, 0) && PZ < 260) {     // bollards with chains to the next barge
+    const s = PS, fz = fogAt(PZ);
+    for (const sg of [-1, 1]) { const x = PCX + sg * (RW + SW - 0.3) * s; rect(x - 0.25 * s, x + 0.25 * s, PGY - 0.7 * s, PGY, [30, 30, 34], fz); }
+  }
+}
+function drawSalt(k, n) {
+  if (n % 10 !== 0 || !projAt(k, 0)) return;         // a lonely line of telegraph poles
+  const s = PS, fz = fogAt(PZ), x = PCX + (RW + SW + 2) * s;
+  rect(x - Math.max(0.5, 0.15 * s), x + Math.max(0.5, 0.15 * s), PGY - 9 * s, PGY, [50, 40, 36], fz);
+  rect(x - 1.4 * s, x + 1.4 * s, PGY - 8.4 * s, PGY - 8.1 * s, [50, 40, 36], fz);
 }
 
 // ---- traffic signal at the stop line ----
@@ -1645,6 +2119,18 @@ function billboard(b, uu, vv) {
 
 function wallTex(B, u, v, front, mpp) {
   if (B.crown && v > B.h - 0.6 && B.style !== 2) { TR = B.crown[0]; TG = B.crown[1]; TB = B.crown[2]; return; }
+  if (B.style !== 11) for (let q = 1; q < 3; q++) {   // sky lobbies where the upper roads run past
+    const lv = v - LH[q];
+    if (lv > -0.7 && lv < 3.4 && B.h > LH[q] + 5) {
+      if (lv < -0.25) { const k = B.dark ? 0.3 : 1; TR = B.lobby[0] * k; TG = B.lobby[1] * k; TB = B.lobby[2] * k; return; }
+      if (lv > 3.0 || (u % 3) < 0.18) { TR = 34; TG = 30; TB = 44; return; }
+      const k = (0.5 + 0.25 * lv / 3) * (B.dark ? 0.25 : 1);
+      if (mpp > 0.9) { TR = 230 * k; TG = 190 * k; TB = 150 * k; return; }
+      const cell = Math.floor(u / 1.3), fu = u / 1.3 - cell;   // people standing at the glass
+      if (mpp < 0.35 && lv < 1.8 && fu > 0.4 && fu < 0.65 && hash(cell, q, B.seed) < 0.2 && (lv < 1.45 || fu > 0.45 && fu < 0.6)) { TR = 16; TG = 12; TB = 22; return; }
+      TR = 255 * k; TG = 205 * k; TB = 160 * k; return;
+    }
+  }
   if (!front) for (const b of B.bbs) if (u >= b.u0 && u < b.u1 && v >= b.v0 && v < b.v1) {
     billboard(b, (u - b.u0) / (b.u1 - b.u0), 1 - (v - b.v0) / (b.v1 - b.v0)); return;
   }
@@ -1673,7 +2159,7 @@ function wallTex(B, u, v, front, mpp) {
     }
     TR = bc[0] * 1.3; TG = bc[1] * 1.3; TB = bc[2] * 1.3; return;
   }
-  if (B.style === 4) {                              // docklands: corrugated sheds, roller doors, a painted stripe
+  if (B.style === 4 && v < 16) {                    // docklands: corrugated sheds, roller doors, a painted stripe
     if (B.crown && v > B.h - 2.2 && v < B.h - 1.4) { TR = B.crown[0]; TG = B.crown[1]; TB = B.crown[2]; return; }
     const cell = Math.floor(u / 9), cu = u - cell * 9;
     if (v < 5.5 && cu > 1.5 && cu < 7.5) {
@@ -1693,7 +2179,7 @@ function wallTex(B, u, v, front, mpp) {
     }
   }
   if (B.style === 7 && v >= 3.8) {                  // arcade row: giant animated screens
-    const cell = Math.floor(u / 10), cu = u - cell * 10, top = B.h - 2.5;
+    const cell = Math.floor(u / 10), cu = u - cell * 10, top = Math.min(B.h - 2.5, 32);
     if (cu > 0.6 && cu < 9.4 && v > 5 && v < top) {
       const c1 = B.shop[cell % 3], c2 = B.shop[(cell + 1) % 3];
       if (mpp > 1) { TR = c1[0] * 0.45; TG = c1[1] * 0.45; TB = c1[2] * 0.45; return; }
@@ -1713,7 +2199,7 @@ function wallTex(B, u, v, front, mpp) {
       const scan = (Math.floor(vv * 30) & 1) ? 0.8 : 1;
       TR = c[0] * scan; TG = c[1] * scan; TB = c[2] * scan; return;
     }
-    if (cu <= 0.6 || cu >= 9.4 || v >= top) { TR = 26; TG = 24; TB = 34; return; }
+    if (v < top + 0.8 && (cu <= 0.6 || cu >= 9.4 || v >= top)) { TR = 26; TG = 24; TB = 34; return; }
   }
   if (B.style === 9) {                              // stacktown: shacks stacked on shacks
     if (mpp > 0.8) { TR = B.avg[0]; TG = B.avg[1]; TB = B.avg[2]; return; }
@@ -1792,6 +2278,118 @@ function wallTex(B, u, v, front, mpp) {
     const k = 0.65 + band * 0.7;
     TR = bc[0] * k; TG = bc[1] * k; TB = bc[2] * k; return;
   }
+  if (B.style === D.FORGE) {                        // ember foundry: iron plates, furnace slits, pipes, open forge doors
+    if (v < 3.8) {
+      const cell = Math.floor(u / 6), cu = u - cell * 6;
+      if (cu > 1 && cu < 5 && v < 3 && hash(cell, B.id, 13) < 0.6) { const k = 0.6 + 0.4 * Math.sin(T * 5 + cell); TR = 255 * k; TG = 120 * k; TB = 40 * k; return; }
+    } else {
+      if (mpp > 1) { TR = B.avg[0]; TG = B.avg[1]; TB = B.avg[2]; return; }
+      const fl = Math.floor(v / 5), fv = v / 5 - fl, bay = Math.floor(u / 3);
+      if (fv > 0.45 && fv < 0.6 && hash(bay, fl, B.seed) < B.winP) { const k = 0.7 + 0.3 * Math.sin(T * 7 + bay * 1.7 + fl); TR = 255 * k; TG = 110 * k; TB = 30 * k; return; }
+      if ((u % 7) < 0.6 && mpp < 0.8) { TR = 62; TG = 40; TB = 34; return; }
+    }
+    const seam = mpp < 0.6 && (v % 2.5) < 0.12 ? 0.6 : 1;
+    TR = bc[0] * seam; TG = bc[1] * seam; TB = bc[2] * seam; return;
+  }
+  if (B.style === D.TERRACE) {                      // monsoon terraces: rice ledges on every floor, stone, warm windows
+    const fl = Math.floor(v / 5), fv = v / 5 - fl;
+    if (fl > 0 && fv < 0.18) {
+      if (mpp > 0.9) { TR = 40; TG = 90; TB = 50; return; }
+      const row = Math.floor(u * 2.5) & 1, sh = 0.8 + 0.2 * Math.sin(u * 0.7 + T * 1.2 + fl);
+      TR = (row ? 70 : 30) * sh; TG = (row ? 150 : 90) * sh; TB = (row ? 70 : 80) * sh; return;
+    }
+    if (fl > 0 && fv < 0.22) { TR = 20; TG = 24; TB = 20; return; }
+    if (mpp < 0.8 && v > 3.8) {
+      const bay = Math.floor(u / 3), fu = u / 3 - bay;
+      if (fu > 0.25 && fu < 0.75 && fv > 0.35 && fv < 0.8) {
+        if (hash(bay, fl, B.seed) < B.winP) { const c = WIN[(hash(bay, fl, 4) * 6) | 0]; TR = c[0] * 0.8; TG = c[1] * 0.8; TB = c[2] * 0.7; }
+        else { TR = 14; TG = 18; TB = 16; }
+        return;
+      }
+    }
+    if (v >= 3.8 || mpp >= 0.8) {
+      const st = mpp < 0.5 && (((u + (fl & 1) * 0.6) % 1.2) < 0.06 || ((v % 1) < 0.05)) ? 0.7 : 1;
+      TR = bc[0] * st; TG = bc[1] * st; TB = bc[2] * st; return;
+    }
+  }
+  if (B.style === D.REEF) {                         // coral deep: living coral walls, kelp, glowing portholes
+    if (mpp > 1.1) { TR = B.avg[0]; TG = B.avg[1]; TB = B.avg[2]; return; }
+    const kelp = ((u - Math.sin(v * 0.25 + T * 0.8 + u * 0.1) * 0.9) % 3.5 + 3.5) % 3.5;
+    if (kelp < 0.35 && hash(Math.floor(u / 3.5), 1, B.seed) < 0.5) { TR = 30; TG = 120 + 40 * Math.sin(v * 0.5); TB = 60; return; }
+    const fl = Math.floor(v / 4), fv = v / 4 - fl, bay = Math.floor(u / 3.2), fu = u / 3.2 - bay, dx = fu - 0.5, dy = fv - 0.55;
+    if (v > 3 && dx * dx + dy * dy < 0.06) {
+      if (hash(bay, fl, B.seed) < B.winP) { const k = 0.6 + 0.3 * Math.sin(T * 1.5 + bay + fl); TR = 60 * k; TG = 230 * k; TB = 220 * k; }
+      else { TR = 6; TG = 20; TB = 30; }
+      return;
+    }
+    const sp = hash(Math.floor(u * 1.5), Math.floor(v * 1.5), B.seed + 9);
+    if (sp < 0.03 && mpp < 0.5) {
+      const k = 0.5 + 0.5 * Math.sin(T * 2 + sp * 300), c = sp < 0.015 ? [255, 120, 220] : [120, 255, 240];
+      TR = c[0] * k; TG = c[1] * k; TB = c[2] * k; return;
+    }
+    const k = 0.7 + 0.6 * (mpp < 0.5 ? vnoise(u * 0.2, v * 0.2, B.seed % 991) : 0.5);   // texture only up close
+    TR = bc[0] * k; TG = bc[1] * k; TB = bc[2] * k; return;
+  }
+  if (B.style === D.FAIR) {                         // carnival isle: striped booths, marquee bulbs chasing round every window
+    if (v < 7) {
+      if (v > 6.2) { const on = ((u * 2 - T * 6) % 2 + 2) % 2 < 1; TR = on ? 255 : 90; TG = on ? 220 : 70; TB = on ? 140 : 40; return; }
+      const c = Math.floor(u / 1.2) & 1 ? B.shop[0] : [235, 225, 210], k = v < 3 && (u % 6) > 1 && (u % 6) < 5 ? 1.1 : 0.75;
+      TR = c[0] * k; TG = c[1] * k; TB = c[2] * k; return;
+    }
+    if (mpp > 1) { TR = B.avg[0]; TG = B.avg[1]; TB = B.avg[2]; return; }
+    const fl = Math.floor(v / 4), fv = v / 4 - fl, bay = Math.floor(u / 3), fu = u / 3 - bay;
+    if (fv < 0.08 || fu < 0.06) {
+      const on = ((Math.floor((u + v) * 2) - Math.floor(T * 8)) % 4 + 4) % 4 === 0;
+      TR = on ? 255 : 70; TG = on ? 230 : 50; TB = on ? 150 : 40; return;
+    }
+    if (hash(bay, fl, B.seed) < B.winP) { const c = B.shop[(hash(bay, fl, 3) * 3) | 0]; TR = c[0] * 0.7; TG = c[1] * 0.7; TB = c[2] * 0.7; }
+    else { TR = bc[0]; TG = bc[1]; TB = bc[2]; }
+    return;
+  }
+  if (B.style === D.RUIN) {                         // verdant ruin: vines from the foot and the top, broken windows
+    const vn = vnoise(u * 0.18, v * 0.06, B.seed % 997) + hash(Math.floor(u * 0.9), Math.floor(v * 0.4), 5) * 0.25;
+    const grow = 0.8 - 0.4 * Math.max(0, 1 - v / 20) - 0.25 * Math.max(0, (v - B.h + 15) / 15);
+    if (vn > grow) {
+      const leaf = mpp < 0.5 && hash(Math.floor(u * 3), Math.floor(v * 3), B.seed) < 0.3;
+      TR = leaf ? 70 : 26; TG = leaf ? 130 : 60; TB = leaf ? 50 : 28; return;
+    }
+    if (mpp < 0.6 && v > 3.8) {
+      const fl = Math.floor(v / 3.2), bay = Math.floor(u / 2.6), fv = v / 3.2 - fl, fu = u / 2.6 - bay;
+      if (hash(bay, fl, B.seed + 21) < 0.3 && fv > 0.28 && fv < 0.82 && fu > 0.15 && fu < 0.85) { TR = 4; TG = 4; TB = 6; return; }
+    }
+  }
+  if (B.style === D.CITADEL) {                      // storm citadel: battlements, buttresses, pointed windows
+    if (v > B.h - 1.6) { if ((u % 2.4) < 1.2) { TR = bc[0] * 1.2; TG = bc[1] * 1.2; TB = bc[2] * 1.2; return; } TR = -1; return; }
+    const bay = Math.floor(u / 4), fu = u / 4 - bay;
+    if (bay % 3 === 0 && fu < 0.16) { TR = bc[0] * 1.5; TG = bc[1] * 1.5; TB = bc[2] * 1.5; return; }
+    if (mpp > 1) { TR = B.avg[0]; TG = B.avg[1]; TB = B.avg[2]; return; }
+    const fl = Math.floor(v / 8), fv = v / 8 - fl;
+    if (v > 3.8 && fu > 0.32 && fu < 0.68 && fv > 0.12 && fv < 0.88 && (fv < 0.7 || Math.abs(fu - 0.5) < (0.88 - fv))) {
+      if (mpp < 0.4 && (((fu * 4) % 1) < 0.1 || ((fv * 8) % 1) < 0.08)) { TR = 20; TG = 22; TB = 30; return; }
+      const k = hash(bay, fl, B.seed) < B.winP ? 0.6 + 0.2 * Math.sin(T * 0.7 + bay) + flash * 0.3 : 0.1;
+      TR = 150 * k; TG = 190 * k; TB = 255 * k; return;
+    }
+    const blk = mpp < 0.5 && ((v % 1.2) < 0.08 || ((u + Math.floor(v / 1.2) * 0.9) % 1.8) < 0.08) ? 0.75 : 1;
+    TR = bc[0] * blk; TG = bc[1] * blk; TB = bc[2] * blk; return;
+  }
+  if (B.style === D.BAZAAR) {                       // mirage bazaar: arcades of pointed arches, tile bands, carved lattice screens
+    if (v < 4.2) {
+      const cell = Math.floor(u / 3.2), cu = u / 3.2 - cell, top = Math.min(3.6, 3.0 + (0.5 - Math.abs(cu - 0.5)) * 1.6);
+      if (cu > 0.12 && cu < 0.88 && v < top) { const c = B.shop[cell % 3], k = 0.4 + 0.25 * v / 3.6; TR = c[0] * k; TG = c[1] * k; TB = c[2] * k; return; }
+      TR = bc[0] * 0.85; TG = bc[1] * 0.85; TB = bc[2] * 0.85; return;
+    }
+    if ((v % 4) < 0.3) { TR = 40; TG = 170; TB = 170; return; }
+    if (mpp > 0.9) { TR = B.avg[0]; TG = B.avg[1]; TB = B.avg[2]; return; }
+    const fl = Math.floor(v / 4), fv = v / 4 - fl, bay = Math.floor(u / 3), fu = u / 3 - bay;
+    if (fu > 0.2 && fu < 0.8 && fv > 0.2 && fv < 0.85) {
+      if (hash(bay, fl, B.seed) < B.winP) {
+        const lat = mpp < 0.35 && (((fu * 9 + fv * 9) % 1) < 0.25 || (((fu * 9 - fv * 9) % 1) + 1) % 1 < 0.25), k = lat ? 0.25 : 0.75;
+        TR = 255 * k; TG = 180 * k; TB = 90 * k;
+      } else { TR = bc[0] * 0.4; TG = bc[1] * 0.4; TB = bc[2] * 0.4; }
+      return;
+    }
+    TR = bc[0]; TG = bc[1]; TB = bc[2]; return;
+  }
   if (mpp > 0.75 && v >= 3.8) { TR = B.avg[0]; TG = B.avg[1]; TB = B.avg[2]; return; }
   if (v < 3.8) {
     const cell = Math.floor(u / 6), cu = u - cell * 6;
@@ -1858,6 +2456,20 @@ function drawWall(k, side, n) {
   }
   // rooftop, when you ride above it
   if (ytB < ytA - 0.5) drawRoof(k, B, wx, sg, ytA, ytB);
+  // antenna masts with aviation lights on the tall towers
+  if (n === B.start + (B.len >> 1) && (B.style === D.BAZAAR || B.style === D.CITADEL) && projAt(k, 0) && PZ < 600) {
+    if (B.style === D.BAZAAR) drawDome(B, wx, sg); else drawCoil(B, wx, sg);
+  }
+  else if (n === B.start + (B.len >> 1) && B.h > 70 && projAt(k, 0) && PZ < 600) {
+    const s = PS, fz = fogAt(PZ), ax = PCX + (wx + sg * 5) * s, top = PGL - B.h * s, mh = (6 + hash(B.id, 1, 5) * 14) * s;
+    rect(ax - Math.max(0.5, 0.15 * s), ax + Math.max(0.5, 0.15 * s), top - mh, top, [40, 38, 52], fz);
+    if (s > 1.5) rect(ax - 0.6 * s, ax + 0.6 * s, top - mh * 0.55, top - mh * 0.55 + Math.max(1, 0.15 * s), [40, 38, 52], fz);
+    if ((T * 1.2 + B.id * 0.37) % 1.5 < 0.5) {
+      const xx = Math.round(ax), yy = Math.round(top - mh);
+      if (xx >= 0 && xx < W && yy >= 0 && yy < H) putc(xx, yy, [255, 50, 50]);
+      addLight(ax, top - mh, clamp(1.5 * s, 3, 14), [255, 40, 40], 0.6 * (1 - fz));
+    }
+  }
   // blade signs and billboard glow
   for (const sn of B.signs) if (sn.u >= u0 && sn.u < u0 + SEGL) drawSign(k, sn.u - u0, wx, -sg, sn);
   if (B.style === 7) for (let uc = 5; uc < B.len * SEGL; uc += 10) {
@@ -2029,6 +2641,10 @@ function drawGlass() {
     const fade = Math.min(1, cd * 2.5);
     const x = Math.round(s.x), y = Math.round(s.y);
     if (s.kind === 'rain') { const a = 0.09 * fade; if (a > 0.01) for (let k = 0; k < s.l; k++) addc(Math.round(s.x - steer * k * 0.3), y - k, [130, 150, 200], a); }
+    else if (s.kind === 'monsoon') { const a = 0.14 * fade; if (a > 0.01) for (let k = 0; k < s.l * 1.6; k++) addc(Math.round(s.x - steer * k * 0.3), y - k, [150, 180, 200], a); }
+    else if (s.kind === 'ash') addc(x, y, s.ph > 5 ? [255, 140, 50] : [150, 140, 140], 0.7 * fade);
+    else if (s.kind === 'bubbles') { const c = [170, 230, 255]; addc(x, y, c, 0.12 * fade); for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) addc(x + dx, y + dy, c, 0.45 * fade); }
+    else if (s.kind === 'fireflies') { const bl = 0.5 + 0.5 * Math.sin(T * 3 + s.ph * 5), c = [200, 255, 120]; addc(x, y, c, bl); addc(x + 1, y, c, 0.35 * bl); addc(x - 1, y, c, 0.35 * bl); addc(x, y + 1, c, 0.35 * bl); addc(x, y - 1, c, 0.35 * bl); }
     else if (s.kind === 'snow') { addc(x, y, [230, 240, 255], 0.75 * fade); if (s.l > 4.5 && cd > 0.3) addc(x + 1, y, [230, 240, 255], 0.5 * fade); }
     else if (s.kind === 'petals') { const c = [255, 170, 210]; addc(x, y, c, 0.9 * fade); addc(x + (Math.sin(T * 5 + s.ph) > 0 ? 1 : -1), y, c, 0.6 * fade); }
     else if (s.kind === 'sand') { for (let k = 0; k < s.l * 2.5; k++) addc(x - k, y, [230, 160, 90], 0.14 * (1 - k / (s.l * 2.5))); }
@@ -2067,6 +2683,22 @@ function drawBike() {
   text(kmh, Math.round(W / 2 - 6 * sc), sy0 + 4, [0, 235, 255], sc);
   if (waitLight) text('RED', Math.round(W / 2 - 5), sy0 + 6 + 5 * sc, (T * 2) % 1 < 0.6 ? [255, 60, 60] : [120, 30, 30], 1);
   else text(auto ? 'AUTO' : 'MANUAL', Math.round(W / 2 - (auto ? 7 : 11)), sy0 + 6 + 5 * sc, auto ? [80, 255, 150] : [255, 150, 60], 1);
+  // level indicator: three stacked bars, the current one lit, a marker riding between them on the ramps
+  {
+    const sg_ = Math.floor(camZ / SEGL) % NSEG, e = ELEV[sg_], lf = e <= LH[1] ? e / LH[1] : 1 + (e - LH[1]) / (LH[2] - LH[1]);
+    const lv = Math.round(lf), LC = [[255, 150, 60], [0, 235, 255], [255, 60, 190]], tr = TRANS_AT[sg_];
+    const moving = tr >= 0 && sg_ >= TRANS[tr].s && sg_ < TRANS[tr].e;
+    const ly = sy0 + 6 + 5 * sc;
+    text('L' + (lv + 1), sx0 + 2, ly, LC[lv], 1);
+    if (moving && (T * 3) % 1 < 0.6) text(TRANS[tr].to > TRANS[tr].from ? '^' : '_', sx0 + 10, ly, LC[TRANS[tr].to], 1);
+    const gx = sx0 + sw - 9;
+    for (let i = 0; i < 3; i++) {
+      const gy = sy0 + 4 + (2 - i) * 4;
+      for (let a = 0; a < 6; a++) putc(gx + a, gy, i === lv ? LC[i] : [40, 30, 60]);
+    }
+    const my = Math.round(sy0 + 4 + (2 - lf) * 4);
+    putc(gx - 2, my, [255, 255, 255]);
+  }
   const segs = 12, bw = Math.max(2, Math.floor((sw - 6) / segs));
   for (let i = 0; i < segs; i++) {
     const on = i < Math.round(speed / maxV() * segs), c = mix([0, 230, 255], [255, 40, 170], i / segs);
@@ -2134,9 +2766,15 @@ function render() {
   for (const p of peds) {
     const r = rel(p.z), k = Math.floor(r / SEGL + frac);
     const pn = Math.floor(p.z / SEGL) % NSEG;
-    if (k < 0 || k >= DRAW || r < NEAR || district(pn) === 3 || (LAYERED[pn] && ELEV[pn] > 0.3)) continue;
+    if (k < 0 || k >= DRAW || r < NEAR || PED_NO.has(district(pn)) || (LAYERED[pn] && ELEV[pn] > 0.3)) continue;
     if (!buckets.has(k)) buckets.set(k, []);
     buckets.get(k).push({ p, r });
+  }
+
+  for (const f of flyers) {
+    const r = rel(f.z), k = Math.floor(r / SEGL + frac);
+    if (k < 0 || k >= DRAW || r < NEAR || !airOk(Math.floor(f.z / SEGL) % NSEG)) continue;
+    put_(k, { fl: f, r });
   }
 
   for (let k = DRAW - 1; k >= 0; k--) {
@@ -2154,6 +2792,12 @@ function render() {
     else if (d === D.BRIDGE) { drawGround(k, d, false); drawSkybridge(k, n); }
     else if (d === D.TUNNEL) { drawGround(k, d, false); drawTunnel(k, n, false); if (k > 0 && TUNNEL_STARTS.includes(n)) drawPortal(k); }
     else if (d === D.TUBE) { drawGround(k, d, false); drawTube(k, n); }
+    else if (d === D.VAC) { drawGround(k, d, false); drawTunnel(k, n, false, true); if (k > 0 && n === zz[0]) drawPortal(k, 'VACTRAIN', [90, 210, 255]); }
+    else if (d === D.FERRY) { drawGround(k, d, false); drawFerry(k, n, zz); }
+    else if (d === D.VOLCANO) { drawGround(k, d, false); drawVolcano(k, n); }
+    else if (d === D.CLOUDS) { drawGround(k, d, false); drawClouds(k, n); }
+    else if (d === D.PONTOON) { drawGround(k, d, false); drawPontoon(k, n); }
+    else if (d === D.SALT) { drawGround(k, d, false); drawSalt(k, n); }
     else {
       if (d === D.RAMP) quadWall(k, RW + SW + 3, -EL[k] - 2, 160, towerTex);
       else { drawWall(k, 0, n); drawWall(k, 1, n); }
@@ -2173,6 +2817,11 @@ function render() {
       if (d === D.DOCKS && n % 45 === 20) drawCrane(k, hash(n, 2, 43) < 0.5 ? -1 : 1, n);
       if (d === D.BUILD && n % 40 === 15) drawCrane(k, hash(n, 2, 43) < 0.5 ? -1 : 1, n);
       if (d === D.DATA && n % 11 === 0) drawLaser(k, n, hash(n, 4, 4) < 0.5 ? -1 : 1, 30 + hash(n, 5, 5) * 20);
+      if (d === D.FORGE && n % 30 === 12) drawStack(k, hash(n, 3, 13) < 0.5 ? -1 : 1, n);
+      if (d === D.FORGE && n % 3 === 0 && projAt(k, 0) && PZ < 200)
+        for (const L of [-5.25, -1.75, 1.75, 5.25]) addLight(PCX + L * PS, PGY, clamp(1.4 * PS, 2, 16), [255, 110, 30], 0.35 * (1 - fogAt(PZ)));
+      if (d === D.TERRACE && n % 45 < 3) drawFall(k, n, hash(Math.floor(n / 45), 1, 17) < 0.5 ? -1 : 1);
+      if (d === D.FAIR) { drawCoaster(k, n, zz); if (n % 80 === 40) drawWheel(k, n); }
       if (!elev) {                                    // street furniture only down at street level
         if (d === D.MARKET && n % 2 === 0) for (const sg of [-1, 1]) if (hash(n, sg + 5, 31) < 0.45) drawStall(k, sg, n);
         if (d === D.DOCKS && n % 3 === 0) for (const sg of [-1, 1]) if (hash(n, sg + 9, 41) < 0.6) drawContainers(k, sg, n);
@@ -2180,7 +2829,9 @@ function render() {
         const pink = cty.name === 'SAKURA GRID' ? PINK : null;
         if ((d === D.GARDENS || d === D.SHRINE) && n % 2 === 1) for (const sg of [-1, 1]) drawTree(k, sg, n, d === D.SHRINE ? PINK : pink);
         if (d === D.CANALS && n % 7 === 0) drawBoat(k, n);
-        if ([D.DOWNTOWN, D.SPIRES, D.DOCKS, D.STACK, D.DATA, D.BUILD].includes(d) && hash(n, 7, 77) < 0.05) drawSteam(k, hash(n, 8, 78) < 0.5 ? -3.5 : 3.5, 0, n, 1);
+        if (d === D.RUIN && n % 3 === 1) for (const sg of [-1, 1]) if (hash(n, sg + 11, 33) < 0.6) drawTree(k, sg, n, RUINLEAF);
+        if (d === D.REEF && n % 4 === 2) for (const sg of [-1, 1]) if (hash(n, sg + 13, 35) < 0.5) drawTree(k, sg, n, CORAL);
+        if ([D.DOWNTOWN, D.SPIRES, D.DOCKS, D.STACK, D.DATA, D.BUILD, D.FORGE].includes(d) && hash(n, 7, 77) < 0.05) drawSteam(k, hash(n, 8, 78) < 0.5 ? -3.5 : 3.5, 0, n, 1);
       }
     }
     const bk = buckets.get(k);
@@ -2190,9 +2841,11 @@ function render() {
         const dz = o.r - Z[k];
         if (o.c) drawCar(o.c, k, dz); else if (o.p) drawPed(o.p, k, dz); else if (o.sig !== undefined) drawSignal(o.sig, k, dz);
         else if (o.xp) drawCrosser(o.xp, k, dz);
+        else if (o.fl) drawFlyer(o.fl, k, dz);
       }
     }
     if (sw && sw.hb + 1.4 >= EL[k]) drawSkywalk(k, n, sw);
+    if (n % 60 === 30 && airOk(n)) drawGates(k, n);
     if (d === D.SHRINE && n % 3 === 0) drawTorii(k, n);
     if (!elev) {
       if (d === D.STACK && n % 4 === 2) drawLaundry(k, n);
@@ -2213,7 +2866,7 @@ function render() {
   // glow, then wet-road reflections of everything above the horizon
   for (let i = 0; i < N * 3; i++) col[i] += lb[i];
   const hr = Math.round(hy);
-  for (let y = hr + 1; y < H; y++) {
+  if (rainOn) for (let y = hr + 1; y < H; y++) {   // weather off also turns off the wet-road reflections
     const ys = 2 * hr - y; if (ys < 0) break;
     const wob = Math.round(Math.sin(y * 0.9 + T * 5) * 0.6);
     for (let x = 0; x < W; x++) {
@@ -2253,7 +2906,7 @@ function render() {
 
 function frame(now) {
   const rawDt = (now - last) / 1000;
-  const dt = Math.min(0.05, rawDt); last = now;
+  const dt = Math.min(0.05, Math.max(0, rawDt)); last = now;
   T += dt;
   update(dt);
   render();
@@ -2273,7 +2926,6 @@ addEventListener('keydown', e => {
   if (KEYMAP[e.key]) { keys[KEYMAP[e.key]] = true; manual(); e.preventDefault(); }
   else if (e.key === 'a' || e.key === 'A') setAuto(!auto);
   else if ('rRwW'.includes(e.key)) toggleRain();
-  else if (e.key === 'h' || e.key === 'H') setHD(!hd);
 });
 addEventListener('keyup', e => { if (KEYMAP[e.key]) keys[KEYMAP[e.key]] = false; });
 function hold(id, key) {
@@ -2288,9 +2940,6 @@ btnA.addEventListener('pointerdown', e => { e.preventDefault(); setAuto(!auto); 
 const btnR = document.getElementById('br2');
 function toggleRain() { rainOn = !rainOn; if (!rainOn) drops = []; btnR.classList.toggle('on', rainOn); }
 btnR.addEventListener('pointerdown', e => { e.preventDefault(); toggleRain(); });
-const btnQ = document.getElementById('bq');
-function setHD(on) { hd = on; btnQ.classList.toggle('on', on); drops = []; streaks = []; setup(); }
-btnQ.addEventListener('pointerdown', e => { e.preventDefault(); setHD(!hd); });
 setTimeout(() => { document.getElementById('hint').style.opacity = 0; }, 9000);
 
 requestAnimationFrame(frame);
