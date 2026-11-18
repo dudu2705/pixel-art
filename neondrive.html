@@ -133,7 +133,13 @@ const linkDeck = shuffle([...LINKS, ...CITIES.slice(LINKS.length).map(() => LINK
 // each connector runs at a level (0 street, 1 sky avenues, 2 crown); the city before it ends on that level and the
 // next city starts on it, so you leave a city, cross and arrive all on the same level
 const LINK_LV = { 13: [0], 24: [0], 25: [0], 28: [0], 29: [0], 27: [2], 5: [1, 2], 8: [1, 2], 26: [1, 2] };
-CITIES.forEach((c, i) => { shuffle(c.zones); c.link = linkDeck[i]; const o = LINK_LV[c.link[0]]; c.endLv = o[(rng() * o.length) | 0]; });
+CITIES.forEach((c, i) => {
+  shuffle(c.zones);
+  // the spiral always runs street to crown, so it never opens or closes a city (that would break the level hand-over)
+  const ri = c.zones.findIndex(z => z[0] === 16), mid = c.zones.length >> 1;
+  if (ri === 0 || ri === c.zones.length - 1) [c.zones[ri], c.zones[mid]] = [c.zones[mid], c.zones[ri]];
+  c.link = linkDeck[i]; const o = LINK_LV[c.link[0]]; c.endLv = o[(rng() * o.length) | 0];
+});
 const CITY_SCALE = 3.5, LINK_SCALE = 1.5;            // how long each district and each link between cities runs
 const ZONES = [];                       // [start, end, district, city, isLink]
 const NSEG = (() => {
@@ -158,11 +164,11 @@ let fogK = 1;
 const RW = 7, SW = 3.2, NEAR = 0.7;
 let roll = 0;
 const BIKE_NAMES = ['CAFE RACER', 'SUPERBIKE', 'CYBER CHOPPER', 'HOVER BIKE', 'NEO SCOOTER', 'NO BIKE'];
-const CRUISE = [22, 36, 53], CRUISE_KMH = [80, 130, 190];   // autopilot cruise speeds, V cycles them
+const CRUISE = [22, 36, 53, 69], CRUISE_KMH = [80, 130, 190, 250];   // autopilot cruise speeds, V cycles them
 let cruise = 2, wakeLock = null, lightOn = true;
 const DAY = 3600, DAY0 = rng() * DAY;                  // one slow day-night cycle per hour, starting anywhere in it
 let bikeStyle = 2, bikeGeo = {}, horizY = 0, crownK = 0;   // crownK: 0 below level 3, 1 riding the crown          // the chopper is the default ride
-const maxV = () => district(Math.floor(camZ / SEGL) % NSEG) === D.VAC ? 95 : 62;   // the vactrain lets you fly
+const maxV = () => district(Math.floor(camZ / SEGL) % NSEG) === D.VAC ? 125 : 83;   // 300 km/h, and 450 in the vactrain
 const eye = () => 1.4;
 const NEON = [[255, 46, 170], [0, 234, 255], [255, 214, 64], [170, 90, 255], [70, 255, 150], [255, 110, 50]];
 const WIN = [[255, 200, 120], [255, 170, 90], [120, 220, 255], [255, 120, 200], [200, 190, 255], [255, 236, 190]];
@@ -276,10 +282,10 @@ const TRANS = [], TRANS_AT = new Int16Array(NSEG).fill(-1);
   // every level change is its own ramp that splits off the road you're on, then merges into the new level
   let prevC = 0;
   for (let n = 1; n < NSEG; n++) if (LAYER[n] !== LAYER[n - 1]) {
-    const a = LAYER[n - 1], b = LAYER[n], want = Math.abs(LH[b] - LH[a]) > 50 ? 200 : 130;
+    const a = LAYER[n - 1], b = LAYER[n], want = clamp(Math.abs(LH[b] - LH[a]) * 4, 130, 420);   // ~16 m of road per metre of height: no steep dives
     const len = Math.max(40, Math.min(want, n - prevC - 130));
     for (let i = 0; i < len; i++) ELEV[n - len + i] = LH[a] + (LH[b] - LH[a]) * smooth(0, 1, (i + 1) / len);
-    TRANS.push({ s: n - len, e: n, from: a, to: b, side: lr() < 0.5 ? -1 : 1, curv: lr() < 0.5 ? 0 : (lr() < 0.5 ? -1 : 1) * (0.015 + lr() * 0.02) });
+    TRANS.push({ s: n - len, e: n, from: a, to: b, side: lr() < 0.5 ? -1 : 1, curv: lr() < 0.5 ? 0 : (lr() < 0.5 ? -1 : 1) * (0.008 + lr() * 0.012) });
     prevC = n;
   }
   TRANS.forEach((tr, i) => { for (let n = tr.s - 70; n < tr.e + 70; n++) TRANS_AT[(n + NSEG) % NSEG] = i; });
@@ -488,7 +494,7 @@ function airOk(n) {                                   // no air traffic inside t
 }
 
 // ---------- buffers ----------
-let W, H, N, PX, F, HOR, HB, PW, img, fb, col, lb, refl;
+let F0 = 1, vib = 0, W, H, N, PX, F, HOR, HB, PW, img, fb, col, lb, refl;
 let OW, OH, SWD, SHD, MX, MY, colS, colO, bmask, bcol, vmask, vcol;
 function useScene() { W = SWD; H = SHD; N = W * H; col = colS; }
 function useOut() { W = OW; H = OH; N = W * H; col = colO; }
@@ -501,7 +507,7 @@ function setup() {
   PX = Math.max(1.5, Math.max(innerWidth, innerHeight) / 450);
   OW = Math.ceil(innerWidth / PX); OH = Math.ceil(innerHeight / PX);
   // the scene is rendered with a margin so it can be rolled (motorcycle lean) without empty corners
-  const th = 0.27;
+  const th = 0.43;                                   // room for the deepest lean
   MX = Math.ceil((OW * (Math.cos(th) - 1) + OH * Math.sin(th)) / 2) + 2;
   MY = Math.ceil((OW * Math.sin(th) + OH * (Math.cos(th) - 1)) / 2) + 2;
   SWD = OW + 2 * MX; SHD = OH + 2 * MY;
@@ -511,7 +517,7 @@ function setup() {
   fb = new Uint32Array(img.data.buffer);
   colS = new Float32Array(SWD * SHD * 3); lb = new Float32Array(SWD * SHD * 3); refl = new Float32Array(SWD * SHD);
   colO = new Float32Array(OW * OH * 3);
-  F = Math.max(OW * 0.62, OH * 0.8);
+  F = F0 = Math.max(OW * 0.62, OH * 0.8);
   HB = Math.round(OH * 0.45);
   HOR = MY + HB;
   PW = Math.round(F * 2 * Math.PI);
@@ -657,14 +663,18 @@ function update(dt) {
     laneCool -= dt;
     const other = autoLane > 3 ? 1.75 : 5.25;
     const cur = laneInfo(autoLane), alt = laneInfo(other);
-    if (laneCool <= 0 && cur.d < 90 && alt.d > cur.d + 20 && !alt.blocked) { autoLane = other; laneCool = 2.5; }
+    const look = Math.max(80, speed * speed / 12 + 30);   // far enough ahead to stop from this speed
+    if (laneCool <= 0 && cur.d < look + 10 && alt.d > cur.d + 20 && !alt.blocked) { autoLane = other; laneCool = 2.5; }
     let target = Math.min(maxV() * 0.86, CRUISE[cruise] * (district(n) === D.VAC ? 1.6 : 1));
+    let kmax = 0;                                    // ease off before a sharp bend: keep sideways grip under about 0.7 g
+    for (let i = 0; i < 40; i++) kmax = Math.max(kmax, Math.abs(curve[(n + i) % NSEG]));
+    if (kmax > 0) target = Math.min(target, Math.sqrt(7 / (kmax / (SEGL * SEGL))));
     const now = laneInfo(autoLane);
-    if (now.d < 80) target = Math.min(target, now.v + (now.d - 16) * 0.55);
+    if (now.d < look) target = Math.min(target, now.v + Math.sqrt(2 * 6 * Math.max(0, now.d - 16)));   // brake early, smoothly
     // traffic lights: brake smoothly to the stop line, wait for green and for people to finish crossing
     if (IX.length) {
       const i = nextIx(camZ), dist = ((IXZ[i] - 5 - camZ) % LEN + LEN) % LEN;
-      if (dist < 120 && mustStop(i, dist)) target = Math.min(target, Math.sqrt(2 * 6 * Math.max(0, dist - 6)));
+      if (dist < Math.max(120, look + 40) && mustStop(i, dist)) target = Math.min(target, Math.sqrt(2 * 6 * Math.max(0, dist - 6)));
     }
     speed += clamp(target - speed, -22 * dt, 9 * dt);
     const want = (autoLane - px) * 1.8 + kappa * speed * speed * 0.35;
@@ -680,7 +690,8 @@ function update(dt) {
   px += steer * latMax * dt;
   px -= kappa * speed * speed * dt * 0.35;
   // a motorcycle leans into turns: the whole view rolls
-  const rollT = clamp((steer * latMax * Math.min(speed, 40) * 0.05 + kappa * speed * speed) / 9.8, -0.26, 0.26);
+  // lean like a real bike: the angle whose tangent is sideways acceleration over gravity
+  const rollT = clamp(Math.atan((steer * latMax * Math.min(speed, 40) * 0.05 + kappa * speed * speed) / 9.8), -0.42, 0.42);
   roll += (rollT - roll) * Math.min(1, dt * 4);
   if (Math.abs(px) > RW - 1) { px = Math.sign(px) * (RW - 1); speed *= 1 - dt * 1.5; shake = Math.max(shake, 0.15 * Math.min(1, speed / 20)); }
 
@@ -2732,6 +2743,16 @@ function text(str, x, y, c, sc) {
 }
 
 function drawGlass() {
+  // wind streaks rushing past the edges of the view at speed
+  const wk = smooth(55, 83, speed);
+  if (wk > 0.01) for (let i = 0; i < 26; i++) {
+    const ang = hash(i, 1, 501) * Math.PI * 2, ph = (T * (1.2 + hash(i, 2, 502)) + hash(i, 3, 503)) % 1;
+    const r0 = 0.55 + ph * 0.6, len = 0.06 + hash(i, 4, 504) * 0.08, ca = Math.cos(ang), sa = Math.sin(ang);
+    for (let t = 0; t < 1; t += 0.06) {
+      const rr = r0 + len * t, x = Math.round(W / 2 + ca * rr * W * 0.5), y = Math.round(H * 0.45 + sa * rr * H * 0.5);
+      addc(x, y, [200, 220, 255], 0.13 * wk * (1 - t) * (1 - ph * 0.5));
+    }
+  }
   // rain streaks outside
   for (const s of streaks) {
     const cd = Math.abs(s.x - W / 2) / W + Math.abs(s.y - H * 0.42) / H;   // fainter near the centre of view
@@ -2768,7 +2789,7 @@ function thick(x0, y0, x1, y1, r, c, hi) {
 // ---------- the bike: five cockpits, S cycles through them ----------
 const LVC = [[255, 150, 60], [0, 235, 255], [255, 60, 190]];   // level colours L1, L2, L3
 
-// the static parts of the current cockpit: bmask (1 solid, 2 tinted glass) under the readouts, vmask over everything
+// the static parts of the current cockpit: bmask (1 solid, 2 tinted glass, 3 smoked glass) under the readouts, vmask over everything
 function buildBike() {
   useOut();
   bmask = new Uint8Array(N); bcol = new Float32Array(N * 3); vmask = new Uint8Array(N); vcol = new Float32Array(N * 3);
@@ -2837,18 +2858,15 @@ function buildBike() {
     for (let y = g.ty - 2; y < g.ty + g.th + 2; y++) for (let x = g.tx - 2; x < g.tx + g.tw + 2; x++)
       setB(x, y, x < g.tx || y < g.ty || x >= g.tx + g.tw || y >= g.ty + g.th ? [60, 60, 80] : [6, 8, 12]);
     helmet();
-  } else if (s === 2) {                              // cyber chopper: long chrome tank with neon pinstripes, no dash at all
-    ell(cx, H * 1.02, W * 0.12, H * 0.2, (x, y, nx, ny, e) => {
-      const sh = clamp(1 - Math.abs(nx + 0.35) * 1.6, 0, 1);
-      let c = mix([34, 32, 48], [210, 216, 236], sh * sh);
-      if (Math.abs(Math.abs(nx) - 0.66) < 0.035) c = [255, 46, 170];
-      if (e > 0.94) c = [20, 18, 28];
-      setB(x, y, c);
+  } else if (s === 2) {                              // cyber chopper: a dome of smoked glass with a glowing ring floating inside, no dash
+    ell(cx, H * 1.04, W * 0.13, H * 0.24, (x, y, nx, ny, e) => {
+      if (e > 0.9) setB(x, y, [92, 98, 122]);                                             // the dome's rim
+      else if (nx < -0.25 && nx > -0.55 && ny < -0.35 && ny > -0.8 && Math.abs(nx + 0.4 - (ny + 0.6) * 0.3) < 0.07) setB(x, y, [46, 52, 68], 3);   // a highlight on the glass
+      else setB(x, y, [6, 9, 16], 3);                                                     // smoked glass: the road shows through, deeply darkened
     });
-    ell(cx, H * 0.85, R * 0.018 + 1, R * 0.012 + 1, (x, y) => setB(x, y, [170, 170, 190]));
-    for (const sd of [-1, 1]) for (let y = Math.round(H * 0.78); y < H * 0.84; y++)
-      for (let x = 0; x < Math.max(2, W * 0.012); x++) setB(cx + sd * (W * 0.025 + x), y, [70, 70, 90]);
-    g.holo = [cx, H * 0.64]; g.proj = [cx, H * 0.83];
+    for (const sd of [-1, 1]) for (let y = Math.round(H * 0.84); y < H * 0.9; y++)      // short risers to the low bar
+      for (let x = 0; x < Math.max(2, W * 0.01); x++) setB(cx + sd * (W * 0.03 + x), y, [60, 62, 78]);
+    g.ring = [cx, H * 0.92]; g.holo = [cx, H * 0.71]; g.proj = [cx, H * 0.81];
     helmet();
   } else if (s === 3) {                              // hover bike: a canopy frame with struts, a low console, no wheels
     for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
@@ -2937,6 +2955,7 @@ function miniMap(x0, y0, w, h, c) {                 // the road ahead, bent by t
 // one chrome tube clamped in the middle, switch housings, levers in front of ribbed rubber grips, metal bar ends
 function barSet(pcy, path, r) {
   const a = steer * 0.07, ca = Math.cos(a), sa = Math.sin(a);
+  pcy += vib;
   const side = sd => path.map(([fx, fy]) => { const ex = fx * W * sd, ey = fy * H; return [W / 2 + ex * ca - ey * sa, pcy + ex * sa + ey * ca]; });
   const L = side(-1), Rt = side(1), tube = [52, 52, 62], tubeHi = [165, 168, 182];
   thick(L[0][0], L[0][1], Rt[0][0], Rt[0][1], r, tube, tubeHi);                        // across the middle
@@ -2967,7 +2986,8 @@ function drawBike() {
     const m = bmask[i]; if (!m) continue;
     const j = i * 3;
     if (m === 1) { col[j] = bcol[j]; col[j + 1] = bcol[j + 1]; col[j + 2] = bcol[j + 2]; }
-    else { col[j] = col[j] * 0.7 + bcol[j]; col[j + 1] = col[j + 1] * 0.7 + bcol[j + 1]; col[j + 2] = col[j + 2] * 0.75 + bcol[j + 2]; }
+    else if (m === 2) { col[j] = col[j] * 0.7 + bcol[j]; col[j + 1] = col[j + 1] * 0.7 + bcol[j + 1]; col[j + 2] = col[j + 2] * 0.75 + bcol[j + 2]; }
+    else { col[j] = col[j] * 0.3 + bcol[j]; col[j + 1] = col[j + 1] * 0.3 + bcol[j + 1]; col[j + 2] = col[j + 2] * 0.34 + bcol[j + 2]; }   // smoked glass
   }
   const I = hudInfo(), sc = H > 200 ? 2 : 1, g = bikeGeo, s = bikeStyle, R = Math.min(W, H), cx = W / 2;
   const r = Math.max(1, Math.round(H * 0.008)), spd = String(I.kmh).padStart(3, ' ');
@@ -2997,15 +3017,22 @@ function drawBike() {
     miniMap(tx + tw - 24, ty + th - 13, 20, 11, [0, 200, 255]);
     barSet(H * 0.93, [[0.08, 0], [0.27, 0.03], [0.36, 0.045]], r);
   } else if (s === 2) {                              // cyber chopper: ape hangers, hologram over the tank
-    barSet(H * 0.86, [[0.03, -0.04], [0.16, -0.07], [0.27, -0.24], [0.29, -0.33]], r);
-    const [hx, hy] = g.holo, glitch = hash(Math.floor(T * 8), 7, 7) < 0.07, ox = glitch ? 2 : 0;
-    const a = 0.7 + 0.15 * Math.sin(T * 9) + 0.1 * Math.sin(T * 23), hc = [80, 230, 255], big = sc + 1, sw = 12 * big - big;
-    for (let i = -6; i <= 6; i++) {                   // the projector beam rising from the tank
-      const x1 = hx + i * W * 0.012, y1 = hy + 6 * sc;
-      for (let t = 0; t <= 1; t += 0.02) addc(Math.round(g.proj[0] + (x1 - g.proj[0]) * t), Math.round(g.proj[1] + (y1 - g.proj[1]) * t), hc, 0.05);
+    barSet(H * 0.9, [[0.03, -0.03], [0.17, -0.05], [0.27, -0.15], [0.29, -0.22]], r);
+    {                                                 // the ring floating under the glass, breathing slowly
+      const [rx0, ry0] = g.ring, rx = W * 0.045, ry = Math.max(3, H * 0.018), p = 0.65 + 0.35 * Math.sin(T * 1.8), steps = Math.ceil(rx * 7);
+      for (let i = 0; i < steps; i++) { const t = i / steps * 2 * Math.PI; addc(Math.round(rx0 + Math.cos(t) * rx), Math.round(ry0 + Math.sin(t) * ry), [80, 230, 255], 0.9 * p); }
+      for (let y = -ry * 3; y <= ry * 3; y++) for (let x = -rx * 1.6; x <= rx * 1.6; x++) {
+        const d = Math.hypot(x / (rx * 1.6), y / (ry * 3)); if (d < 1) addc(Math.round(rx0 + x), Math.round(ry0 + y), [0, 160, 220], (1 - d) * 0.18 * p);
+      }
+    }
+    const [hx, hy] = g.holo, glitch = hash(Math.floor(T * 8), 7, 7) < 0.05, ox = glitch ? 1 : 0;
+    const a = 0.45 + 0.08 * Math.sin(T * 9) + 0.05 * Math.sin(T * 23), hc = [80, 230, 255], big = sc, sw = 12 * big - big;
+    for (let i = -4; i <= 4; i++) {                   // a faint projector beam from the emitter on the tank
+      const x1 = hx + i * W * 0.008, y1 = hy + 6 * sc;
+      for (let t = 0; t <= 1; t += 0.03) addc(Math.round(g.proj[0] + (x1 - g.proj[0]) * t), Math.round(g.proj[1] + (y1 - g.proj[1]) * t), hc, 0.025);
     }
     const tY = Math.round(hy - 5 * big), lX = Math.round(hx - sw / 2);
-    shade(lX - 13, tY - 4, hx + sw / 2 + 15, hy + 11, 0.45);
+    shade(lX - 13, tY - 4, hx + sw / 2 + 15, hy + 11, 0.8);
     htext(spd, lX + ox, tY, hc, big, a);
     if (glitch) htext(spd, lX - 2, tY, [255, 60, 180], big, 0.4);
     htext(I.st, Math.round(hx - I.st.length * 2), Math.round(hy + 3), I.stC, 1, a);
@@ -3017,7 +3044,7 @@ function drawBike() {
     }
     const bx0 = lX - 13, bx1 = Math.round(hx + sw / 2 + 15), by0 = tY - 4, by1 = Math.round(hy + 11);
     for (let k = 0; k < 4; k++) for (const [x, y, dx, dy] of [[bx0, by0, 1, 0], [bx0, by0, 0, 1], [bx1, by0, -1, 0], [bx1, by0, 0, 1], [bx0, by1, 1, 0], [bx0, by1, 0, -1], [bx1, by1, -1, 0], [bx1, by1, 0, -1]])
-      addc(x + dx * k, y + dy * k, hc, 0.5 * a);
+      addc(x + dx * k, y + dy * k, hc, 0.3 * a);
   } else if (s === 3) {                              // hover bike: HUD drawn on the canopy glass
     const hc = [80, 255, 220], big = sc + 1, sx = Math.round(W * 0.17), sy = Math.round(H * 0.16);
     shade(sx - 4, sy - 4, sx + 12 * big + 2, sy + 6 * big + 14, 0.55);
@@ -3092,6 +3119,8 @@ function headlight(hy) {
 
 function render() {
   useScene();
+  F = F0 * (1 - 0.14 * smooth(45, 85, speed));      // the view widens as you go faster
+  vib = (Math.random() - 0.5) * 2 * smooth(62, 83, speed);   // and the bars hum at the top end
   lb.fill(0); refl.fill(0);
   const base = Math.floor(camZ / SEGL), frac = camZ / SEGL - base;
   const b0 = base % NSEG, b1 = (base + 1) % NSEG;
@@ -3219,14 +3248,14 @@ function render() {
     }
     if (sw && sw.hb + 1.4 >= EL[k]) drawSkywalk(k, n, sw);
     if (n % 60 === 30 && airOk(n)) drawGates(k, n);
-    if (d === D.SHRINE && n % 3 === 0) drawTorii(k, n);
-    if (!elev) {
+    if (d === D.SHRINE && n % 3 === 0 && !lift) drawTorii(k, n);
+    if (!elev && !lift) {
       if (d === D.STACK && n % 4 === 2) drawLaundry(k, n);
       if (d === 0 || d === 2) drawMonorail(k, n);
       if (d === 0 && n % 7 === 3) drawWires(k, n);
       if (d === 1 && n % 3 === 0) drawLanterns(k, n);
     }
-    if (![D.TUNNEL, D.BRIDGE, D.TUBE, D.RAMP].includes(d) && n % 300 === 150) drawKoi(k, n);
+    if (![D.TUNNEL, D.BRIDGE, D.TUBE, D.RAMP].includes(d) && !lift && n % 300 === 150) drawKoi(k, n);
     { const zz = zoneAt(n);
       if (zz[4] && zz[2] !== D.TUBE && n === zz[0] + 4) { const c2 = CITIES[(zz[3] + 1) % CITIES.length]; drawGantry(k, c2.name, c2.neon[0]); }
       if (!zz[4] && n === zz[0] + 2 && zoneAt(n - 3)[4] && zz[2] !== D.TUNNEL) drawGantry(k, CITIES[zz[3]].name, CITIES[zz[3]].neon[0]);
