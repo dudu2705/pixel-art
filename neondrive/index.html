@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Neon Drive 3D</title>
+<meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no">
+<style>
+  :root { color-scheme: dark; }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body { height: 100%; background: #05060c; overflow: hidden; }
+  canvas { display: block; width: 100vw; height: 100vh; image-rendering: pixelated; touch-action: none; cursor: grab; }
+  canvas:active { cursor: grabbing; }
+  #ui { position: fixed; inset: 0; pointer-events: none; font: 12px/1.5 ui-monospace, "SF Mono", Menlo, monospace;
+        color: #cfe8ff; text-shadow: 0 1px 0 #000; letter-spacing: .04em; }
+  #tl { position: absolute; top: 12px; left: 14px; }
+  #tr { position: absolute; top: 12px; right: 14px; text-align: right; }
+  #bl { position: absolute; bottom: 12px; left: 14px; opacity: .72; line-height: 1.7; }
+  #mode { color: #6ff; font-weight: 600; }
+  #place { color: #ff7ad1; }
+  #kmh { font-size: 20px; color: #fff; }
+  #fps { color: #8fb; }
+  #banner { position: absolute; top: 18%; left: 0; right: 0; text-align: center; font-size: 18px;
+            letter-spacing: .22em; color: #fff; opacity: 0; transition: opacity .35s;
+            text-shadow: 0 0 12px #000, 0 2px 0 #000; }
+  #lvl { font-size: 14px; font-weight: 600; }
+  kbd { background: #1a2130; border: 1px solid #2d3a52; border-radius: 3px; padding: 0 4px; color: #9fd; }
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<div id="ui">
+  <div id="tl"><div id="mode">CHASE</div><div id="place">—</div></div>
+  <div id="tr"><div id="kmh">0 KM/H</div><div id="lvl">L1</div><div id="fps">— FPS</div></div>
+  <div id="banner"></div>
+  <div id="bl">
+    <div><kbd>&larr;</kbd><kbd>&rarr;</kbd> steer · <kbd>&uarr;</kbd> gas · <kbd>&darr;</kbd> brake · <kbd>A</kbd> autopilot · <kbd>V</kbd> cruise</div>
+    <div><kbd>R</kbd> weather · <kbd>L</kbd> headlight · <kbd>C</kbd> camera · <kbd>H</kbd> hints</div>
+    <div><kbd>1</kbd> cockpit <kbd>2</kbd> chase <kbd>3</kbd> side <kbd>4</kbd> top <kbd>5</kbd> orbit <kbd>6</kbd> free · drag to look, wheel to zoom</div>
+  </div>
+</div>
+<script type="module" src="./main.js"></script>
+</body>
+</html>
