@@ -3035,6 +3035,19 @@ function drawBike() {
   for (let i = 0; i < N; i++) if (vmask[i]) { const j = i * 3; col[j] = vcol[j]; col[j + 1] = vcol[j + 1]; col[j + 2] = vcol[j + 2]; }
 }
 
+// the bike's own headlight: a soft pool stretched along the road ahead, brighter in dark cities and late at night
+// (it used to be one round glow, which the stepped light bands boiled down to a lone blob in the middle of the road)
+function headlight(hy) {
+  const e = eye(), k0 = 0.14 + 0.22 * TH.dark + 0.08 * TH.night, yFar = hy + e * F / 32, yNear = Math.min(H - 1, hy + e * F / 2.5);
+  for (let y = Math.max(0, Math.ceil(yFar)); y <= yNear; y++) {
+    const z = e * F / (y - hy), w = 2.8 * F / z, a = k0 * smooth(32, 9, z) * smooth(2.5, 6, z);
+    for (let x = Math.max(0, Math.floor(W / 2 - w)); x <= Math.min(W - 1, W / 2 + w); x++) {
+      const u = (x - W / 2) / w, f = a * (1 - u * u), i = (y * W + x) * 3;
+      lb[i] += 190 * f; lb[i + 1] += 215 * f; lb[i + 2] += 255 * f;
+    }
+  }
+}
+
 function render() {
   useScene();
   lb.fill(0); refl.fill(0);
@@ -3177,8 +3190,7 @@ function render() {
     }
   }
 
-  addLight(W / 2, hy + eye() * F / 14, Math.min(30, F * 2.4 / 14), [190, 215, 255], 0.22 + 0.3 * TH.dark);
-  if (TH.dark > 0.3) addLight(W / 2, hy + eye() * F / 30, 24, [190, 215, 255], 0.25 * TH.dark);
+  headlight(hy);
 
   // glow, then wet-road reflections of everything above the horizon
   // deep in the night the city itself sinks into shadow while the neon carries further
