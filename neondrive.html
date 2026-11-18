@@ -504,8 +504,12 @@ const EL = new Float32Array(DRAW + 2), GYL = new Float32Array(DRAW + 2);   // ro
 let gloom = 0, starK = 0;
 
 function setup() {
-  PX = Math.max(1.5, Math.max(innerWidth, innerHeight) / 450);
-  OW = Math.ceil(innerWidth / PX); OH = Math.ceil(innerHeight / PX);
+  // every art pixel is a whole number of physical screen pixels, so the grid stays even and crisp on any screen,
+  // and the shorter side always gets about 280 of them, so pixels are the same size on a laptop or an ultrawide
+  const dpr = devicePixelRatio || 1, pw = innerWidth * dpr, ph = innerHeight * dpr;
+  const k = Math.max(2, Math.round(Math.min(pw, ph) / 280));
+  OW = Math.ceil(pw / k); OH = Math.ceil(ph / k);
+  PX = k / dpr;                                        // CSS pixels per art pixel
   // the scene is rendered with a margin so it can be rolled (motorcycle lean) without empty corners
   const th = 0.43;                                   // room for the deepest lean
   MX = Math.ceil((OW * (Math.cos(th) - 1) + OH * Math.sin(th)) / 2) + 2;
