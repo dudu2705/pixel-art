@@ -157,7 +157,7 @@ const BIKE_NAMES = ['CAFE RACER', 'SUPERBIKE', 'CYBER CHOPPER', 'HOVER BIKE', 'N
 const CRUISE = [22, 36, 53], CRUISE_KMH = [80, 130, 190];   // autopilot cruise speeds, V cycles them
 let cruise = 2, wakeLock = null;
 const DAY = 3600, DAY0 = rng() * DAY;                  // one slow day-night cycle per hour, starting anywhere in it
-let bikeStyle = 2, bikeGeo = {}, horizY = 0;          // the chopper is the default ride
+let bikeStyle = 2, bikeGeo = {}, horizY = 0, crownK = 0;   // crownK: 0 below level 3, 1 riding the crown          // the chopper is the default ride
 const maxV = () => district(Math.floor(camZ / SEGL) % NSEG) === D.VAC ? 95 : 62;   // the vactrain lets you fly
 const eye = () => 1.4;
 const NEON = [[255, 46, 170], [0, 234, 255], [255, 214, 64], [170, 90, 255], [70, 255, 150], [255, 110, 50]];
@@ -371,8 +371,11 @@ for (let side = 0; side < 2; side++) {
       : d === 15 ? 35 + r1 * 60 : 12 + Math.pow(r1, 1.7) * 75;
     const pal = d === 1 || d === 12 ? WARM : cn;
     const hue = city.hue[0] + r2 * (city.hue[1] - city.hue[0]);
-    // most blocks rise past the crown level, so every district reads as a three-level city; the rest stay low podiums
-    const el = ELEV[n], tower = rng() < 0.78 ? LH[2] + 12 + Math.pow(rng(), 1.3) * 95 : 0;
+    // the skyline tops out between level 2 and level 3, so the crown rides over rooftops; a few landmark spires
+    // (more in the supertall districts) rise past it, and some blocks stay low podiums
+    const el = ELEV[n], landmark = rng() < (d === 2 || d === 8 ? 0.4 : 0.12);
+    const tower = landmark ? LH[2] + 20 + Math.pow(rng(), 1.3) * 110 : rng() < 0.85 ? LH[1] + 10 + rng() * (LH[2] - LH[1] - 15) : 0;
+    const fitH = hh => landmark ? Math.max(hh, tower) : Math.min(Math.max(hh, tower), LH[2] - 5);
     const base = d === 1 ? hsl(10 + rng() * 30, 0.28, 0.1 + rng() * 0.07)
       : d === 2 || d === 8 ? hsl(hue, 0.35, 0.12 + rng() * 0.06)
       : d === 4 ? hsl(rng() < 0.5 ? 15 + rng() * 20 : 170 + rng() * 30, 0.3, 0.13 + rng() * 0.06)
@@ -386,7 +389,7 @@ for (let side = 0; side < 2; side++) {
       : hsl(hue, 0.22, 0.09 + rng() * 0.08);
     const styleOf = { 8: 2 };
     const B = {
-      id: blocks.length, start: n, len, h: Math.max(h, tower), style: styleOf[d] !== undefined ? styleOf[d] : d, seed: (rng() * 1e6) | 0, base, dark,
+      id: blocks.length, start: n, len, h: fitH(h), landmark, style: styleOf[d] !== undefined ? styleOf[d] : d, seed: (rng() * 1e6) | 0, base, dark,
       set: d === 1 || d === 9 || d === 12 ? rng() * 0.6 : d === 2 ? 1 + rng() * 3 : d === 4 ? 3 + rng() * 4 : d === 8 ? 45 + rng() * 40
         : d === 14 ? 3 + rng() * 4 : d === 15 ? rng() * 3 : rng() * 2.5,
       winP: (d === 2 || d === 8 ? 0.45 + rng() * 0.3 : d === 1 || d === 6 || d === 9 ? 0.35 + rng() * 0.3 : d === 4 ? 0.08
@@ -400,11 +403,13 @@ for (let side = 0; side < 2; side++) {
     B.lobby = cn[(rng() * 6) | 0];
     const sn = STYLE_NEW[d];
     if (sn) {
-      B.h = Math.max(sn.h0 + r1 * sn.hr, tower); B.base = sn.base(); B.set = sn.set + rng() * 3; B.winP = sn.winP * (dark ? 0.12 : 1);
+      B.h = fitH(sn.h0 + r1 * sn.hr); B.base = sn.base(); B.set = sn.set + rng() * 3; B.winP = sn.winP * (dark ? 0.12 : 1);
       if (sn.noCrown) B.crown = null;
     }
-    if (el > 1) B.set += 5 + rng() * 10;              // a gap beside the elevated road so you can see down
+    if (el > LH[1] + 5) B.set += 14 + rng() * 16;     // the crown keeps well clear, so you look down over the roofs
+    else if (el > 1) B.set += 5 + rng() * 10;         // a gap beside the elevated road so you can see down
     B.roof = (rng() * 4) | 0;
+    B.roofKind = (rng() * 6) | 0;                     // 0-1 mixed, 2 helipad, 3 rooftop bar, 4 neon sign facing the sky, 5 solar farm
     const wc = d === 2 || d === 8 ? [150, 190, 235] : d === 10 ? [40, 120, 80] : [220, 170, 120];
     B.avg = mix(B.base, wc, B.winP * 0.35);
     const L = len * SEGL;
@@ -458,7 +463,7 @@ for (let i = 0; i < 380; i++) {
     speed: dir > 0 ? 13 + rng() * 13 : 16 + rng() * 10,
     body: hsl(rng() * 360, 0.25 + rng() * 0.3, 0.14 + rng() * 0.12),
     tail: rng() < 0.6 ? [255, 36, 60] : [255, 40, 170],
-    under: NEON[(rng() * 6) | 0], neon: rng() < 0.4,
+    under: NEON[(rng() * 6) | 0], neon: rng() < 0.4, sky: rng() < 0.2,
   });
 }
 for (const c of cars) c.cur = c.speed;              // set up front: a car queueing behind one not yet updated read undefined and went NaN
@@ -619,10 +624,13 @@ function pedsOn(i) { return crossers(i).some(c => Math.abs(c.x) < RW + 0.6); }
 function mustStop(i, dist) { if (IXR[i]) return pedsOn(i); const st = lightState(i); return st === 2 || (st === 1 && dist > 20) || pedsOn(i); }
 let waitLight = false;
 
+// only about one car in five takes the crown; the rest leave it quiet (not drawn, not in the way)
+function onCrown(z) { const n = Math.floor(z / SEGL) % NSEG; return LAYERED[n] && ELEV[n] > LH[1] + 5; }
+function ghost(c) { return !c.sky && onCrown(c.z); }
 function laneInfo(lx) {
   let d = 1e9, v = maxV(), blocked = false;
   for (const c of cars) {
-    if (Math.abs(c.x - lx) > 2.0) continue;
+    if (Math.abs(c.x - lx) > 2.0 || ghost(c)) continue;
     const r = rel(c.z);
     if (r > LEN - 9 || r < 10) blocked = true;
     const e = c.dir < 0 ? r * 0.45 : r;
@@ -692,7 +700,7 @@ function update(dt) {
       const gap = ((c.dir * (o.z - c.z)) % LEN + LEN) % LEN;
       if (gap > 0 && gap < 16) tgt = Math.min(tgt, Math.max(0, o.cur + (gap - 8) * 1.2));
     }
-    if (c.dir > 0 && Math.abs(c.x - px) < 1.6) {     // and behind you
+    if (c.dir > 0 && Math.abs(c.x - px) < 1.6 && !ghost(c)) {     // and behind you
       const gap = ((camZ - c.z) % LEN + LEN) % LEN;
       if (gap > 0 && gap < 16) tgt = Math.min(tgt, Math.max(0, speed + (gap - 8) * 1.2));
     }
@@ -701,7 +709,7 @@ function update(dt) {
     c.brk = c.cur < prev - 0.01 || c.cur < 0.5;
     c.z = ((c.z + c.dir * c.cur * dt) % LEN + LEN) % LEN;
     const r = rel(c.z);
-    if (r < 3.2 && Math.abs(c.x - px) < 1.3) {
+    if (r < 3.2 && Math.abs(c.x - px) < 1.3 && !ghost(c)) {
       if (c.dir > 0) { if (speed > c.cur) { speed = c.cur * 0.6; c.z = (camZ + 5) % LEN; shake = 0.7; crashFlash = 0.6; } }
       else { speed *= 0.25; c.z = (camZ - 6 + LEN) % LEN; shake = 1; crashFlash = 1; }
     }
@@ -896,7 +904,7 @@ function drawSky(hy) {
   }
   const bx = Math.floor(bgX);
   {
-    const mx = ((Math.round(PW * 0.62) - bx) % PW + PW) % PW, my = Math.round(hy - HB * 0.72), mr = Math.max(6, Math.round(HB * 0.12));
+    const mx = ((Math.round(PW * 0.62) - bx) % PW + PW) % PW, my = Math.round(hy - HB * 0.72), mr = Math.max(6, Math.round(HB * 0.12 * (1 + 0.6 * crownK)));
     if (mx > -mr && mx < W + mr && TH.deep < 0.5) {
       const mc = mix([240, 236, 250], hz, 0.15);
       for (let dy = -mr; dy <= mr; dy++) for (let dx = -mr; dx <= mr; dx++) {
@@ -964,6 +972,26 @@ function drawSky(hy) {
       const ty = y0 + Math.sin(T * 1.2 - 3) * L * 0.03;
       for (let f = 0; f < L * 0.12; f++) for (const sg of [-1, 1]) putc(Math.round(x0 - L - f * 0.6), Math.round(ty + sg * f * 0.8), c);
     }
+  }
+  // up at the crown: a cloud deck drifting just overhead, thinning toward the horizon
+  if (crownK > 0.02) {
+    const cc = mix(mix(mid, hz, 0.5), [190, 185, 215], 0.3), y1 = Math.floor(hy - HB * 0.1);
+    for (let y = 0; y < y1; y++) {
+      const z = 40 * F / (hy - y), fade = smooth(0, 0.35, (hy - y) / HB) * crownK;
+      for (let x = 0; x < W; x += 2) {
+        const v = vnoise((x + bgX - W / 2) * z / F * 0.012, (camZ + z) * 0.01 + T * 0.01, 91), d = (v - 0.55) * 3;
+        if (d <= 0) continue;
+        const a = Math.min(1, d) * 0.55 * fade;
+        for (let q = 0; q < 2 && x + q < W; q++) { const i = (y * W + x + q) * 3; col[i] += (cc[0] - col[i]) * a; col[i + 1] += (cc[1] - col[i + 1]) * a; col[i + 2] += (cc[2] - col[i + 2]) * a; }
+      }
+    }
+  }
+  // aircraft crossing far off, blinking
+  for (let i = 0; i < 4; i++) {
+    const x = ((Math.round(PW * i * 0.27 + T * (6 + i * 2) * (i % 2 ? 1 : -1) - bx)) % PW + PW) % PW, y = Math.round(hy - HB * (0.55 + 0.1 * i));
+    if (x >= W) continue;
+    addc(x, y, [255, 255, 255], 0.5);
+    if ((T * 1.3 + i) % 1 < 0.15) { addc(x + 1, y, [255, 60, 60], 1); addLight(x, y, 3, [255, 60, 60], 0.4); }
   }
   towers(sky1, TWC[0], 0.6, mix(hz, TWC[0], 0.4));
   // hologram jellyshroom above the skyline
@@ -1209,6 +1237,29 @@ function blob(cx, cy, rx, ry, c, a, fz) {
 // ---- rooftops: parapet, gardens, solar panels, AC units, glowing pools ----
 function roofTex(B, ul, wz, mpp) {
   if (ul < 0.5) { const c = B.crown || [80, 72, 98]; TR = c[0]; TG = c[1]; TB = c[2]; return; }
+  const L = B.len * SEGL, lz = ((wz - B.start * SEGL) % LEN + LEN) % LEN, ku = ul - 13, kz = lz - L / 2;
+  if (B.roofKind === 2 && L > 15) {                   // helipad: yellow ring, a big H
+    const d = Math.hypot(ku, kz);
+    if (d < 7.5) {
+      if (d > 6.4) { TR = 230; TG = 190; TB = 40; return; }
+      if (Math.abs(ku) < 2.6 && Math.abs(kz) < 3.2 && (Math.abs(ku) > 1.7 || Math.abs(kz) < 0.45)) { TR = 235; TG = 235; TB = 240; return; }
+      TR = 44; TG = 48; TB = 60; return;
+    }
+  } else if (B.roofKind === 3) {                      // rooftop bar: wooden deck, strings of bulbs, tables
+    if ((lz % 4) < 0.3) { const on = hash(Math.floor(ul * 2), Math.floor(lz / 4), Math.floor(T * 3)) < 0.9; TR = on ? 255 : 90; TG = on ? 205 : 70; TB = on ? 130 : 50; return; }
+    if (mpp < 0.5 && hash(Math.floor(ul / 2.5), Math.floor(lz / 2.5), B.seed) < 0.18 && ((ul % 2.5) < 1.1) && ((lz % 2.5) < 1.1)) { TR = 120; TG = 60; TB = 50; return; }
+    const pl = mpp < 0.4 && (lz % 0.8) < 0.08; TR = pl ? 44 : 78; TG = pl ? 30 : 52; TB = pl ? 24 : 36; return;
+  } else if (B.roofKind === 4 && L > 12) {            // a neon sign laid flat on the roof, made to be seen from above
+    if (Math.abs(ku) < 9 && Math.abs(kz) < L / 2 - 2) {
+      const cu = Math.floor((ku + 9) / 1.5), cz = Math.floor(lz / 1.5);
+      const on = (cu % 4 !== 3) && hash(cu >> 2, (cu & 3) + (cz % 5) * 3, B.seed) < 0.55, fl = hash(Math.floor(T * 6), B.id, 3) < 0.05 ? 0.3 : 1;
+      if (on) { TR = B.lobby[0] * fl; TG = B.lobby[1] * fl; TB = B.lobby[2] * fl; return; }
+      TR = 18; TG = 16; TB = 24; return;
+    }
+  } else if (B.roofKind === 5) {                      // solar farm: rows of tilted panels
+    if ((lz % 3) < 2.2 && (ul % 2.6) < 2.2) { const ln = mpp < 0.4 && ((lz % 0.55) < 0.05 || (ul % 0.55) < 0.05); TR = ln ? 70 : 28; TG = ln ? 90 : 46; TB = ln ? 140 : 104; return; }
+    TR = 40; TG = 40; TB = 48; return;
+  }
   const tx = Math.floor(ul / 5), tz = Math.floor(wz / 5), h = hash(tx, tz, B.seed), fu = ul / 5 - tx, fz = wz / 5 - tz;
   const kind = ((h * 10) | 0) + B.roof * 2 > 13 ? 9 : (((h * 10) | 0) + B.roof * 2) % 10;
   if (kind < 4) { const ln = mpp < 0.5 && (fu < 0.05 || fz < 0.05); TR = ln ? 26 : 44; TG = ln ? 24 : 42; TB = ln ? 32 : 54; return; }
@@ -1222,7 +1273,7 @@ function drawRoof(k, B, wx, sg, yN, yF) {
   const f = k + 1, iN = 1 / Z[k], iF = 1 / Z[f];
   for (let y = Math.max(0, Math.ceil(yF)); y <= Math.min(H - 1, Math.ceil(yN) - 1); y++) {
     const t = (y - yF) / (yN - yF), iz = iF + (iN - iF) * t, z = 1 / iz, s = F * iz, cx = CX[f] + (CX[k] - CX[f]) * t;
-    const xa = cx + wx * s, xb = cx + (wx + sg * 26) * s, fz = fogAt(z), wz = camZ + z;
+    const xa = cx + wx * s, xb = cx + (wx + sg * 36) * s, fz = fogAt(z), wz = camZ + z;
     for (let x = Math.max(0, Math.ceil(Math.min(xa, xb))); x <= Math.min(W - 1, Math.ceil(Math.max(xa, xb)) - 1); x++) {
       roofTex(B, Math.abs((x + 0.5 - cx) / s - wx), wz, 1 / s);
       const i = y * W + x, j = i * 3;
@@ -1243,7 +1294,7 @@ function drawLower(k, d) {
     let lx = -cx * pxw;
     for (let x = 0; x < W; x++, lx += pxw) {
       const a = lx < 0 ? -lx : lx;
-      let r, g, b, rf = 0;
+      let r, g, b, rf = 0, em = 0;
       if (a < RW) {
         if (Math.abs(a - 0.2) < lw) { r = 150; g = 110; b = 40; }
         else if (dash && Math.abs(a - 3.5) < lw) { r = 110; g = 110; b = 130; }
@@ -1251,9 +1302,21 @@ function drawLower(k, d) {
       } else if (a < RW + 0.3) { r = 0; g = 150; b = 180; }
       else if (a < RW + SW) { r = 30; g = 27; b = 40; }
       else if (water) { r = 6; g = 12; b = 26; rf = 0.5; }
-      else { r = 12; g = 10; b = 18; }
-      const i = y * W + x, j = i * 3;
-      col[j] = r + (FOG[0] - r) * fz; col[j + 1] = g + (FOG[1] - g) * fz; col[j + 2] = b + (FOG[2] - b) * fz;
+      else {                                              // the city far below: a grid of lit streets out to the horizon
+        const gx = ((lx % 48) + 48) % 48, gz = ((wz % 48) + 48) % 48;
+        if (gx < 7 || gz < 7) {
+          const lamp = (gx < 7 && (gx < 0.9 || gx > 6.1) && ((wz % 12) + 12) % 12 < 0.9) || (gz < 7 && (gz < 0.9 || gz > 6.1) && ((lx % 12) + 12) % 12 < 0.9);
+          if (lamp) { r = 255; g = 180; b = 90; em = 1; }
+          else if (gx < 7 && Math.abs(gx - 2) < 0.7 && hash(Math.floor((wz - T * 12) / 7), Math.floor(lx / 48), 401) < 0.15) { r = 255; g = 60; b = 60; em = 1; }
+          else if (gx < 7 && Math.abs(gx - 5) < 0.7 && hash(Math.floor((wz + T * 12) / 7), Math.floor(lx / 48), 402) < 0.15) { r = 240; g = 240; b = 255; em = 1; }
+          else { r = 24; g = 22; b = 30; }
+        } else {
+          const lit = hash(Math.floor(lx / 3), Math.floor(wz / 3), 403) < 0.08;
+          r = lit ? 200 : 14; g = lit ? 160 : 12; b = lit ? 110 : 20; em = lit ? 1 : 0;
+        }
+      }
+      const i = y * W + x, j = i * 3, fe = em ? fz * 0.6 : fz;    // lights cut through the haze further than the dark
+      col[j] = r + (FOG[0] - r) * fe; col[j + 1] = g + (FOG[1] - g) * fe; col[j + 2] = b + (FOG[2] - b) * fe;
       refl[i] = rf * (1 - fz) * wet;
     }
   }
@@ -2437,13 +2500,23 @@ function drawWall(k, side, n) {
     }
   }
   // rooftop, when you ride above it
-  if (ytB < ytA - 0.5) drawRoof(k, B, wx, sg, ytA, ytB);
+  if (ytB < ytA - 0.5) {
+    drawRoof(k, B, wx, sg, ytA, ytB);
+    if (n === B.start + (B.len >> 1) && B.roofKind >= 2 && B.roofKind <= 4 && projAt(k, 0) && PZ < 500) {   // rooftop lights
+      const fz = fogAt(PZ), rx = PCX + (wx + sg * 13) * PS, ry = PGL - B.h * PS;
+      if (B.roofKind === 2) for (let i = 0; i < 8; i++) {             // landing lights chasing round the pad
+        const a = i / 8 * 2 * Math.PI, on = ((i - Math.floor(T * 6)) % 8 + 8) % 8 < 2;
+        if (on && projAt(k, 7 * Math.sin(a))) addLight(PCX + (wx + sg * (13 + 7 * Math.cos(a))) * PS, PGL - B.h * PS, clamp(1.2 * PS, 2, 10), [255, 220, 120], 0.6 * (1 - fz));
+      }
+      else addLight(rx, ry, clamp(8 * PS, 4, 30), B.roofKind === 3 ? [255, 190, 110] : B.lobby, 0.3 * (1 - fz));
+    }
+  }
   // antenna masts with aviation lights on the tall towers
   if (n === B.start + (B.len >> 1) && (B.style === D.BAZAAR || B.style === D.CITADEL) && projAt(k, 0) && PZ < 600) {
     if (B.style === D.BAZAAR) drawDome(B, wx, sg); else drawCoil(B, wx, sg);
   }
-  else if (n === B.start + (B.len >> 1) && B.h > 70 && projAt(k, 0) && PZ < 600) {
-    const s = PS, fz = fogAt(PZ), ax = PCX + (wx + sg * 5) * s, top = PGL - B.h * s, mh = (6 + hash(B.id, 1, 5) * 14) * s;
+  else if (n === B.start + (B.len >> 1) && B.landmark && projAt(k, 0) && PZ < 700) {
+    const s = PS, fz = fogAt(PZ), ax = PCX + (wx + sg * 5) * s, top = PGL - B.h * s, mh = (10 + hash(B.id, 1, 5) * 22) * s;
     rect(ax - Math.max(0.5, 0.15 * s), ax + Math.max(0.5, 0.15 * s), top - mh, top, [40, 38, 52], fz);
     if (s > 1.5) rect(ax - 0.6 * s, ax + 0.6 * s, top - mh * 0.55, top - mh * 0.55 + Math.max(1, 0.15 * s), [40, 38, 52], fz);
     if ((T * 1.2 + B.id * 0.37) % 1.5 < 0.5) {
@@ -2970,7 +3043,8 @@ function render() {
   const camY = hill[b0] + (hill[b1] - hill[b0]) * frac + eye() + Math.sin(camZ * 0.9) * 0.015 * Math.min(1, speed / 20);
   // the higher you ride, the more the camera tilts down to show the layers below
   const raise = (hill[b0] - BASE[b0]) + ((hill[b1] - BASE[b1]) - (hill[b0] - BASE[b0])) * frac;
-  const sh = shake * 3, hy = HOR + OH * 0.14 * smooth(0, 80, raise) + (Math.random() - 0.5) * sh;
+  crownK = smooth(45, 80, raise);
+  const sh = shake * 3, hy = HOR + OH * (0.14 * smooth(0, 35, raise) - 0.16 * crownK) + (Math.random() - 0.5) * sh;   // the crown tips the view down over the roofs
   starK = smooth(10, 80, raise);
   horizY = hy;
   const camX = px + (Math.random() - 0.5) * shake * 0.4;
@@ -2994,7 +3068,7 @@ function render() {
   const buckets = new Map();
   for (const c of cars) {
     const r = rel(c.z), k = Math.floor(r / SEGL + frac);
-    if (k < 0 || k >= DRAW || r < NEAR) continue;
+    if (k < 0 || k >= DRAW || r < NEAR || ghost(c)) continue;
     if (!buckets.has(k)) buckets.set(k, []);
     buckets.get(k).push({ c, r });
   }
@@ -3056,7 +3130,7 @@ function render() {
           if (projAt(k, 0)) addLight(PCX + (RW + SW + 6) * PS, PGY - 2.5 * PS, Math.min(20, 3 * PS), [255, 220, 170], 0.3 * (1 - fogAt(PZ)));
         }
       }
-      if (n % 9 === 0 && ![D.MARKET, D.GARDENS, D.SHRINE, D.HIGHWAY, D.RAMP].includes(d)) { drawLamp(k, n, -1); drawLamp(k, n, 1); }
+      if (n % (EL[k] > LH[1] + 5 ? 27 : 9) === 0 && ![D.MARKET, D.GARDENS, D.SHRINE, D.HIGHWAY, D.RAMP].includes(d)) { drawLamp(k, n, -1); drawLamp(k, n, 1); }
       if (d === D.DOCKS && n % 45 === 20) drawCrane(k, hash(n, 2, 43) < 0.5 ? -1 : 1, n);
       if (d === D.BUILD && n % 40 === 15) drawCrane(k, hash(n, 2, 43) < 0.5 ? -1 : 1, n);
       if (d === D.DATA && n % 11 === 0) drawLaser(k, n, hash(n, 4, 4) < 0.5 ? -1 : 1, 30 + hash(n, 5, 5) * 20);
@@ -3108,8 +3182,12 @@ function render() {
 
   // glow, then wet-road reflections of everything above the horizon
   // deep in the night the city itself sinks into shadow while the neon carries further
-  const glowK = 1 + 0.35 * TH.night, dimK = 1 - 0.38 * TH.night;
-  for (let i = 0; i < N * 3; i++) col[i] = col[i] * dimK + lb[i] * glowK;
+  // up at the crown the light turns cool and moonlit, and the neon is left below
+  const glowK = (1 + 0.35 * TH.night) * (1 - 0.25 * crownK), dimK = 1 - 0.38 * TH.night;
+  const cr = dimK * (1 - 0.07 * crownK), cb = dimK * (1 + 0.08 * crownK);
+  for (let i = 0; i < N * 3; i += 3) {
+    col[i] = col[i] * cr + lb[i] * glowK; col[i + 1] = col[i + 1] * dimK + lb[i + 1] * glowK; col[i + 2] = col[i + 2] * cb + lb[i + 2] * glowK;
+  }
   const hr = Math.round(hy);
   if (rainOn) for (let y = hr + 1; y < H; y++) {   // weather off also turns off the wet-road reflections
     const ys = 2 * hr - y; if (ys < 0) break;
