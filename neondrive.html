@@ -27,15 +27,15 @@
   .btn.on { background: rgba(255, 60, 190, 0.45); }
   #bl { left: 18px; } #br { left: 104px; }
   #bb { right: 104px; } #bg { right: 18px; border-color: rgba(0, 230, 255, 0.7); color: #a8f6ff; }
-  #ba, #br2, #bs, #bv { right: 18px; top: 18px; bottom: auto; height: 44px; width: 74px; font-size: 13px; }
-  #br2 { top: 72px; } #bs { top: 126px; } #bv { top: 180px; }
+  #ba, #br2, #bs, #bv, #bh { right: 18px; top: 18px; bottom: auto; height: 44px; width: 74px; font-size: 13px; }
+  #br2 { top: 72px; } #bs { top: 126px; } #bv { top: 180px; } #bh { top: 234px; }
   #zone { left: 50%; top: 58px; transform: translateX(-50%); font-size: 16px; letter-spacing: 6px; color: #9ff4ff;
     border-color: #1d4f5a; transition: opacity 1.2s; opacity: 0; }
 </style>
 </head>
 <body>
 <canvas id="c"></canvas>
-<div id="hint" class="tag">&larr; &rarr; steer &nbsp;&middot;&nbsp; &uarr; gas &nbsp;&middot;&nbsp; &darr; brake &nbsp;&middot;&nbsp; A autopilot &nbsp;&middot;&nbsp; W weather &nbsp;&middot;&nbsp; S style &nbsp;&middot;&nbsp; V cruise &nbsp;&middot;&nbsp; H hide this</div>
+<div id="hint" class="tag">&larr; &rarr; steer &nbsp;&middot;&nbsp; &uarr; gas &nbsp;&middot;&nbsp; &darr; brake &nbsp;&middot;&nbsp; A autopilot &nbsp;&middot;&nbsp; W weather &nbsp;&middot;&nbsp; S style &nbsp;&middot;&nbsp; V cruise &nbsp;&middot;&nbsp; L headlight &nbsp;&middot;&nbsp; H hide this</div>
 <div id="zone" class="tag"></div>
 <div id="pad">
   <div class="btn" id="bl">&#9664;</div><div class="btn" id="br">&#9654;</div>
@@ -44,6 +44,7 @@
   <div class="btn on" id="br2">WX</div>
   <div class="btn" id="bs">BIKE</div>
   <div class="btn" id="bv">CRZ</div>
+  <div class="btn on" id="bh">LIGHT</div>
 </div>
 <script>
 // Pseudo-3D city street rendered into a small pixel buffer; CSS scales it up with nearest-neighbour.
@@ -149,13 +150,13 @@ function district(n) { return zoneAt(n)[2]; }
 function zoneEnd(n) { return zoneAt(n)[1]; }
 const TUNNEL_STARTS = ZONES.filter(z => z[2] === 3).map(z => z[0]);
 let FOG = CITIES[0].fog.slice(), SKY = CITIES[0].sky, TWC = CITIES[0].tw;
-const TH = { aurora: 0, mountains: 0, elevator: 0, fireworks: 0, dark: 0, water: 0, deep: 0, kites: 0, shimmer: 0, night: 0 };
+const TH = { aurora: 0, mountains: 0, elevator: 0, fireworks: 0, dark: 0, water: 0, deep: 0, kites: 0, shimmer: 0, night: 0, l2: 0, neonC: [255, 46, 170] };
 let fogK = 1;
 const RW = 7, SW = 3.2, NEAR = 0.7;
 let roll = 0;
 const BIKE_NAMES = ['CAFE RACER', 'SUPERBIKE', 'CYBER CHOPPER', 'HOVER BIKE', 'NEO SCOOTER', 'NO BIKE'];
 const CRUISE = [22, 36, 53], CRUISE_KMH = [80, 130, 190];   // autopilot cruise speeds, V cycles them
-let cruise = 2, wakeLock = null;
+let cruise = 2, wakeLock = null, lightOn = true;
 const DAY = 3600, DAY0 = rng() * DAY;                  // one slow day-night cycle per hour, starting anywhere in it
 let bikeStyle = 2, bikeGeo = {}, horizY = 0, crownK = 0;   // crownK: 0 below level 3, 1 riding the crown          // the chopper is the default ride
 const maxV = () => district(Math.floor(camZ / SEGL) % NSEG) === D.VAC ? 95 : 62;   // the vactrain lets you fly
@@ -419,6 +420,10 @@ for (let side = 0; side < 2; side++) {
       const u0 = 1 + rng() * (L - w - 2);
       B.bbs.push({ u0, u1: u0 + w, v0, v1: v0 + hh, kind: (rng() * 3) | 0, c1: cn[(rng() * 6) | 0], c2: cn[(rng() * 6) | 0], seed: (rng() * 1e6) | 0 });
     }
+    if (B.h > LH[1] + 26 && L > 14 && rng() < 0.55 * (dark ? 0.4 : 1)) {   // a video wall facing the sky avenue
+      const w = Math.min(L - 2, 12 + rng() * 14), u0 = 1 + rng() * (L - w - 2), v0 = LH[1] + 4 + rng() * 4;
+      B.bbs.push({ u0, u1: u0 + w, v0, v1: v0 + 10 + rng() * 8, kind: (rng() * 5) | 0, c1: cn[(rng() * 6) | 0], c2: cn[(rng() * 6) | 0], seed: (rng() * 1e6) | 0 });
+    }
     const ns = [2, 4, 8, 10, 11, 15].includes(d) ? (d === 15 && rng() < 0.4 ? 1 : 0) : d === 1 || d === 9 ? 2 + ((rng() * 3) | 0)
       : d === 12 ? 1 : rng() < 0.65 ? 1 + ((rng() * 2) | 0) : 0;
     for (let i = 0; i < ns; i++) {
@@ -436,7 +441,7 @@ for (let side = 0; side < 2; side++) {
 const SKYW = new Map();
 for (const z of ZONES) {
   if (z[4] || z[2] === D.TUNNEL || z[2] === D.RAMP) continue;
-  for (let n = z[0] + 20; n < z[1] - 10; n += (ELEV[n] === 0 ? 14 : 28) + Math.floor(rng() * (ELEV[n] === 0 ? 16 : 30))) {
+  for (let n = z[0] + 20; n < z[1] - 10; n += ELEV[n] === 0 ? 14 + Math.floor(rng() * 16) : ELEV[n] === LH[1] ? 10 + Math.floor(rng() * 14) : 28 + Math.floor(rng() * 30)) {
     if (XROAD[n] || XROAD[n + 1] || XROAD[n + 2] || XROAD[n + 3] || XROAD[n - 1] || TRANS_AT[n] >= 0) continue;
     const e = Math.max(ELEV[n], ELEV[n + 2]), e0 = Math.min(ELEV[n], ELEV[n + 2]);
     const cands = [12, 20, 27, 50, 58, 66].filter(h => h > e + 7 || h + 1.4 < e0 - 3);
@@ -453,6 +458,9 @@ for (let i = 0; i < 980; i++) {
     umb: rng() < 0.7 ? NEON[(rng() * 6) | 0] : null, coat: hsl(rng() * 360, 0.2, 0.12 + rng() * 0.1), ph: rng() * 6 });
 }
 let train = { z: 500, v: -26 };
+const ST_H = 40, ST_LAT = RW + SW - 1, ST_LEN = 80;
+const skyT = { z: 900, v: -50 };
+let stEL = 0;
 
 // traffic
 const cars = [];
@@ -471,9 +479,9 @@ for (const c of cars) c.cur = c.speed;              // set up front: a car queue
 // hover cars in two air lanes between the levels (never above the crown)
 const FLY_H = [17, 57];
 const flyers = [];
-for (let i = 0; i < 190; i++) {
+for (let i = 0; i < 280; i++) {
   const dir = rng() < 0.5 ? 1 : -1;
-  flyers.push({ z: rng() * LEN, h: FLY_H[(rng() * 2) | 0] + (rng() - 0.5) * 3, x: dir * (1.5 + rng() * 4.5), dir, v: 22 + rng() * 26,
+  flyers.push({ z: rng() * LEN, h: FLY_H[rng() < 0.6 ? 1 : 0] + (rng() - 0.5) * 3, x: dir * (1.5 + rng() * 4.5), dir, v: 22 + rng() * 26,
     body: hsl(rng() * 360, 0.3, 0.2 + rng() * 0.12), glow: NEON[(rng() * 6) | 0], bob: rng() * 6 });
 }
 function airOk(n) {                                   // no air traffic inside tunnels, the sea tube, ramps or the spiral
@@ -594,6 +602,10 @@ function blendTheme(seg) {
   FOG = mix(FOG, [FOG[0] * 0.5, FOG[1] * 0.5, FOG[2] * 0.6], nk);
   FOG = mix(FOG, [110, 100, 140], dawn * 0.2 * sea);
   TH.night = night * sea;
+  const el = hill[seg % NSEG] - BASE[seg % NSEG], l1 = 1 - smooth(6, 26, el), l2 = smooth(14, 32, el) * (1 - smooth(48, 70, el));
+  TH.neonC = mix(a.neon[0], b.neon[0], t); TH.l2 = l2 * sea;
+  FOG = mix(FOG, [110, 60, 24], l1 * 0.18 * sea);                 // sodium-orange street haze
+  FOG = mix(FOG, mix(TH.neonC, [0, 0, 0], 0.45), l2 * 0.32 * sea); // the sky avenues swim in the city's neon
   return { a, b, t, z };
 }
 
@@ -732,6 +744,9 @@ function update(dt) {
   for (const p of peds) p.z = ((p.z + p.v * dt) % LEN + LEN) % LEN;
   for (const f of flyers) f.z = ((f.z + f.dir * f.v * dt) % LEN + LEN) % LEN;
   train.z = ((train.z + train.v * dt) % LEN + LEN) % LEN;
+  skyT.z = ((skyT.z + skyT.v * dt) % LEN + LEN) % LEN;
+  { const d = ((skyT.z - camZ + LEN / 2) % LEN + LEN) % LEN - LEN / 2;       // out of sight: send the next one, from ahead or racing up from behind
+    if (d < -400 || d > 1800) { skyT.v = (Math.random() < 0.5 ? 1 : -1) * (40 + Math.random() * 25); skyT.z = (camZ + (skyT.v > 0 ? -300 : 900 + Math.random() * 600) + LEN) % LEN; } }
   racer.off = 25 + Math.sin(T * 0.12) * 45; racer.z = camZ + racer.off;
   { const r = rel(train.z); if (r > LEN - 90) train.z = (camZ + 500 + Math.random() * 300) % LEN; }
   const th = blendTheme(Math.floor(camZ / SEGL));
@@ -1103,7 +1118,7 @@ function drawGround(k, d, deckOnly) {
   const deckW = d === D.HIGHWAY ? RW + SW : RW + 1.5;
   const water = d === D.BRIDGE || d === D.CANALS || d === D.FERRY || d === D.PONTOON, deck = d === D.HIGHWAY || d === D.RAMP, sand = d === D.CANYON;
   const lava = d === D.VOLCANO, cloud = d === D.CLOUDS, salt = d === D.SALT, forge = d === D.FORGE, ruin = d === D.RUIN;
-  const pontoon = d === D.PONTOON, ferry = d === D.FERRY;
+  const pontoon = d === D.PONTOON, ferry = d === D.FERRY, lev = EL[k] > LH[1] + 5 ? 3 : EL[k] > 3 ? 2 : 1;
   const f = k + 1, yN = GY[k], yF = GY[f];
   if (yF >= yN) return;
   const y0 = Math.max(0, Math.ceil(yF)), y1 = Math.min(H - 1, Math.ceil(yN) - 1);
@@ -1131,7 +1146,8 @@ function drawGround(k, d, deckOnly) {
         else if (!xr && Math.abs(a - (RW - 0.3)) < lw) { r = 200; g = 200; b = 215; rf = 0.2; }
         else {
           const h = pxw < 0.35 ? hash(Math.floor(lx * 3), zq, 9) * 9 : 4.5; r = 24 + h; g = 22 + h; b = 34 + h; rf = 0.5;
-          if (deckOnly) { r = 20; g = 34; b = 52; op = 0.4; rf = 0.15; if (pxw < 0.5 && (wz % 6) < 0.12) { r = 60; g = 90; b = 120; op = 0.8; } }   // glass lanes
+          if (deckOnly && lev === 3) { r = 14; g = 30; b = 48; op = 0.3; rf = 0.15; }   // glass skyway (no seams: they flickered at speed)
+          else if (deckOnly) { const sm = pxw < 0.5 && ((wz % 3) < 0.07 || (a % 1.75) < 0.05); r = sm ? 22 : 38; g = sm ? 22 : 38; b = sm ? 28 : 48; rf = 0.25; }   // steel plates
           if (sand && a > RW - 1.6 && hash(Math.floor(lx * 2), Math.floor(wz * 0.7), 33) < (a - RW + 1.6) * 0.6) { r = 150; g = 92; b = 54; rf = 0; }
         }
       } else if (deck) {
@@ -1151,7 +1167,8 @@ function drawGround(k, d, deckOnly) {
         else {
           const ln = pxw < 0.5 && (tileRow || ((a - RW) % 1.6) < Math.max(0.1, pxw));
           r = ln ? 30 : 46; g = ln ? 26 : 40; b = ln ? 42 : 60; rf = 0.25;
-          if (deckOnly) { op = ln ? 0.9 : 0.5; rf = 0.1; }
+          if (deckOnly && lev === 3) { op = ln ? 0.9 : 0.35; rf = 0.1; }
+          else if (deckOnly) { r = ln ? 24 : 40; g = ln ? 24 : 38; b = ln ? 30 : 50; rf = 0.15; }   // steel grating
         }
       } else if (water) {
         const sp = pxw < 0.4 && hash(Math.floor(lx * 2), zq, 21) < 0.012;
@@ -1181,6 +1198,10 @@ function drawGround(k, d, deckOnly) {
       if (ruin && a < RW + SW && pxw < 0.5) {             // grass pushing up through the cracks
         const hc = hash(Math.floor(lx * 2.5), Math.floor(wz * 2.5), 44);
         if (hc < 0.05) { r = 40; g = 90; b = 40; rf = 0; } else if (hc < 0.09) { r = 10; g = 10; b = 12; }
+      }
+      if (deckOnly && a < RW && !xr && Math.abs(a - (RW - 0.3)) < lw) {   // lane edge: amber lights on steel, a cyan line on glass
+        if (lev === 3) { r = 90; g = 230; b = 255; op = 1; }
+        else { const on = ((wz % 3) + 3) % 3 < 0.9; r = on ? 255 : 38; g = on ? 170 : 38; b = on ? 60 : 48; op = 1; }
       }
       if (pontoon && a >= RW + 0.3 && a < RW + SW) { r = 90; g = 50; b = 34; rf = 0.1; }
       if (pontoon && a < RW + SW && ((wz % 24) + 24) % 24 < 0.5) { r = 8; g = 8; b = 12; rf = 0; }   // gap between barges
@@ -1588,6 +1609,10 @@ function railTex(wz, v) {
   if ((wz % 2.5) < 0.18 || (v > 0.5 && v < 0.62)) { TR = 70; TG = 70; TB = 90; return; }
   TR = -1;
 }
+function steelRailTex(wz, v) {                       // level 2: a solid steel barrier capped with an amber light strip
+  if (v > 1.0) { const on = ((wz % 3) + 3) % 3 < 2.2; TR = on ? 255 : 120; TG = on ? 160 : 80; TB = on ? 50 : 30; return; }
+  TR = v > 0.15 ? 46 : 30; TG = v > 0.15 ? 46 : 30; TB = v > 0.15 ? 58 : 38;
+}
 function cableH(l) {
   if (l < 50) return 1.2 + 73.8 * (l / 50);
   if (l > 150) return 1.2 + 73.8 * ((200 - l) / 50);
@@ -1921,10 +1946,12 @@ function fallTex(wz, v) {
   const st = ((v * 0.9 + T * 14 + Math.sin(wz * 3) * 2) % 3 + 3) % 3, k = st < 0.6 ? 1 : 0.6 + 0.15 * Math.sin(wz * 5 + v);
   TR = 150 * k; TG = 210 * k; TB = 230 * k;
 }
-function drawFall(k, n, sg) {
-  quadWall(k, sg * (RW + SW + 2.5), -EL[k], 92 - EL[k], fallTex);
+function drawFall(k, n, sg) {                       // pours off the roof edge of the building beside the road, down its face
+  const bi = SIDE[sg > 0 ? 1 : 0][n]; if (bi < 0) return;
+  const B = blocks[bi], lat = sg * (RW + SW + B.set - 0.4);
+  quadWall(k, lat, -EL[k], B.h - EL[k], fallTex);
   if (n % 45 === 1 && projAt(k, 0)) {
-    const s = PS, fz = fogAt(PZ), x = PCX + sg * (RW + SW + 2.5) * s;
+    const s = PS, fz = fogAt(PZ), x = PCX + lat * s;
     for (let i = 0; i < 4; i++) { const ph = (T * 0.5 + i / 4) % 1, r = (1.5 + ph * 3) * s; blob(x + Math.sin(i * 2 + T) * s, PGL - (0.5 + ph * 3) * s, r, r * 0.7, [200, 230, 240], 0.3 * (1 - ph), fz); }
     if (PZ < 320) addLight(x, PGL - 2 * s, clamp(5 * s, 3, 30), [160, 220, 255], 0.3 * (1 - fz));
   }
@@ -2079,6 +2106,31 @@ function drawSalt(k, n) {
   rect(x - 1.4 * s, x + 1.4 * s, PGY - 8.4 * s, PGY - 8.1 * s, [50, 40, 36], fz);
 }
 
+// ---- the skytrain line ----
+function stBeamTex(wz, v) {
+  const av = v + stEL;
+  if (av > ST_H - 0.15) { TR = 255; TG = 46; TB = 170; return; }
+  const seam = (wz % 8) < 0.3; TR = seam ? 24 : 40; TG = seam ? 22 : 38; TB = seam ? 32 : 54;
+}
+function stTrainTex(wz, v) {
+  const av = v + stEL - ST_H, u = ((wz - skyT.z) % LEN + LEN) % LEN;
+  if (u > ST_LEN) { TR = -1; return; }
+  if (u < 1.2 || u > ST_LEN - 1.2) { TR = 230; TG = 245; TB = 255; return; }                       // nose and tail lights
+  if (av > 0.5 && av < 0.7) { TR = 0; TG = 220; TB = 255; return; }                                    // cyan stripe
+  if (av > 1.3 && av < 2.4 && (u % 2.6) > 0.35) { const lit = hash(Math.floor(u / 2.6), 1, 88) < 0.8; TR = lit ? 255 : 40; TG = lit ? 220 : 50; TB = lit ? 170 : 70; return; }
+  TR = 214; TG = 218; TB = 230;
+}
+function drawSkytrain(k, n) {
+  stEL = EL[k];
+  quadWall(k, ST_LAT, ST_H - 1.2 - EL[k], ST_H - EL[k], stBeamTex);
+  if (n % 10 === 0 && projAt(k, 0)) { const x = PCX + ST_LAT * PS, w = Math.max(1, 0.9 * PS); rect(x - w, x + w, PGL - (ST_H - 1.2) * PS, PGL, [34, 32, 44], fogAt(PZ)); }
+  const d = ((skyT.z - camZ + LEN / 2) % LEN + LEN) % LEN - LEN / 2;
+  if (d < Z[k + 1] && d + ST_LEN > Z[k]) {
+    quadWall(k, ST_LAT, ST_H - EL[k], ST_H + 3.2 - EL[k], stTrainTex, d, d + ST_LEN);
+    if (projAt(k, 0)) addLight(PCX + ST_LAT * PS, PGL - (ST_H + 1.8) * PS, clamp(3 * PS, 3, 24), [200, 230, 255], 0.3 * (1 - fogAt(PZ)));
+  }
+}
+
 // ---- traffic signal at the stop line ----
 function drawSignal(i, k, dz) {
   if (!projAt(k, dz) || PZ > 380) return;
@@ -2154,6 +2206,12 @@ function billboard(b, uu, vv) {
     const on = gx >= 0 && gx < 7 && gy >= 0 && gy < 5 && hash(gx % 7 < 4 ? gx : 6 - gx, gy, b.seed) < 0.55;
     c = on ? b.c1 : mix(b.c2, [0, 0, 0], 0.78);
     if (hash(Math.floor(T * 4), b.seed, 2) < 0.08) c = mix(c, [255, 255, 255], 0.5);
+  } else if (b.kind === 3) {                        // a music video: equalizer bars over a colour sweep
+    const hgt = 0.5 + 0.45 * Math.sin(T * 5 + Math.floor(uu * 16) * 0.9 + b.seed);
+    c = (1 - vv) < hgt ? mix(b.c1, b.c2, 1 - vv) : mix(b.c2, [0, 0, 0], 0.8);
+  } else if (b.kind === 4) {                        // a giant mascot face that blinks
+    const ex = Math.abs(qu - 0.5) - 0.18, ey = qv - 0.4, eyes = ex * ex * 9 + ey * ey * 30 < 0.4 && (T * 0.7 + b.seed) % 4 > 0.2;
+    c = eyes || (Math.abs(qv - 0.72) < 0.05 && Math.abs(qu - 0.5) < 0.22) ? b.c1 : mix(b.c2, [0, 0, 0], 0.65);
   } else {
     const d = Math.hypot((qu - 0.5) * 2.2, (qv - 0.5) * 1.6), r = 0.45 + Math.sin(T * 3 + b.seed) * 0.12;
     c = d < r * 0.45 ? [10, 10, 20] : d < r ? b.c1 : mix(b.c2, [0, 0, 0], 0.7);
@@ -3133,7 +3191,8 @@ function render() {
       else { drawWall(k, 0, n); drawWall(k, 1, n); }
       if (elev) { drawBelow(k, n, deckW); if (sw && sw.hb + 1.4 < EL[k]) drawSkywalk(k, n, sw); }
       drawGround(k, d, elev);
-      if (elev && d !== D.HIGHWAY) { quadWall(k, -deckW, 0, 1.1, railTex); quadWall(k, deckW, 0, 1.1, railTex); }
+      if (elev && d !== D.HIGHWAY) { const rt = EL[k] > LH[1] + 5 ? railTex : steelRailTex; quadWall(k, -deckW, 0, 1.1, rt); quadWall(k, deckW, 0, 1.1, rt); }
+      if (!zz[4] && d !== D.RAMP) drawSkytrain(k, n);
       if (d === D.HIGHWAY) {
         drawHighway(k, n, zz);
         if (cty.elevator && n === zz[0] + 130) drawStadium(k);
@@ -3190,7 +3249,7 @@ function render() {
     }
   }
 
-  headlight(hy);
+  if (lightOn) headlight(hy);
 
   // glow, then wet-road reflections of everything above the horizon
   // deep in the night the city itself sinks into shadow while the neon carries further
@@ -3199,6 +3258,25 @@ function render() {
   const cr = dimK * (1 - 0.07 * crownK), cb = dimK * (1 + 0.08 * crownK);
   for (let i = 0; i < N * 3; i += 3) {
     col[i] = col[i] * cr + lb[i] * glowK; col[i + 1] = col[i + 1] * dimK + lb[i + 1] * glowK; col[i + 2] = col[i + 2] * cb + lb[i + 2] * glowK;
+  }
+  if (TH.l2 > 0.05) {                                // level 2: glowing neon smog drifting between the towers, thickest at eye level
+    const c = TH.neonC, k0 = 0.16 * TH.l2;
+    for (let y = 0; y < H; y += 2) for (let x = 0; x < W; x += 2) {
+      const a = smooth(0.5, 0.85, vnoise((x + bgX * 0.6) * 0.018 + T * 0.06, y * 0.035 - T * 0.02, 17)) * k0 * (1 - Math.abs(y - hy) / H);
+      if (a < 0.01) continue;
+      for (let q = 0; q < 4; q++) { const xx = x + (q & 1), yy = y + (q >> 1); if (xx < W && yy < H) { const i = (yy * W + xx) * 3; col[i] += c[0] * a; col[i + 1] += c[1] * a; col[i + 2] += c[2] * a; } }
+    }
+  }
+  // climbing between levels you punch through a layer: neon haze at 18 m, a bright cloud band at 60 m
+  const p1 = Math.max(0, 1 - Math.abs(raise - 18) / 6), p2 = Math.max(0, 1 - Math.abs(raise - 60) / 8);
+  if (p1 + p2 > 0.01) {
+    const hc1 = mix(TH.neonC, [255, 255, 255], 0.3), hc2 = [205, 200, 232];
+    for (let y = 0; y < H; y++) {
+      const wv = 0.82 + 0.18 * Math.sin(y * 0.21 + T * 9), a1 = p1 * 0.5 * wv, a2 = p2 * 0.8 * wv;
+      for (let x = 0, i = y * W * 3; x < W; x++, i += 3) for (let ch = 0; ch < 3; ch++) {
+        col[i + ch] += (hc1[ch] - col[i + ch]) * a1; col[i + ch] += (hc2[ch] - col[i + ch]) * a2;
+      }
+    }
   }
   const hr = Math.round(hy);
   if (rainOn) for (let y = hr + 1; y < H; y++) {   // weather off also turns off the wet-road reflections
@@ -3263,6 +3341,7 @@ addEventListener('keydown', e => {
   else if ('rRwW'.includes(e.key)) toggleRain();
   else if (e.key === 's' || e.key === 'S') cycleBike();
   else if (e.key === 'v' || e.key === 'V') cycleCruise();
+  else if (e.key === 'l' || e.key === 'L') toggleLight();
   else if (e.key === 'h' || e.key === 'H') document.body.classList.toggle('hints');
 });
 addEventListener('keyup', e => { if (KEYMAP[e.key]) keys[KEYMAP[e.key]] = false; });
@@ -3288,6 +3367,9 @@ function cycleCruise() {
   zoneEl.textContent = 'CRUISE · ' + CRUISE_KMH[cruise] + ' KMH' + (auto ? '' : ' (AUTOPILOT)'); zoneEl.style.opacity = 1; zoneT = 2.5;
 }
 document.getElementById('bv').addEventListener('pointerdown', e => { e.preventDefault(); cycleCruise(); });
+const btnH = document.getElementById('bh');
+function toggleLight() { lightOn = !lightOn; btnH.classList.toggle('on', lightOn); zoneEl.textContent = 'HEADLIGHT ' + (lightOn ? 'ON' : 'OFF'); zoneEl.style.opacity = 1; zoneT = 2; }
+btnH.addEventListener('pointerdown', e => { e.preventDefault(); toggleLight(); });
 // keep the screen from dimming or sleeping while it plays (where the browser supports it); the lock drops
 // whenever the tab is hidden, so take it again on return, and on the first key or tap in case the first try was refused
 async function requestWake() { if (wakeLock || !navigator.wakeLock) return; try { wakeLock = await navigator.wakeLock.request('screen'); wakeLock.addEventListener('release', () => { wakeLock = null; }); } catch (e) { wakeLock = null; } }
