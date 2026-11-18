@@ -704,7 +704,6 @@ function update(dt) {
   if (Math.abs(px) > RW - 1) { px = Math.sign(px) * (RW - 1); speed *= 1 - dt * 1.5; shake = Math.max(shake, 0.15 * Math.min(1, speed / 20)); }
 
   camZ = (camZ + speed * dt) % LEN;
-  if (!trail.length || ((camZ - trail[0][0]) % LEN + LEN) % LEN > 1.5) { trail.unshift([camZ, px]); if (trail.length > 120) trail.pop(); }   // about 180 m of trail
   bgX += kappa * speed * dt * F;
 
   for (const c of cars) {
@@ -2955,12 +2954,11 @@ function headlight(hy) {
 // ---------- the camera rig: C cycles the shots, the light cycle is drawn from outside ----------
 const SHOTS = ['COCKPIT', 'CHASE', 'DRONE', 'TRACKSIDE', 'ALONGSIDE', 'SIDE'];
 let shot = 0, trackCam = null, alongSide = 1;
-const trail = [];                                     // the light trail: recent [z, x] of the cycle, newest first
 function shotRig() {                                  // where the camera wants to be for the current shot
   const sg = Math.floor(camZ / SEGL) % NSEG, d = district(sg), tr = TRANS_AT[sg];
   const roofed = d === D.TUNNEL || d === D.VAC || d === D.TUBE || (tr >= 0 && sg >= TRANS[tr].s - 20 && sg < TRANS[tr].e + 20);
-  // chase and drone tilt down enough that the bike sits mid-frame with its trail stretching towards you below it
-  let r = shot === 1 ? { back: 6.5, up: 1.5, lat: 0.6, pitch: 0.16 }   // a touch off-centre, so the trail reads as a wall
+  // chase and drone tilt down enough that the bike sits mid-frame
+  let r = shot === 1 ? { back: 6.5, up: 1.5, lat: 0, pitch: 0.16 }
     : shot === 2 ? { back: 16, up: 7, lat: 0, pitch: 0.38 }
     : shot === 4 ? { back: 7, up: 0.5, lat: alongSide * 2.2, pitch: 0 }
     : { back: 0, up: 0, lat: 0, pitch: 0 };
@@ -3118,30 +3116,6 @@ function drawCycle(k, dz, bxw, hy) {
     addLight(gx, gy, clamp(0.16 * sp, 2, 8), [0, 220, 255], 0.22 * (1 - fz * 0.5));
   }
 }
-// the light trail: a low glowing ribbon left behind the cycle, fading with age
-function drawTrail(i, hy, realZ) {
-  const a = trail[i], b = trail[i + 1], p = [];
-  const behind = ((realZ - a[0]) % LEN + LEN) % LEN, near = rel(a[0]);
-  const ease = smooth(1.2, 3, behind) * smooth(0.3, 1.2, near);   // starts just behind the wheel, fades only right at the lens
-  if (ease < 0.02) return;
-  for (const q of [a, b]) {
-    const r = rel(q[0]), k = Math.floor(r / SEGL + FRAC);
-    if (k < 0 || k >= DRAW || !projAt(k, r - Z[k])) return;
-    p.push([PCX + q[1] * PS, PGY, PS, PZ]);
-  }
-  const fade = (1 - i / trail.length) * 0.5 * (1 - fogAt(p[0][3]) * 0.6) * ease;
-  // walk the segment pixel by pixel (seen edge-on from behind it is tall and narrow, from the side long and low),
-  // lighting each pixel once: the wall itself, and a glowing stripe on the road under it that reads from above
-  const n = Math.max(1, Math.ceil(Math.max(Math.abs(p[1][0] - p[0][0]), Math.abs(p[1][1] - p[0][1])))), done = new Set();
-  const dot = (x, y, a) => { if (x < 0 || y < 0 || x >= W || y >= H) return; const q = y * W + x; if (done.has(q)) return; done.add(q); addc(x, y, [0, 220, 255], a); };
-  for (let s = 0; s <= n; s++) {
-    const t = s / n, x = Math.round(p[0][0] + (p[1][0] - p[0][0]) * t), g = p[0][1] + (p[1][1] - p[0][1]) * t, sc = p[0][2] + (p[1][2] - p[0][2]) * t;
-    const y0 = g - 0.75 * sc, y1 = g - 0.06 * sc;
-    for (let y = Math.ceil(y0); y <= y1; y++) dot(x, y, fade * (y - y0 < 1.5 ? 1.6 : 0.6));   // brighter top edge
-    const hw = Math.max(1, 0.18 * sc);
-    for (let xx = Math.round(x - hw); xx <= x + hw; xx++) dot(xx, Math.round(g), fade * 1.1);
-  }
-}
 
 // ---------- the side shot: a side-scrolling view of the cycle against the buildings across the road ----------
 function renderSide() {
@@ -3220,15 +3194,7 @@ function renderSide() {
       col[j] = dash ? 220 : 22 + h; col[j + 1] = dash ? 170 : 20 + h; col[j + 2] = dash ? 50 : 30 + h;
     }
   }
-  // the light trail streaming off behind the cycle
-  if (bikeStyle === 0) {
-    const tx0 = cx - 1.45 * ppm;
-    for (let x = Math.floor(tx0); x >= 0; x--) {
-      const f = 0.5 * Math.max(0, 1 - (tx0 - x) / (W * 0.9));
-      for (let y = Math.round(roadY - 0.75 * ppm); y < roadY - 0.06 * ppm; y++) addc(x, y, [0, 220, 255], f * (y - (roadY - 0.75 * ppm) < 1.5 ? 1.6 : 0.6));
-    }
-    drawCycleSide(cx, roadY, ppm);
-  }
+  if (bikeStyle === 0) drawCycleSide(cx, roadY, ppm);
   // glow, weather, readout, out to the screen
   for (let i = 0; i < N * 3; i++) col[i] += lb[i];
   drawGlass();
@@ -3331,14 +3297,7 @@ function renderScene(realZ, realPx) {
     buckets.get(k).push({ p, r });
   }
 
-  if (outside() && bikeStyle === 0) {                 // the cycle and its trail, seen from outside
-    const rb = rel(realZ); put_(Math.floor(rb / SEGL + frac), { bk: 1, r: rb });
-    for (let i = 0; i < trail.length - 1; i++) {     // the ribbon starts a few metres behind the rear wheel
-      // file each piece under its nearer end, so it is drawn after the road beneath both of its ends
-      const r = Math.min(rel(trail[i][0]), rel(trail[i + 1][0]));
-      if (r > NEAR && r < DRAW * SEGL && ((realZ - trail[i][0]) % LEN + LEN) % LEN > 1.2) put_(Math.floor(r / SEGL + frac), { tr: i, r });
-    }
-  }
+  if (outside() && bikeStyle === 0) { const rb = rel(realZ); put_(Math.floor(rb / SEGL + frac), { bk: 1, r: rb }); }   // the cycle, seen from outside
   for (const f of flyers) {
     const r = rel(f.z), k = Math.floor(r / SEGL + frac);
     if (k < 0 || k >= DRAW || r < NEAR || !airOk(Math.floor(f.z / SEGL) % NSEG)) continue;
@@ -3412,7 +3371,6 @@ function renderScene(realZ, realPx) {
         else if (o.xp) drawCrosser(o.xp, k, dz);
         else if (o.fl) drawFlyer(o.fl, k, dz);
         else if (o.bk) drawCycle(k, dz, realPx, hy);
-        else if (o.tr !== undefined) drawTrail(o.tr, hy, realZ);
       }
     }
     if (sw && sw.hb + 1.4 >= EL[k]) drawSkywalk(k, n, sw);
