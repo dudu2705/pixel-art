@@ -26,21 +26,22 @@
   .btn.on { background: rgba(255, 60, 190, 0.45); }
   #bl { left: 18px; } #br { left: 104px; }
   #bb { right: 104px; } #bg { right: 18px; border-color: rgba(0, 230, 255, 0.7); color: #a8f6ff; }
-  #ba, #br2 { right: 18px; top: 18px; bottom: auto; height: 44px; width: 74px; font-size: 13px; }
-  #br2 { top: 72px; }
+  #ba, #br2, #bs { right: 18px; top: 18px; bottom: auto; height: 44px; width: 74px; font-size: 13px; }
+  #br2 { top: 72px; } #bs { top: 126px; }
   #zone { left: 50%; top: 58px; transform: translateX(-50%); font-size: 16px; letter-spacing: 6px; color: #9ff4ff;
     border-color: #1d4f5a; transition: opacity 1.2s; opacity: 0; }
 </style>
 </head>
 <body>
 <canvas id="c"></canvas>
-<div id="hint" class="tag">&larr; &rarr; steer &nbsp;&middot;&nbsp; &uarr; gas &nbsp;&middot;&nbsp; &darr; brake &nbsp;&middot;&nbsp; A autopilot &nbsp;&middot;&nbsp; W weather</div>
+<div id="hint" class="tag">&larr; &rarr; steer &nbsp;&middot;&nbsp; &uarr; gas &nbsp;&middot;&nbsp; &darr; brake &nbsp;&middot;&nbsp; A autopilot &nbsp;&middot;&nbsp; W weather &nbsp;&middot;&nbsp; S style</div>
 <div id="zone" class="tag"></div>
 <div id="pad">
   <div class="btn" id="bl">&#9664;</div><div class="btn" id="br">&#9654;</div>
   <div class="btn" id="bb">BRK</div><div class="btn" id="bg">GAS</div>
   <div class="btn on" id="ba">AUTO</div>
   <div class="btn on" id="br2">WX</div>
+  <div class="btn" id="bs">BIKE</div>
 </div>
 <script>
 // Pseudo-3D city street rendered into a small pixel buffer; CSS scales it up with nearest-neighbour.
@@ -150,6 +151,8 @@ const TH = { aurora: 0, mountains: 0, elevator: 0, fireworks: 0, dark: 0, water:
 let fogK = 1;
 const RW = 7, SW = 3.2, NEAR = 0.7;
 let roll = 0;
+const BIKE_NAMES = ['CAFE RACER', 'SUPERBIKE', 'CYBER CHOPPER', 'HOVER BIKE', 'NEO SCOOTER'];
+let bikeStyle = 2, bikeGeo = {}, horizY = 0;          // the chopper is the default ride
 const maxV = () => district(Math.floor(camZ / SEGL) % NSEG) === D.VAC ? 95 : 62;   // the vactrain lets you fly
 const eye = () => 1.4;
 const NEON = [[255, 46, 170], [0, 234, 255], [255, 214, 64], [170, 90, 255], [70, 255, 150], [255, 110, 50]];
@@ -521,43 +524,7 @@ function setup() {
   sky2 = layer(HB * 0.08, HB * 0.45, 8, 22);
   holoX = Math.round(PW * 0.02);
 
-  // static motorcycle overlay: windscreen (tint), fairing, tank, mirrors; and the helmet visor frame
-  bmask = new Uint8Array(N); bcol = new Float32Array(N * 3); vmask = new Uint8Array(N); vcol = new Float32Array(N * 3);
-  const setB = (x, y, c, type) => {
-    x = Math.round(x); y = Math.round(y); if (x < 0 || y < 0 || x >= W || y >= H) return;
-    const i = y * W + x; bmask[i] = type; bcol[i * 3] = c[0]; bcol[i * 3 + 1] = c[1]; bcol[i * 3 + 2] = c[2];
-  };
-  const ws0 = Math.round(H * 0.67), ws1 = Math.round(H * 0.8);
-  for (let y = ws0; y < ws1; y++) {
-    const t = (y - ws0) / (ws1 - ws0), half = W * (0.1 + 0.07 * t);
-    for (let x = Math.floor(W / 2 - half); x <= Math.ceil(W / 2 + half); x++) {
-      const edge = Math.abs(x - W / 2) > half - 1 || y === ws0;
-      setB(x, y, edge ? [70, 150, 190] : [6, 22, 34], edge ? 1 : 2);
-    }
-  }
-  for (let y = ws1; y < H; y++) {
-    const half = W * 0.17 + (y - ws1) * 0.7, t = (y - ws1) / (H - ws1);
-    for (let x = Math.floor(W / 2 - half); x <= Math.ceil(W / 2 + half); x++)
-      setB(x, y, y === ws1 || Math.abs(x - W / 2) > half - 1 ? [70, 56, 110] : mix([26, 22, 40], [10, 8, 16], t), 1);
-  }
-  const tcx = W / 2, tcy = H * 1.05, trx = W * 0.19, try_ = H * 0.15;
-  for (let y = Math.floor(tcy - try_); y < H; y++) for (let x = Math.floor(tcx - trx); x <= tcx + trx; x++) {
-    const nx = (x - tcx) / trx, ny = (y - tcy) / try_, e = nx * nx + ny * ny;
-    if (e > 1) continue;
-    let c = mix([34, 26, 52], [12, 10, 20], clamp(e, 0, 1));
-    if (ny < -0.72 && ny > -0.82) c = [200, 40, 150];
-    else if (ny < -0.6 && Math.abs(nx) < 0.5) c = mix(c, [120, 90, 170], 0.5);
-    if (e > 0.94) c = [60, 46, 90];
-    setB(x, y, c, 1);
-  }
-  for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
-    const e = Math.pow(Math.abs(x - W / 2) / (W * 0.54), 4) + Math.pow(Math.abs(y - H * 0.5) / (H * 0.6), 4);
-    if (e < 0.9) continue;
-    const i = y * W + x; vmask[i] = 1;
-    const c = e < 1 ? [46, 34, 66] : [8, 6, 12];
-    vcol[i * 3] = c[0]; vcol[i * 3 + 1] = c[1]; vcol[i * 3 + 2] = c[2];
-  }
-  useOut();
+  buildBike();
 }
 
 // ---------- state ----------
@@ -2668,6 +2635,203 @@ function thick(x0, y0, x1, y1, r, c, hi) {
   }
 }
 
+// ---------- the bike: five cockpits, S cycles through them ----------
+const LVC = [[255, 150, 60], [0, 235, 255], [255, 60, 190]];   // level colours L1, L2, L3
+
+// the static parts of the current cockpit: bmask (1 solid, 2 tinted glass) under the readouts, vmask over everything
+function buildBike() {
+  useOut();
+  bmask = new Uint8Array(N); bcol = new Float32Array(N * 3); vmask = new Uint8Array(N); vcol = new Float32Array(N * 3);
+  const R = Math.min(W, H), cx = W / 2, g = bikeGeo = {}, s = bikeStyle;
+  const setB = (x, y, c, type) => {
+    x = Math.round(x); y = Math.round(y); if (x < 0 || y < 0 || x >= W || y >= H) return;
+    const i = y * W + x; bmask[i] = type || 1; bcol[i * 3] = c[0]; bcol[i * 3 + 1] = c[1]; bcol[i * 3 + 2] = c[2];
+  };
+  const setV = (x, y, c) => {
+    x = Math.round(x); y = Math.round(y); if (x < 0 || y < 0 || x >= W || y >= H) return;
+    const i = y * W + x; vmask[i] = 1; vcol[i * 3] = c[0]; vcol[i * 3 + 1] = c[1]; vcol[i * 3 + 2] = c[2];
+  };
+  const ell = (ex, ey, rx, ry, fn) => {
+    for (let y = Math.max(0, Math.floor(ey - ry)); y <= Math.min(H - 1, Math.ceil(ey + ry)); y++)
+      for (let x = Math.max(0, Math.floor(ex - rx)); x <= Math.min(W - 1, Math.ceil(ex + rx)); x++) {
+        const nx = (x - ex) / rx, ny = (y - ey) / ry, e = nx * nx + ny * ny;
+        if (e <= 1) fn(x, y, nx, ny, e);
+      }
+  };
+  const sline = (x0, y0, x1, y1, r, c) => {
+    const n = Math.ceil(Math.hypot(x1 - x0, y1 - y0) * 2) || 1;
+    for (let i = 0; i <= n; i++) {
+      const x = x0 + (x1 - x0) * i / n, y = y0 + (y1 - y0) * i / n;
+      for (let a = -r; a <= r; a++) for (let b = -r; b <= r; b++) if (a * a + b * b <= r * r + 0.5) setB(x + a, y + b, c);
+    }
+  };
+  const helmet = () => {
+    for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
+      const e = Math.pow(Math.abs(x - cx) / (W * 0.54), 4) + Math.pow(Math.abs(y - H * 0.5) / (H * 0.6), 4);
+      if (e >= 0.9) setV(x, y, e < 1 ? [46, 34, 66] : [8, 6, 12]);
+    }
+  };
+  const glass = (y0, y1, halfAt, edgeC, tint) => {
+    for (let y = y0; y < y1; y++) {
+      const half = halfAt((y - y0) / (y1 - y0));
+      for (let x = Math.floor(cx - half); x <= Math.ceil(cx + half); x++) {
+        const edge = Math.abs(x - cx) > half - 1.5 || y === y0;
+        setB(x, y, edge ? edgeC : tint, edge ? 1 : 2);
+      }
+    }
+  };
+
+  if (s === 0) {                                     // cafe racer: flyscreen, twin dials on a plate, maroon tank with stripes
+    glass(Math.round(H * 0.7), Math.round(H * 0.78), t => W * (0.07 + 0.03 * t), [90, 170, 210], [6, 22, 34]);
+    g.dr = Math.max(8, Math.round(R * 0.075));
+    const py = Math.round(H * 0.78);
+    g.d1 = [cx - g.dr * 1.25, py + g.dr * 1.1]; g.d2 = [cx + g.dr * 1.25, py + g.dr * 1.1];
+    for (let y = py; y < py + g.dr * 2.3; y++) for (let x = cx - g.dr * 2.6; x <= cx + g.dr * 2.6; x++) setB(x, y, y === py ? [120, 110, 130] : [24, 20, 30]);
+    ell(cx, H * 1.07, W * 0.2, H * 0.17, (x, y, nx, ny, e) => {
+      let c = mix([150, 30, 44], [60, 10, 18], clamp((nx + 1) / 2 * 0.6 + e * 0.4, 0, 1));
+      if (Math.abs(nx) > 0.07 && Math.abs(nx) < 0.15) c = [230, 220, 190];
+      if (nx < -0.3 && nx > -0.45 && ny < -0.5) c = mix(c, [255, 255, 255], 0.35);
+      if (e > 0.93) c = [40, 10, 16];
+      setB(x, y, c);
+    });
+    helmet();
+  } else if (s === 1) {                              // superbike: bubble screen, carbon fairing, wide TFT
+    const y1 = Math.round(H * 0.79);
+    glass(Math.round(H * 0.5), y1, t => W * (0.05 + 0.17 * Math.sqrt(t)), [80, 160, 200], [4, 18, 30]);
+    for (let y = y1; y < H; y++) {
+      const half = W * 0.22 + (y - y1) * 0.9;
+      for (let x = Math.floor(cx - half); x <= Math.ceil(cx + half); x++)
+        setB(x, y, Math.abs(x - cx) > half - 2 ? [255, 46, 170] : ((x + y) >> 1) & 1 ? [22, 22, 28] : [32, 32, 40]);
+    }
+    g.tx = Math.round(cx - W * 0.19); g.ty = Math.round(H * 0.8); g.tw = Math.round(W * 0.38); g.th = Math.round(H * 0.12);
+    for (let y = g.ty - 2; y < g.ty + g.th + 2; y++) for (let x = g.tx - 2; x < g.tx + g.tw + 2; x++)
+      setB(x, y, x < g.tx || y < g.ty || x >= g.tx + g.tw || y >= g.ty + g.th ? [60, 60, 80] : [6, 8, 12]);
+    helmet();
+  } else if (s === 2) {                              // cyber chopper: long chrome tank with neon pinstripes, no dash at all
+    ell(cx, H * 1.02, W * 0.12, H * 0.2, (x, y, nx, ny, e) => {
+      const sh = clamp(1 - Math.abs(nx + 0.35) * 1.6, 0, 1);
+      let c = mix([34, 32, 48], [210, 216, 236], sh * sh);
+      if (Math.abs(Math.abs(nx) - 0.66) < 0.035) c = [255, 46, 170];
+      if (e > 0.94) c = [20, 18, 28];
+      setB(x, y, c);
+    });
+    ell(cx, H * 0.85, R * 0.018 + 1, R * 0.012 + 1, (x, y) => setB(x, y, [170, 170, 190]));
+    for (const sd of [-1, 1]) for (let y = Math.round(H * 0.78); y < H * 0.84; y++)
+      for (let x = 0; x < Math.max(2, W * 0.012); x++) setB(cx + sd * (W * 0.025 + x), y, [70, 70, 90]);
+    g.holo = [cx, H * 0.64]; g.proj = [cx, H * 0.83];
+    helmet();
+  } else if (s === 3) {                              // hover bike: a canopy frame with struts, a low console, no wheels
+    for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
+      const e = Math.pow(Math.abs(x - cx) / (W * 0.53), 3) + Math.pow(Math.abs(y - H * 0.55) / (H * 0.62), 3);
+      if (e >= 0.86) setV(x, y, e < 0.9 ? [0, 150, 160] : [16, 20, 30]);
+    }
+    for (const sd of [-1, 1]) for (let i = 0; i <= 80; i++) {
+      const t = i / 80, x = cx + sd * W * (0.36 + 0.14 * t), y = H * (0.02 + 0.4 * t);
+      for (let a = -1; a <= 1; a++) setV(x + a, y, [16, 20, 30]);
+    }
+    for (let y = Math.round(H * 0.84); y < H; y++) for (let x = 0; x < W; x++) {
+      const top = H * 0.86 + Math.pow((x - cx) / (W / 2), 2) * H * 0.05;
+      if (y >= top - 1) setB(x, y, y < top ? [0, 200, 210] : mix([20, 22, 32], [10, 10, 16], (y - top) / (H * 0.14)));
+    }
+  } else {                                           // neo scooter: pink cowl, round speedo, phone on a mount
+    const body = [236, 150, 182];
+    ell(cx, H * 1.03, W * 0.3, H * 0.2, (x, y, nx, ny, e) => {
+      let c = mix(body, [150, 70, 100], clamp(e * 0.7 + (nx + 1) * 0.15, 0, 1));
+      if (ny < -0.75 && Math.abs(nx) < 0.5) c = mix(c, [255, 255, 255], 0.3);
+      if (e > 0.95) c = [110, 50, 76];
+      setB(x, y, c);
+    });
+    g.sr = Math.max(8, Math.round(R * 0.07)); g.sp = [Math.round(cx), Math.round(H * 0.9)];
+    ell(g.sp[0], g.sp[1], g.sr + 2, g.sr + 2, (x, y) => setB(x, y, [210, 210, 220]));
+    g.ph = [Math.round(cx + W * 0.17), Math.round(H * 0.72), Math.max(18, Math.round(R * 0.11)), Math.max(26, Math.round(R * 0.18))];
+    const [px0, py0, pw, ph] = g.ph;
+    sline(px0 + pw / 2, py0 + ph, cx + W * 0.06, H * 0.86, 1, [60, 60, 70]);
+    for (let y = py0 - 2; y < py0 + ph + 2; y++) for (let x = px0 - 2; x < px0 + pw + 2; x++) setB(x, y, [18, 18, 22]);
+    helmet();
+  }
+}
+
+// what every cockpit shows: speed, gear and revs, autopilot state, level
+function hudInfo() {
+  const sg = Math.floor(camZ / SEGL) % NSEG, e = ELEV[sg], lf = e <= LH[1] ? e / LH[1] : 1 + (e - LH[1]) / (LH[2] - LH[1]);
+  const tr = TRANS_AT[sg], moving = tr >= 0 && sg >= TRANS[tr].s && sg < TRANS[tr].e, gear = Math.min(6, 1 + Math.floor(speed / 13));
+  return {
+    sg, lf, lv: Math.round(lf), moving, up: moving && TRANS[tr].to > TRANS[tr].from, kmh: Math.round(speed * 3.6), sf: speed / maxV(), gear,
+    rpm: speed < 0.5 ? 0.1 : gear === 6 ? Math.min(1, 0.5 + (speed - 65) / 60) : 0.25 + 0.75 * (speed % 13) / 13,
+    st: waitLight ? 'RED' : auto ? 'AUTO' : 'MANUAL',
+    stC: waitLight ? ((T * 2) % 1 < 0.6 ? [255, 60, 60] : [120, 30, 30]) : auto ? [80, 255, 150] : [255, 150, 60],
+  };
+}
+function htext(str, x, y, c, sc, a) {               // hologram text: added light, scanlined when big
+  for (const ch of str) {
+    const g = FONT[ch] || FONT[' '];
+    for (let i = 0; i < 15; i++) if (g[i] === '1')
+      for (let p = 0; p < sc; p++) for (let q = 0; q < sc; q++) {
+        const yy = y + Math.floor(i / 3) * sc + q;
+        addc(x + (i % 3) * sc + p, yy, c, sc > 1 && (yy & 1) ? a * 0.45 : a);
+      }
+    x += 4 * sc;
+  }
+}
+function shade(x0, y0, x1, y1, k) {                 // dim a box so projected readouts stay legible over bright streets
+  for (let y = Math.max(0, Math.round(y0)); y <= Math.min(H - 1, Math.round(y1)); y++)
+    for (let x = Math.max(0, Math.round(x0)); x <= Math.min(W - 1, Math.round(x1)); x++) { const j = (y * W + x) * 3; col[j] *= k; col[j + 1] *= k; col[j + 2] *= k; }
+}
+function levelBars(x, y, I) {
+  for (let i = 0; i < 3; i++) for (let a = 0; a < 6; a++) putc(x + a, y + (2 - i) * 4, i === I.lv ? LVC[i] : [40, 30, 60]);
+  putc(x - 2, Math.round(y + (2 - I.lf) * 4), [255, 255, 255]);
+}
+function dial(cx, cy, r, frac, c, redFrom) {        // analog gauge: 240 degree sweep, ticks, needle
+  for (let y = -r; y <= r; y++) for (let x = -r; x <= r; x++) {
+    const d = x * x + y * y;
+    if (d <= r * r) putc(Math.round(cx + x), Math.round(cy + y), d > (r - 1.5) ** 2 ? [170, 170, 185] : [12, 12, 18]);
+  }
+  for (let i = 0; i <= 10; i++) {
+    const a = Math.PI * (1.25 - 1.5 * i / 10), red = redFrom !== undefined && i / 10 >= redFrom;
+    for (let k = r - 4; k <= r - 2; k++) putc(Math.round(cx + Math.cos(a) * k), Math.round(cy - Math.sin(a) * k), red ? [255, 60, 60] : [200, 200, 210]);
+  }
+  const a = Math.PI * (1.25 - 1.5 * clamp(frac, 0, 1));
+  for (let k = 0; k < r - 3; k += 0.5) putc(Math.round(cx + Math.cos(a) * k), Math.round(cy - Math.sin(a) * k), c);
+  putc(Math.round(cx), Math.round(cy), [220, 220, 230]);
+}
+function miniMap(x0, y0, w, h, c) {                 // the road ahead, bent by the curves to come
+  const n0 = Math.floor(camZ / SEGL);
+  let x = 0, dx = 0;
+  for (let i = 0; i < h * 6; i++) {
+    x += dx; dx += curve[(n0 + i) % NSEG];
+    if (i % 6 === 0) putc(Math.round(x0 + w / 2 + clamp(x * 0.08, -w / 2 + 1, w / 2 - 1)), y0 + h - 1 - ((i / 6) | 0), c);
+  }
+  putc(Math.round(x0 + w / 2), y0 + h - 1, [255, 255, 255]);
+}
+// handlebars as a polyline (fractions of W, H from the steering pivot), turning a little with the steering:
+// one chrome tube clamped in the middle, switch housings, levers in front of ribbed rubber grips, metal bar ends
+function barSet(pcy, path, r) {
+  const a = steer * 0.07, ca = Math.cos(a), sa = Math.sin(a);
+  const side = sd => path.map(([fx, fy]) => { const ex = fx * W * sd, ey = fy * H; return [W / 2 + ex * ca - ey * sa, pcy + ex * sa + ey * ca]; });
+  const L = side(-1), Rt = side(1), tube = [52, 52, 62], tubeHi = [165, 168, 182];
+  thick(L[0][0], L[0][1], Rt[0][0], Rt[0][1], r, tube, tubeHi);                        // across the middle
+  for (const P of [L, Rt]) for (let i = 0; i < P.length - 2; i++) thick(P[i][0], P[i][1], P[i + 1][0], P[i + 1][1], r, tube, tubeHi);
+  const cxm = (L[0][0] + Rt[0][0]) / 2, cym = (L[0][1] + Rt[0][1]) / 2, cw = Math.max(3, W * 0.025);
+  thick(cxm - cw * ca, cym - cw * sa, cxm + cw * ca, cym + cw * sa, r + 2, [34, 34, 42], [96, 96, 110]);   // the clamp
+  [L, Rt].forEach((P, k) => {
+    const g0 = P[P.length - 2], g1 = P[P.length - 1], dx = g1[0] - g0[0], dy = g1[1] - g0[1], len = Math.hypot(dx, dy) || 1, ux = dx / len, uy = dy / len;
+    // "in front of the bar" reads as up the screen for flat bars and inward for upright grips
+    let nx = -uy, ny = ux;
+    if (Math.abs(ux) > Math.abs(uy) ? ny > 0 : nx * (W / 2 - g0[0]) < 0) { nx = -nx; ny = -ny; }
+    const hx = g0[0] - ux * (r + 3), hy = g0[1] - uy * (r + 3);
+    thick(hx, hy, g0[0], g0[1], r + 2, [26, 26, 32], [70, 70, 82]);                     // switch housing
+    putc(Math.round(hx + nx * (r + 1)), Math.round(hy + ny * (r + 1)), k ? [220, 40, 40] : [230, 230, 235]);
+    const lo = r + 3, lx0 = g0[0] + nx * lo, ly0 = g0[1] + ny * lo, lx1 = g0[0] + ux * len * 0.9 + nx * (lo - 1), ly1 = g0[1] + uy * len * 0.9 + ny * (lo - 1);
+    thick(g0[0], g0[1], lx0, ly0, 1, [60, 60, 70], [120, 120, 134]);                  // lever perch
+    thick(lx0, ly0, lx1, ly1, 1, [120, 122, 136], [190, 192, 205]);                    // brake / clutch lever
+    for (let t = 0; t <= len; t += 1) {                                                 // ribbed rubber grip
+      const rib = Math.floor(t / 2) & 1;
+      thick(g0[0] + ux * t, g0[1] + uy * t, g0[0] + ux * t, g0[1] + uy * t, r + 2, rib ? [14, 14, 18] : [28, 28, 34], rib ? [34, 34, 40] : [56, 56, 64]);
+    }
+    thick(g1[0], g1[1], g1[0] + ux * 2, g1[1] + uy * 2, r + 1, [110, 112, 124], [200, 202, 214]);   // bar-end weight
+  });
+}
+
 function drawBike() {
   for (let i = 0; i < N; i++) {
     const m = bmask[i]; if (!m) continue;
@@ -2675,48 +2839,111 @@ function drawBike() {
     if (m === 1) { col[j] = bcol[j]; col[j + 1] = bcol[j + 1]; col[j + 2] = bcol[j + 2]; }
     else { col[j] = col[j] * 0.7 + bcol[j]; col[j + 1] = col[j + 1] * 0.7 + bcol[j + 1]; col[j + 2] = col[j + 2] * 0.75 + bcol[j + 2]; }
   }
-  // instrument screen
-  const sw = Math.round(W * 0.15), sh = Math.round(H * 0.1), sx0 = Math.round(W / 2 - sw / 2), sy0 = Math.round(H * 0.8) + 2;
-  for (let x = sx0; x < sx0 + sw; x++) for (let y = sy0; y < sy0 + sh && y < H; y++)
-    putc(x, y, x === sx0 || x === sx0 + sw - 1 || y === sy0 || y === sy0 + sh - 1 ? [60, 40, 96] : [6, 8, 18]);
-  const sc = H > 200 ? 2 : 1, kmh = String(Math.round(speed * 3.6)).padStart(3, ' ');
-  text(kmh, Math.round(W / 2 - 6 * sc), sy0 + 4, [0, 235, 255], sc);
-  if (waitLight) text('RED', Math.round(W / 2 - 5), sy0 + 6 + 5 * sc, (T * 2) % 1 < 0.6 ? [255, 60, 60] : [120, 30, 30], 1);
-  else text(auto ? 'AUTO' : 'MANUAL', Math.round(W / 2 - (auto ? 7 : 11)), sy0 + 6 + 5 * sc, auto ? [80, 255, 150] : [255, 150, 60], 1);
-  // level indicator: three stacked bars, the current one lit, a marker riding between them on the ramps
-  {
-    const sg_ = Math.floor(camZ / SEGL) % NSEG, e = ELEV[sg_], lf = e <= LH[1] ? e / LH[1] : 1 + (e - LH[1]) / (LH[2] - LH[1]);
-    const lv = Math.round(lf), LC = [[255, 150, 60], [0, 235, 255], [255, 60, 190]], tr = TRANS_AT[sg_];
-    const moving = tr >= 0 && sg_ >= TRANS[tr].s && sg_ < TRANS[tr].e;
-    const ly = sy0 + 6 + 5 * sc;
-    text('L' + (lv + 1), sx0 + 2, ly, LC[lv], 1);
-    if (moving && (T * 3) % 1 < 0.6) text(TRANS[tr].to > TRANS[tr].from ? '^' : '_', sx0 + 10, ly, LC[TRANS[tr].to], 1);
-    const gx = sx0 + sw - 9;
-    for (let i = 0; i < 3; i++) {
-      const gy = sy0 + 4 + (2 - i) * 4;
-      for (let a = 0; a < 6; a++) putc(gx + a, gy, i === lv ? LC[i] : [40, 30, 60]);
+  const I = hudInfo(), sc = H > 200 ? 2 : 1, g = bikeGeo, s = bikeStyle, R = Math.min(W, H), cx = W / 2;
+  const r = Math.max(1, Math.round(H * 0.008)), spd = String(I.kmh).padStart(3, ' ');
+
+  if (s === 0) {                                     // cafe racer
+    dial(g.d1[0], g.d1[1], g.dr, I.sf, [255, 120, 40]);
+    dial(g.d2[0], g.d2[1], g.dr, I.rpm, [255, 120, 40], 0.8);
+    text(spd, Math.round(g.d1[0] - 5), Math.round(g.d1[1] + g.dr * 0.4), [230, 220, 190], 1);
+    text(String(I.gear), Math.round(g.d2[0] - 1), Math.round(g.d2[1] + g.dr * 0.4), [230, 220, 190], 1);
+    text('L' + (I.lv + 1), Math.round(cx - 3), Math.round(g.d1[1] - 2), LVC[I.lv], 1);
+    if (I.moving && (T * 3) % 1 < 0.6) text(I.up ? '^' : '_', Math.round(cx - 1), Math.round(g.d1[1] + 5), LVC[I.lv], 1);
+    text(I.st, Math.round(cx - I.st.length * 2), Math.round(H * 0.78 - 7), I.stC, 1);
+    barSet(H * 0.9, [[0.06, 0], [0.3, 0.04], [0.4, 0.065]], r);
+  } else if (s === 1) {                              // superbike TFT: rev arc, speed, big gear, level, road ahead
+    const { tx, ty, tw, th } = g, segs = 16, bw = (tw - 8) / segs;
+    for (let i = 0; i < segs; i++) {
+      const on = i / segs < I.rpm, c = i < 10 ? [60, 255, 120] : i < 13 ? [255, 210, 60] : [255, 60, 60], yy = ty + 3 + Math.round(Math.abs(i - segs / 2) * 0.35);
+      for (let a = 0; a < bw - 1; a++) for (let b = 0; b < 3; b++) putc(Math.round(tx + 4 + i * bw + a), yy + b, on ? c : [30, 30, 40]);
     }
-    const my = Math.round(sy0 + 4 + (2 - lf) * 4);
-    putc(gx - 2, my, [255, 255, 255]);
+    text(spd, tx + 4, ty + 11, [0, 235, 255], sc);
+    if (th > 45) text('KMH', tx + 4, ty + 12 + 5 * sc, [90, 110, 140], 1);
+    text(String(I.gear), Math.round(tx + tw / 2 - 1.5 * (sc + 1)), ty + 10, [255, 255, 255], sc + 1);
+    levelBars(tx + tw - 10, ty + 11, I);
+    text('L' + (I.lv + 1), tx + tw - 21, ty + 11, LVC[I.lv], 1);
+    if (I.moving && (T * 3) % 1 < 0.6) text(I.up ? '^' : '_', tx + tw - 19, ty + 18, LVC[I.lv], 1);
+    text(I.st, tx + 4, ty + th - 7, I.stC, 1);
+    miniMap(tx + tw - 24, ty + th - 13, 20, 11, [0, 200, 255]);
+    barSet(H * 0.93, [[0.08, 0], [0.27, 0.03], [0.36, 0.045]], r);
+  } else if (s === 2) {                              // cyber chopper: ape hangers, hologram over the tank
+    barSet(H * 0.86, [[0.03, -0.04], [0.16, -0.07], [0.27, -0.24], [0.29, -0.33]], r);
+    const [hx, hy] = g.holo, glitch = hash(Math.floor(T * 8), 7, 7) < 0.07, ox = glitch ? 2 : 0;
+    const a = 0.7 + 0.15 * Math.sin(T * 9) + 0.1 * Math.sin(T * 23), hc = [80, 230, 255], big = sc + 1, sw = 12 * big - big;
+    for (let i = -6; i <= 6; i++) {                   // the projector beam rising from the tank
+      const x1 = hx + i * W * 0.012, y1 = hy + 6 * sc;
+      for (let t = 0; t <= 1; t += 0.02) addc(Math.round(g.proj[0] + (x1 - g.proj[0]) * t), Math.round(g.proj[1] + (y1 - g.proj[1]) * t), hc, 0.05);
+    }
+    const tY = Math.round(hy - 5 * big), lX = Math.round(hx - sw / 2);
+    shade(lX - 13, tY - 4, hx + sw / 2 + 15, hy + 11, 0.45);
+    htext(spd, lX + ox, tY, hc, big, a);
+    if (glitch) htext(spd, lX - 2, tY, [255, 60, 180], big, 0.4);
+    htext(I.st, Math.round(hx - I.st.length * 2), Math.round(hy + 3), I.stC, 1, a);
+    htext('L' + (I.lv + 1), lX - 10, tY, LVC[I.lv], 1, a);
+    if (I.moving && (T * 3) % 1 < 0.6) htext(I.up ? '^' : '_', lX - 8, tY + 7, LVC[I.lv], 1, a);
+    for (let i = 0; i < 3; i++) {                     // three stacked chevrons, the current level lit
+      const yy = tY + (2 - i) * 5, xx = Math.round(hx + sw / 2 + 5), on = i === I.lv;
+      for (let k = 0; k < 4; k++) { addc(xx + k, yy + k, on ? LVC[i] : hc, on ? a : 0.15); addc(xx + 7 - k, yy + k, on ? LVC[i] : hc, on ? a : 0.15); }
+    }
+    const bx0 = lX - 13, bx1 = Math.round(hx + sw / 2 + 15), by0 = tY - 4, by1 = Math.round(hy + 11);
+    for (let k = 0; k < 4; k++) for (const [x, y, dx, dy] of [[bx0, by0, 1, 0], [bx0, by0, 0, 1], [bx1, by0, -1, 0], [bx1, by0, 0, 1], [bx0, by1, 1, 0], [bx0, by1, 0, -1], [bx1, by1, -1, 0], [bx1, by1, 0, -1]])
+      addc(x + dx * k, y + dy * k, hc, 0.5 * a);
+  } else if (s === 3) {                              // hover bike: HUD drawn on the canopy glass
+    const hc = [80, 255, 220], big = sc + 1, sx = Math.round(W * 0.17), sy = Math.round(H * 0.16);
+    shade(sx - 4, sy - 4, sx + 12 * big + 2, sy + 6 * big + 14, 0.55);
+    htext(spd, sx, sy, hc, big, 1);
+    htext('KMH', sx, sy + 6 * big, hc, 1, 0.6);
+    htext(I.st, sx, sy + 6 * big + 7, I.stC, 1, 0.85);
+    const lx = Math.round(W * 0.8), ly0 = Math.round(H * 0.16), ly1 = Math.round(H * 0.38);
+    shade(lx - 6, ly0 - 5, lx + 18, ly1 + 5, 0.6);
+    for (let y = ly0; y <= ly1; y++) addc(lx, y, hc, 0.35);
+    for (let i = 0; i < 3; i++) {
+      const y = Math.round(ly1 - (ly1 - ly0) * i / 2), on = i === I.lv;
+      for (let k = 0; k < 5; k++) addc(lx + k, y, on ? LVC[i] : hc, on ? 1 : 0.4);
+      htext('L' + (i + 1), lx + 7, y - 2, on ? LVC[i] : hc, 1, on ? 1 : 0.4);
+    }
+    const my = Math.round(ly1 - (ly1 - ly0) * I.lf / 2);
+    for (let k = 0; k < 3; k++) { addc(lx - 2 - k, my - k, [255, 255, 255], 0.9); addc(lx - 2 - k, my + k, [255, 255, 255], 0.9); }
+    let dn = 0; const cl = LAYER[I.sg];                // the next level change: a bar that fills as it nears
+    for (let i = 1; i < 1500; i += 4) if (LAYER[(I.sg + i) % NSEG] !== cl) { dn = i; break; }
+    const bw = Math.round(W * 0.3), bx = Math.round(cx - bw / 2), by = Math.round(H * 0.07);
+    for (let x = 0; x < bw; x++) { addc(bx + x, by, hc, 0.25); if (dn && x < bw * (1 - dn / 1500)) { addc(bx + x, by + 1, hc, 0.8); addc(bx + x, by + 2, hc, 0.8); } }
+    if (dn) { const nl = LAYER[(I.sg + dn) % NSEG]; htext((nl > cl ? '^' : '_') + 'L' + (nl + 1), bx + bw + 4, by - 1, LVC[nl], 1, 0.9); }
+    const ca = Math.cos(roll), sa = Math.sin(roll), scy = SHD / 2;   // horizon line, tilting with the lean
+    for (let x = Math.round(W * 0.22); x < W * 0.78; x++) {
+      if (Math.abs(x - cx) < W * 0.06 || (x >> 2) & 1) continue;
+      addc(x, Math.round(H / 2 + (horizY - scy - sa * (x + 0.5 - cx)) / ca), hc, 0.35);
+    }
+    for (let k = -5; k <= 5; k++) addc(Math.round(cx + k), Math.round(H * 0.5 + Math.abs(k) * 0.6), hc, 0.7);
+    const pu = 0.5 + 0.3 * Math.sin(T * 11) + 0.2 * Math.min(1, speed / 40), tr = Math.round(R * 0.09);
+    for (const [tx, tc] of [[W * 0.06, [255, 140, 60]], [W * 0.94, [80, 200, 255]]])   // thrusters glowing in the corners
+      for (let y = -tr; y <= tr; y++) for (let x = -tr; x <= tr; x++) {
+        const d = Math.sqrt(x * x + y * y) / tr;
+        if (d < 1) addc(Math.round(tx + x), Math.round(H * 0.96 + y), tc, (1 - d) * (1 - d) * pu * 0.8);
+      }
+    for (const sd of [-1, 1]) {                       // twin control yokes
+      const bx2 = cx + sd * W * 0.27, tx = bx2 + sd * W * 0.02 + steer * W * 0.02, ty = H * 0.84;
+      thick(bx2, H, tx, ty, r + 2, [16, 14, 22], [48, 42, 62]);
+      thick(tx, ty, tx, ty - 1.5, r + 1, [110, 112, 124], [200, 202, 214]);
+      putc(Math.round(tx), Math.round(ty - r - 2), [220, 40, 40]);                     // thumb trigger
+    }
+  } else {                                           // neo scooter: the speedo sits in the bar housing, so it goes over the bar
+    barSet(H * 0.885, [[0.1, 0], [0.3, -0.01], [0.38, -0.012]], r);
+    const [sx, sy] = g.sp, sr = g.sr;
+    for (let y = -sr; y <= sr; y++) for (let x = -sr; x <= sr; x++) if (x * x + y * y <= sr * sr) putc(sx + x, sy + y, [16, 16, 26]);
+    for (let i = 0; i < 12; i++) {
+      const a = Math.PI * (1.2 - 1.4 * i / 11), c = i / 12 < I.sf ? mix([120, 255, 200], [255, 120, 180], i / 11) : [40, 40, 60];
+      for (let k = sr - 4; k <= sr - 1; k++) putc(Math.round(sx + Math.cos(a) * k), Math.round(sy - Math.sin(a) * k), c);
+    }
+    text(spd, sx - 5, sy - 3, [255, 240, 245], 1);
+    text(I.st, Math.round(sx - I.st.length * 2), sy + 4, I.stC, 1);
+    const [px0, py0, pw, ph] = g.ph;                  // the phone: level and the road ahead
+    for (let y = py0; y < py0 + ph; y++) for (let x = px0; x < px0 + pw; x++) putc(x, y, [10, 14, 26]);
+    text('L' + (I.lv + 1), px0 + 2, py0 + 2, LVC[I.lv], 1);
+    if (I.moving && (T * 3) % 1 < 0.6) text(I.up ? '^' : '_', px0 + 11, py0 + 2, LVC[I.lv], 1);
+    miniMap(px0 + 2, py0 + 9, pw - 4, ph - 11, [0, 200, 255]);
   }
-  const segs = 12, bw = Math.max(2, Math.floor((sw - 6) / segs));
-  for (let i = 0; i < segs; i++) {
-    const on = i < Math.round(speed / maxV() * segs), c = mix([0, 230, 255], [255, 40, 170], i / segs);
-    for (let a = 0; a < bw - 1; a++) putc(Math.round(W / 2 - segs * bw / 2) + i * bw + a, sy0 + 2, on ? c : [30, 22, 44]);
-  }
-  // handlebars turn a little with the steering; rubber grips with neon bar-end caps
-  const a = steer * 0.07, pcx = W / 2, pcy = H * 0.87, r = Math.max(1, Math.round(H * 0.008));
-  for (const sd of [-1, 1]) {
-    const ex = W * 0.37 * sd, ey = -H * 0.075;
-    const gx = pcx + ex * Math.cos(a) - ey * Math.sin(a), gy = pcy + ex * Math.sin(a) + ey * Math.cos(a);
-    thick(pcx + sd * W * 0.05, pcy, gx, gy, r, [28, 26, 38], [80, 72, 104]);
-    const gx2 = pcx + (ex * 1.12) * Math.cos(a) - (ey * 1.12) * Math.sin(a), gy2 = pcy + (ex * 1.12) * Math.sin(a) + (ey * 1.12) * Math.cos(a);
-    const gx1 = pcx + (ex * 0.86) * Math.cos(a) - (ey * 0.86) * Math.sin(a), gy1 = pcy + (ex * 0.86) * Math.sin(a) + (ey * 0.86) * Math.cos(a);
-    thick(gx1, gy1, gx2, gy2, r + 2, [16, 14, 22], [48, 42, 62]);
-    const ec = sd < 0 ? [0, 230, 255] : [255, 50, 180];
-    thick(gx2, gy2, gx2 + sd * 1.5, gy2, r + 1, ec, mix(ec, [255, 255, 255], 0.4));
-  }
-  // helmet visor frame
+  // helmet visor or canopy frame, over everything
   for (let i = 0; i < N; i++) if (vmask[i]) { const j = i * 3; col[j] = vcol[j]; col[j + 1] = vcol[j + 1]; col[j + 2] = vcol[j + 2]; }
 }
 
@@ -2730,6 +2957,7 @@ function render() {
   const raise = (hill[b0] - BASE[b0]) + ((hill[b1] - BASE[b1]) - (hill[b0] - BASE[b0])) * frac;
   const sh = shake * 3, hy = HOR + OH * 0.14 * smooth(0, 80, raise) + (Math.random() - 0.5) * sh;
   starK = smooth(10, 80, raise);
+  horizY = hy;
   const camX = px + (Math.random() - 0.5) * shake * 0.4;
   blendTheme(base);
 
@@ -2926,6 +3154,7 @@ addEventListener('keydown', e => {
   if (KEYMAP[e.key]) { keys[KEYMAP[e.key]] = true; manual(); e.preventDefault(); }
   else if (e.key === 'a' || e.key === 'A') setAuto(!auto);
   else if ('rRwW'.includes(e.key)) toggleRain();
+  else if (e.key === 's' || e.key === 'S') cycleBike();
 });
 addEventListener('keyup', e => { if (KEYMAP[e.key]) keys[KEYMAP[e.key]] = false; });
 function hold(id, key) {
@@ -2940,6 +3169,11 @@ btnA.addEventListener('pointerdown', e => { e.preventDefault(); setAuto(!auto); 
 const btnR = document.getElementById('br2');
 function toggleRain() { rainOn = !rainOn; if (!rainOn) drops = []; btnR.classList.toggle('on', rainOn); }
 btnR.addEventListener('pointerdown', e => { e.preventDefault(); toggleRain(); });
+function cycleBike() {
+  bikeStyle = (bikeStyle + 1) % BIKE_NAMES.length; buildBike();
+  zoneEl.textContent = 'BIKE · ' + BIKE_NAMES[bikeStyle]; zoneEl.style.opacity = 1; zoneT = 2.5;
+}
+document.getElementById('bs').addEventListener('pointerdown', e => { e.preventDefault(); cycleBike(); });
 setTimeout(() => { document.getElementById('hint').style.opacity = 0; }, 9000);
 
 requestAnimationFrame(frame);
