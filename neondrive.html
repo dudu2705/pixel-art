@@ -130,7 +130,10 @@ shuffle(CITIES);
 const LINKS = [[5, 200], [13, 180], [8, 200], [24, 160], [25, 180], [26, 200], [27, 200], [28, 170], [29, 200]];
 // every connector type shows up at least once per loop; the leftover links are random
 const linkDeck = shuffle([...LINKS, ...CITIES.slice(LINKS.length).map(() => LINKS[(rng() * LINKS.length) | 0])]);
-CITIES.forEach((c, i) => { shuffle(c.zones); c.link = linkDeck[i]; });
+// each connector runs at a level (0 street, 1 sky avenues, 2 crown); the city before it ends on that level and the
+// next city starts on it, so you leave a city, cross and arrive all on the same level
+const LINK_LV = { 13: [0], 24: [0], 25: [0], 28: [0], 29: [0], 27: [2], 5: [1, 2], 8: [1, 2], 26: [1, 2] };
+CITIES.forEach((c, i) => { shuffle(c.zones); c.link = linkDeck[i]; const o = LINK_LV[c.link[0]]; c.endLv = o[(rng() * o.length) | 0]; });
 const CITY_SCALE = 3.5, LINK_SCALE = 1.5;            // how long each district and each link between cities runs
 const ZONES = [];                       // [start, end, district, city, isLink]
 const NSEG = (() => {
@@ -150,7 +153,7 @@ function district(n) { return zoneAt(n)[2]; }
 function zoneEnd(n) { return zoneAt(n)[1]; }
 const TUNNEL_STARTS = ZONES.filter(z => z[2] === 3).map(z => z[0]);
 let FOG = CITIES[0].fog.slice(), SKY = CITIES[0].sky, TWC = CITIES[0].tw;
-const TH = { aurora: 0, mountains: 0, elevator: 0, fireworks: 0, dark: 0, water: 0, deep: 0, kites: 0, shimmer: 0, night: 0, l2: 0, neonC: [255, 46, 170] };
+const TH = { aurora: 0, mountains: 0, elevator: 0, fireworks: 0, dark: 0, water: 0, deep: 0, kites: 0, shimmer: 0, night: 0 };
 let fogK = 1;
 const RW = 7, SW = 3.2, NEAR = 0.7;
 let roll = 0;
@@ -206,29 +209,29 @@ for (let n = 0; n < NSEG;) {
   n += len;
 }
 // ---- the layered city: street level, sky avenues (35 m) and the crown (80 m) ----
-const LH = [0, 35, 80], LAYER_NAMES = ['STREET LEVEL', 'SKY AVENUES', 'CROWN LEVEL'];
+const LH = [0, 35, 100], LAYER_NAMES = ['STREET LEVEL', 'SKY AVENUES', 'CROWN LEVEL'];
 const LAYER = new Int8Array(NSEG), ELEV = new Float32Array(NSEG), LAYERED = new Uint8Array(NSEG), BASE = new Float32Array(NSEG);
 const TRANS = [], TRANS_AT = new Int16Array(NSEG).fill(-1);
 {
-  const fixed = new Int8Array(NSEG).fill(-1);
+  const fixed = new Int8Array(NSEG).fill(-1), TAIL = 300;
+  const cityEnd = CITIES.map((c, ci) => ZONES.reduce((a, z) => z[3] === ci && !z[4] ? Math.max(a, z[1]) : a, 0));
   for (const z of ZONES) {
-    const L = z[1] - z[0];
+    const L = z[1] - z[0], lv = CITIES[z[3]].endLv;
     for (let n = z[0]; n < z[1]; n++) {
-      // links: sea-level ones at the street, the cloud causeway at the crown, bridges, highways and the volcano rim up high
-      if (z[4]) fixed[n] = [D.TUBE, D.VAC, D.FERRY, D.PONTOON, D.SALT].includes(z[2]) ? 0 : z[2] === D.CLOUDS ? 2 : -2;
+      if (z[4]) fixed[n] = lv;                         // the connector holds its level
       else {
         LAYERED[n] = 1;
         if (z[2] === D.RAMP) fixed[n] = (n - z[0]) < L * 0.62 ? 0 : 2;   // the spiral climbs from the street to the crown
+        else if (n >= cityEnd[z[3]] - TAIL) fixed[n] = lv;   // the city's last stretch is already on the connector's level
       }
     }
   }
   const lr = rng;
-  const nextFixed = new Int32Array(NSEG), nextHigh = new Int32Array(NSEG);
-  for (let n = NSEG - 1, d = 1e9, e = 1e9; n >= 0; n--) { d = fixed[n] >= 0 ? 0 : d + 1; e = fixed[n] === -2 ? 0 : e + 1; nextFixed[n] = d; nextHigh[n] = e; }
-  let cur = (lr() * 3) | 0, left = 300 + lr() * 300;
+  const nextFixed = new Int32Array(NSEG);
+  for (let n = NSEG - 1, d = 1e9; n >= 0; n--) { d = fixed[n] >= 0 ? 0 : d + 1; nextFixed[n] = d; }
+  let cur = CITIES[CITIES.length - 1].endLv, left = 300 + lr() * 300;   // the loop wraps on the last connector's level
   const seen = CITIES.map(() => new Set());           // levels each city has used so far
   const cityLen = CITIES.map((c, ci) => ZONES.reduce((a, z) => a + (z[3] === ci && !z[4] ? z[1] - z[0] : 0), 0));
-  const cityEnd = CITIES.map((c, ci) => ZONES.reduce((a, z) => z[3] === ci && !z[4] ? Math.max(a, z[1]) : a, 0));
   // long stays on each level, cut short only when the levels a city hasn't shown yet would no longer fit
   const run = (ci, n) => {
     const r = clamp(cityLen[ci] / 3.3 * (0.8 + lr() * 0.4), 500, 1200), todo = 3 - seen[ci].size;
@@ -239,15 +242,10 @@ const TRANS = [], TRANS_AT = new Int16Array(NSEG).fill(-1);
     const ci = zoneAt(n)[3];
     if (ci !== lastCi && !zoneAt(n)[4]) { lastCi = ci; seen[ci].add(cur); left = Math.min(left, run(ci, n)); }   // a new city begins
     if (fixed[n] >= 0) { cur = fixed[n]; seen[ci].add(cur); left = run(ci, n); LAYER[n] = cur; continue; }
-    if (fixed[n] === -2) {                           // a bridge or highway: stay up if you're up, otherwise climb
-      if (cur === 0) { cur = lr() < 0.5 ? 1 : 2; left = 1200 + lr() * 800; }
-      LAYER[n] = cur; left--; continue;
-    }
     if (left <= 0) {
-      if (nextFixed[n] < 300) left = nextFixed[n] + 1;   // the sea tube or the spiral is coming and sets the level anyway
+      if (nextFixed[n] < 300) left = nextFixed[n] + 1;   // the city's last stretch or the spiral is coming and sets the level anyway
       else {
         let o = [0, 1, 2].filter(v => v !== cur);
-        if (nextHigh[n] < 400) o = o.filter(v => v !== 0);   // don't drop to the street right before a bridge
         const fresh = o.filter(v => !seen[ci].has(v));
         if (fresh.length) o = fresh;                    // make sure every city shows all three levels
         cur = o[(lr() * o.length) | 0]; seen[ci].add(cur); left = run(ci, n);
@@ -299,7 +297,7 @@ for (const z of ZONES) {
     else if (z[2] === D.CLOUDS) curve[n] *= 0.4;
     else if (z[2] === D.VAC) curve[n] *= 0.3;
     else if (z[2] === D.FERRY || z[2] === D.SALT) curve[n] = 0;
-    else if (z[2] === D.PONTOON) { hill[n] += 0.35 * Math.sin(n * 0.7); curve[n] *= 0.5; }
+    else if (z[2] === D.PONTOON) curve[n] *= 0.5;
     else if (z[2] === D.RAMP) curve[n] = 0.05 * smooth(0, 0.08, t) * smooth(0, 0.08, 1 - t);   // a tight spiral around a tower
   }
 }
@@ -375,8 +373,8 @@ for (let side = 0; side < 2; side++) {
     // the skyline tops out between level 2 and level 3, so the crown rides over rooftops; a few landmark spires
     // (more in the supertall districts) rise past it, and some blocks stay low podiums
     const el = ELEV[n], landmark = rng() < (d === 2 || d === 8 ? 0.4 : 0.12);
-    const tower = landmark ? LH[2] + 20 + Math.pow(rng(), 1.3) * 110 : rng() < 0.85 ? LH[1] + 10 + rng() * (LH[2] - LH[1] - 15) : 0;
-    const fitH = hh => landmark ? Math.max(hh, tower) : Math.min(Math.max(hh, tower), LH[2] - 5);
+    const tower = landmark ? LH[1] + 40 + Math.pow(rng(), 1.3) * (LH[2] - LH[1] - 48) : rng() < 0.85 ? LH[1] + 10 + rng() * 30 : 0;
+    const fitH = hh => Math.min(Math.max(hh, tower), LH[2] - 8);   // nothing reaches the crown: level 3 rides above the whole city
     const base = d === 1 ? hsl(10 + rng() * 30, 0.28, 0.1 + rng() * 0.07)
       : d === 2 || d === 8 ? hsl(hue, 0.35, 0.12 + rng() * 0.06)
       : d === 4 ? hsl(rng() < 0.5 ? 15 + rng() * 20 : 170 + rng() * 30, 0.3, 0.13 + rng() * 0.06)
@@ -602,10 +600,6 @@ function blendTheme(seg) {
   FOG = mix(FOG, [FOG[0] * 0.5, FOG[1] * 0.5, FOG[2] * 0.6], nk);
   FOG = mix(FOG, [110, 100, 140], dawn * 0.2 * sea);
   TH.night = night * sea;
-  const el = hill[seg % NSEG] - BASE[seg % NSEG], l1 = 1 - smooth(6, 26, el), l2 = smooth(14, 32, el) * (1 - smooth(48, 70, el));
-  TH.neonC = mix(a.neon[0], b.neon[0], t); TH.l2 = l2 * sea;
-  FOG = mix(FOG, [110, 60, 24], l1 * 0.18 * sea);                 // sodium-orange street haze
-  FOG = mix(FOG, mix(TH.neonC, [0, 0, 0], 0.45), l2 * 0.32 * sea); // the sky avenues swim in the city's neon
   return { a, b, t, z };
 }
 
@@ -686,8 +680,7 @@ function update(dt) {
   px += steer * latMax * dt;
   px -= kappa * speed * speed * dt * 0.35;
   // a motorcycle leans into turns: the whole view rolls
-  const rock = district(n) === D.PONTOON ? Math.sin(T * 0.9) * 0.05 : 0;      // the barges sway under you
-  const rollT = clamp((steer * latMax * Math.min(speed, 40) * 0.05 + kappa * speed * speed) / 9.8 + rock, -0.26, 0.26);
+  const rollT = clamp((steer * latMax * Math.min(speed, 40) * 0.05 + kappa * speed * speed) / 9.8, -0.26, 0.26);
   roll += (rollT - roll) * Math.min(1, dt * 4);
   if (Math.abs(px) > RW - 1) { px = Math.sign(px) * (RW - 1); speed *= 1 - dt * 1.5; shake = Math.max(shake, 0.15 * Math.min(1, speed / 20)); }
 
@@ -1118,7 +1111,7 @@ function drawGround(k, d, deckOnly) {
   const deckW = d === D.HIGHWAY ? RW + SW : RW + 1.5;
   const water = d === D.BRIDGE || d === D.CANALS || d === D.FERRY || d === D.PONTOON, deck = d === D.HIGHWAY || d === D.RAMP, sand = d === D.CANYON;
   const lava = d === D.VOLCANO, cloud = d === D.CLOUDS, salt = d === D.SALT, forge = d === D.FORGE, ruin = d === D.RUIN;
-  const pontoon = d === D.PONTOON, ferry = d === D.FERRY, lev = EL[k] > LH[1] + 5 ? 3 : EL[k] > 3 ? 2 : 1;
+  const pontoon = d === D.PONTOON, ferry = d === D.FERRY;
   const f = k + 1, yN = GY[k], yF = GY[f];
   if (yF >= yN) return;
   const y0 = Math.max(0, Math.ceil(yF)), y1 = Math.min(H - 1, Math.ceil(yN) - 1);
@@ -1146,8 +1139,7 @@ function drawGround(k, d, deckOnly) {
         else if (!xr && Math.abs(a - (RW - 0.3)) < lw) { r = 200; g = 200; b = 215; rf = 0.2; }
         else {
           const h = pxw < 0.35 ? hash(Math.floor(lx * 3), zq, 9) * 9 : 4.5; r = 24 + h; g = 22 + h; b = 34 + h; rf = 0.5;
-          if (deckOnly && lev === 3) { r = 14; g = 30; b = 48; op = 0.3; rf = 0.15; }   // glass skyway (no seams: they flickered at speed)
-          else if (deckOnly) { const sm = pxw < 0.5 && ((wz % 3) < 0.07 || (a % 1.75) < 0.05); r = sm ? 22 : 38; g = sm ? 22 : 38; b = sm ? 28 : 48; rf = 0.25; }   // steel plates
+          if (deckOnly) { r = 14; g = 30; b = 48; op = 0.3; rf = 0.15; }   // clear glass deck on levels 2 and 3
           if (sand && a > RW - 1.6 && hash(Math.floor(lx * 2), Math.floor(wz * 0.7), 33) < (a - RW + 1.6) * 0.6) { r = 150; g = 92; b = 54; rf = 0; }
         }
       } else if (deck) {
@@ -1167,8 +1159,7 @@ function drawGround(k, d, deckOnly) {
         else {
           const ln = pxw < 0.5 && (tileRow || ((a - RW) % 1.6) < Math.max(0.1, pxw));
           r = ln ? 30 : 46; g = ln ? 26 : 40; b = ln ? 42 : 60; rf = 0.25;
-          if (deckOnly && lev === 3) { op = ln ? 0.9 : 0.35; rf = 0.1; }
-          else if (deckOnly) { r = ln ? 24 : 40; g = ln ? 24 : 38; b = ln ? 30 : 50; rf = 0.15; }   // steel grating
+          if (deckOnly) { op = ln ? 0.9 : 0.35; rf = 0.1; }
         }
       } else if (water) {
         const sp = pxw < 0.4 && hash(Math.floor(lx * 2), zq, 21) < 0.012;
@@ -1199,10 +1190,7 @@ function drawGround(k, d, deckOnly) {
         const hc = hash(Math.floor(lx * 2.5), Math.floor(wz * 2.5), 44);
         if (hc < 0.05) { r = 40; g = 90; b = 40; rf = 0; } else if (hc < 0.09) { r = 10; g = 10; b = 12; }
       }
-      if (deckOnly && a < RW && !xr && Math.abs(a - (RW - 0.3)) < lw) {   // lane edge: amber lights on steel, a cyan line on glass
-        if (lev === 3) { r = 90; g = 230; b = 255; op = 1; }
-        else { const on = ((wz % 3) + 3) % 3 < 0.9; r = on ? 255 : 38; g = on ? 170 : 38; b = on ? 60 : 48; op = 1; }
-      }
+      if (deckOnly && a < RW && !xr && Math.abs(a - (RW - 0.3)) < lw) { r = 90; g = 230; b = 255; op = 1; }   // cyan lane edge on the glass
       if (pontoon && a >= RW + 0.3 && a < RW + SW) { r = 90; g = 50; b = 34; rf = 0.1; }
       if (pontoon && a < RW + SW && ((wz % 24) + 24) % 24 < 0.5) { r = 8; g = 8; b = 12; rf = 0; }   // gap between barges
       if (ferry && a >= RW + 0.3 && a < RW + SW) { r = 40; g = 70; b = 60; rf = 0.15; }
@@ -1608,10 +1596,6 @@ function railTex(wz, v) {
   if (v > 1.0) { TR = 0; TG = 210; TB = 255; return; }
   if ((wz % 2.5) < 0.18 || (v > 0.5 && v < 0.62)) { TR = 70; TG = 70; TB = 90; return; }
   TR = -1;
-}
-function steelRailTex(wz, v) {                       // level 2: a solid steel barrier capped with an amber light strip
-  if (v > 1.0) { const on = ((wz % 3) + 3) % 3 < 2.2; TR = on ? 255 : 120; TG = on ? 160 : 80; TB = on ? 50 : 30; return; }
-  TR = v > 0.15 ? 46 : 30; TG = v > 0.15 ? 46 : 30; TB = v > 0.15 ? 58 : 38;
 }
 function cableH(l) {
   if (l < 50) return 1.2 + 73.8 * (l / 50);
@@ -2574,7 +2558,7 @@ function drawWall(k, side, n) {
     if (B.style === D.BAZAAR) drawDome(B, wx, sg); else drawCoil(B, wx, sg);
   }
   else if (n === B.start + (B.len >> 1) && B.landmark && projAt(k, 0) && PZ < 700) {
-    const s = PS, fz = fogAt(PZ), ax = PCX + (wx + sg * 5) * s, top = PGL - B.h * s, mh = (10 + hash(B.id, 1, 5) * 22) * s;
+    const s = PS, fz = fogAt(PZ), ax = PCX + (wx + sg * 5) * s, top = PGL - B.h * s, mh = Math.max(0, Math.min(10 + hash(B.id, 1, 5) * 22, LH[2] - 3 - B.h)) * s;
     rect(ax - Math.max(0.5, 0.15 * s), ax + Math.max(0.5, 0.15 * s), top - mh, top, [40, 38, 52], fz);
     if (s > 1.5) rect(ax - 0.6 * s, ax + 0.6 * s, top - mh * 0.55, top - mh * 0.55 + Math.max(1, 0.15 * s), [40, 38, 52], fz);
     if ((T * 1.2 + B.id * 0.37) % 1.5 < 0.5) {
@@ -3114,9 +3098,9 @@ function render() {
   const camY = hill[b0] + (hill[b1] - hill[b0]) * frac + eye() + Math.sin(camZ * 0.9) * 0.015 * Math.min(1, speed / 20);
   // the higher you ride, the more the camera tilts down to show the layers below
   const raise = (hill[b0] - BASE[b0]) + ((hill[b1] - BASE[b1]) - (hill[b0] - BASE[b0])) * frac;
-  crownK = smooth(45, 80, raise);
+  crownK = smooth(LH[1] + 15, LH[2], raise);
   const sh = shake * 3, hy = HOR + OH * (0.14 * smooth(0, 35, raise) - 0.16 * crownK) + (Math.random() - 0.5) * sh;   // the crown tips the view down over the roofs
-  starK = smooth(10, 80, raise);
+  starK = smooth(10, LH[2], raise);
   horizY = hy;
   const camX = px + (Math.random() - 0.5) * shake * 0.4;
   blendTheme(base);
@@ -3191,7 +3175,7 @@ function render() {
       else { drawWall(k, 0, n); drawWall(k, 1, n); }
       if (elev) { drawBelow(k, n, deckW); if (sw && sw.hb + 1.4 < EL[k]) drawSkywalk(k, n, sw); }
       drawGround(k, d, elev);
-      if (elev && d !== D.HIGHWAY) { const rt = EL[k] > LH[1] + 5 ? railTex : steelRailTex; quadWall(k, -deckW, 0, 1.1, rt); quadWall(k, deckW, 0, 1.1, rt); }
+      if (elev && d !== D.HIGHWAY) { quadWall(k, -deckW, 0, 1.1, railTex); quadWall(k, deckW, 0, 1.1, railTex); }
       if (!zz[4] && d !== D.RAMP) drawSkytrain(k, n);
       if (d === D.HIGHWAY) {
         drawHighway(k, n, zz);
@@ -3259,32 +3243,12 @@ function render() {
   for (let i = 0; i < N * 3; i += 3) {
     col[i] = col[i] * cr + lb[i] * glowK; col[i + 1] = col[i + 1] * dimK + lb[i + 1] * glowK; col[i + 2] = col[i + 2] * cb + lb[i + 2] * glowK;
   }
-  if (TH.l2 > 0.05) {                                // level 2: glowing neon smog drifting between the towers, thickest at eye level
-    const c = TH.neonC, k0 = 0.16 * TH.l2;
-    for (let y = 0; y < H; y += 2) for (let x = 0; x < W; x += 2) {
-      const a = smooth(0.5, 0.85, vnoise((x + bgX * 0.6) * 0.018 + T * 0.06, y * 0.035 - T * 0.02, 17)) * k0 * (1 - Math.abs(y - hy) / H);
-      if (a < 0.01) continue;
-      for (let q = 0; q < 4; q++) { const xx = x + (q & 1), yy = y + (q >> 1); if (xx < W && yy < H) { const i = (yy * W + xx) * 3; col[i] += c[0] * a; col[i + 1] += c[1] * a; col[i + 2] += c[2] * a; } }
-    }
-  }
-  // climbing between levels you punch through a layer: neon haze at 18 m, a bright cloud band at 60 m
-  const p1 = Math.max(0, 1 - Math.abs(raise - 18) / 6), p2 = Math.max(0, 1 - Math.abs(raise - 60) / 8);
-  if (p1 + p2 > 0.01) {
-    const hc1 = mix(TH.neonC, [255, 255, 255], 0.3), hc2 = [205, 200, 232];
-    for (let y = 0; y < H; y++) {
-      const wv = 0.82 + 0.18 * Math.sin(y * 0.21 + T * 9), a1 = p1 * 0.5 * wv, a2 = p2 * 0.8 * wv;
-      for (let x = 0, i = y * W * 3; x < W; x++, i += 3) for (let ch = 0; ch < 3; ch++) {
-        col[i + ch] += (hc1[ch] - col[i + ch]) * a1; col[i + ch] += (hc2[ch] - col[i + ch]) * a2;
-      }
-    }
-  }
   const hr = Math.round(hy);
   if (rainOn) for (let y = hr + 1; y < H; y++) {   // weather off also turns off the wet-road reflections
     const ys = 2 * hr - y; if (ys < 0) break;
-    const wob = Math.round(Math.sin(y * 0.9 + T * 5) * 0.6);
     for (let x = 0; x < W; x++) {
       const i = y * W + x, k = refl[i]; if (!k) continue;
-      const xs = clamp(x + wob, 0, W - 1), j = (ys * W + xs) * 3, o = i * 3;
+      const xs = x, j = (ys * W + xs) * 3, o = i * 3;
       const lum = col[j] * 0.3 + col[j + 1] * 0.5 + col[j + 2] * 0.2, kk = k * 0.55 * smooth(70, 190, lum);
       if (kk <= 0.01) continue;
       col[o] += (col[j] - col[o]) * kk; col[o + 1] += (col[j + 1] - col[o + 1]) * kk; col[o + 2] += (col[j + 2] - col[o + 2]) * kk;
