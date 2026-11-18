@@ -2817,12 +2817,6 @@ function buildBike() {
         if (e <= 1) fn(x, y, nx, ny, e);
       }
   };
-  const helmet = () => {
-    for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
-      const e = Math.pow(Math.abs(x - cx) / (W * 0.54), 4) + Math.pow(Math.abs(y - H * 0.5) / (H * 0.6), 4);
-      if (e >= 0.9) setV(x, y, e < 1 ? [46, 34, 66] : [8, 6, 12]);
-    }
-  };
 
   if (s === 0) {                                     // light cycle: a dome of smoked glass with a glowing ring floating inside, no dash
     ell(cx, H * 1.04, W * 0.13, H * 0.24, (x, y, nx, ny, e) => {
@@ -2833,7 +2827,6 @@ function buildBike() {
     for (const sd of [-1, 1]) for (let y = Math.round(H * 0.84); y < H * 0.9; y++)      // short risers to the low bar
       for (let x = 0; x < Math.max(2, W * 0.01); x++) setB(cx + sd * (W * 0.03 + x), y, [60, 62, 78]);
     g.ring = [cx, H * 0.92]; g.holo = [cx, H * 0.71]; g.proj = [cx, H * 0.81];
-    helmet();
   }
 }
 
