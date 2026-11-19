@@ -504,7 +504,7 @@ function airOk(n) {                                   // no air traffic inside t
 
 // ---------- buffers ----------
 let FRAC = 0, F0 = 1, vib = 0, W, H, N, PX, F, HOR, HB, PW, img, fb, col, lb, refl;
-let OW, OH, SWD, SHD, MX, MY, colS, colO, bmask, bcol, vmask, vcol;
+let KD = 1, OW, OH, SWD, SHD, MX, MY, colS, colO, bmask, bcol, vmask, vcol;
 function useScene() { W = SWD; H = SHD; N = W * H; col = colS; }
 function useOut() { W = OW; H = OH; N = W * H; col = colO; }
 let sky1, sky2, mtn, stars = [], holoX = 0;
@@ -524,7 +524,8 @@ function setup() {
   MX = Math.ceil((OW * (Math.cos(th) - 1) + OH * Math.sin(th)) / 2) + 2;
   MY = Math.ceil((OW * Math.sin(th) + OH * (Math.cos(th) - 1)) / 2) + 2;
   SWD = OW + 2 * MX; SHD = OH + 2 * MY;
-  cv.width = OW; cv.height = OH;
+  KD = gl ? k : 1;                                  // the graphics chip draws at the screen's own resolution
+  cv.width = OW * KD; cv.height = OH * KD;
   cv.style.width = OW * PX + 'px'; cv.style.height = OH * PX + 'px';
   img = new ImageData(OW, OH);
   fb = new Uint32Array(img.data.buffer);
@@ -3448,18 +3449,19 @@ void main() { vec2 p = vec2(float((gl_VertexID << 1) & 2), float(gl_VertexID & 2
 // the same formulas as the JavaScript loops they replace (renderScene's CPU path)
 const GPU_FS = `#version 300 es
 precision highp float; precision highp int; precision highp sampler2D;
-uniform sampler2D uScene, uGlow, uRefl, uOvA, uOvM; uniform highp isampler2D uMap; uniform int uUseMap;
+uniform sampler2D uScene, uGlow, uRefl, uOvA, uOvM; uniform float uKD;
 uniform vec3 uK; uniform float uGlowK; uniform int uHr; uniform int uRain;
 uniform vec2 uRot; uniform vec4 uGeom; uniform ivec2 uScn; uniform ivec2 uOut; uniform vec3 uFlash;
 out vec4 outC;
 vec3 comb(ivec2 p) { return texelFetch(uScene, p, 0).rgb * uK + texelFetch(uGlow, p, 0).rgb * uGlowK; }
 float sm(float a, float b, float v) { float t = clamp((v - a) / (b - a), 0.0, 1.0); return t * t * (3.0 - 2.0 * t); }
 void main() {
-  ivec2 op = ivec2(int(gl_FragCoord.x), uOut.y - 1 - int(gl_FragCoord.y));
-  float dx = float(op.x) + 0.5 - uGeom.x, dy = float(op.y) + 0.5 - uGeom.y;
+  // each screen pixel finds its exact spot in art-pixel units, so a lean turns every art pixel as a clean tilted square
+  vec2 f = vec2(gl_FragCoord.x, float(uOut.y) * uKD - gl_FragCoord.y) / uKD;
+  ivec2 op = clamp(ivec2(floor(f)), ivec2(0), uOut - 1);
+  float dx = f.x - uGeom.x, dy = f.y - uGeom.y;
   int sx = clamp(int(floor(uRot.x * dx - uRot.y * dy + uGeom.z)), 0, uScn.x - 1);
   int sy = clamp(int(floor(uRot.y * dx + uRot.x * dy + uGeom.w)), 0, uScn.y - 1);
-  if (uUseMap == 1) { ivec2 m = texelFetch(uMap, op, 0).xy; sx = m.x; sy = m.y; }   // leaning: positions worked out in JavaScript
   ivec2 sp = ivec2(sx, sy);
   vec3 c = comb(sp);
   if (uRain == 1 && sy >= uHr + 1) {
@@ -3480,18 +3482,18 @@ void main() {
 }`;
 const GPU_FS8 = `#version 300 es
 precision highp float; precision highp sampler2D;
-uniform sampler2D uImg; uniform ivec2 uOut; out vec4 outC;
-void main() { outC = texelFetch(uImg, ivec2(int(gl_FragCoord.x), uOut.y - 1 - int(gl_FragCoord.y)), 0); }`;
+uniform sampler2D uImg; uniform ivec2 uOut; uniform float uKD; out vec4 outC;
+void main() { vec2 f = vec2(gl_FragCoord.x, float(uOut.y) * uKD - gl_FragCoord.y) / uKD; outC = texelFetch(uImg, clamp(ivec2(floor(f)), ivec2(0), uOut - 1), 0); }`;
 function gpuInit() {
   try {
     const sh = (type, src) => { const o = gl.createShader(type); gl.shaderSource(o, src); gl.compileShader(o); if (!gl.getShaderParameter(o, gl.COMPILE_STATUS)) throw new Error(gl.getShaderInfoLog(o)); return o; };
     const prog = fs => { const p = gl.createProgram(); gl.attachShader(p, sh(gl.VERTEX_SHADER, GPU_VS)); gl.attachShader(p, sh(gl.FRAGMENT_SHADER, fs)); gl.linkProgram(p); if (!gl.getProgramParameter(p, gl.LINK_STATUS)) throw new Error(gl.getProgramInfoLog(p)); return p; };
     GPU.p = prog(GPU_FS); GPU.p8 = prog(GPU_FS8);
     GPU.u = {};
-    for (const n of ['uScene', 'uGlow', 'uRefl', 'uOvA', 'uOvM', 'uMap', 'uUseMap', 'uK', 'uGlowK', 'uHr', 'uRain', 'uRot', 'uGeom', 'uScn', 'uOut', 'uFlash']) GPU.u[n] = gl.getUniformLocation(GPU.p, n);
-    GPU.u8 = { uImg: gl.getUniformLocation(GPU.p8, 'uImg'), uOut: gl.getUniformLocation(GPU.p8, 'uOut') };
+    for (const n of ['uScene', 'uGlow', 'uRefl', 'uOvA', 'uOvM', 'uKD', 'uK', 'uGlowK', 'uHr', 'uRain', 'uRot', 'uGeom', 'uScn', 'uOut', 'uFlash']) GPU.u[n] = gl.getUniformLocation(GPU.p, n);
+    GPU.u8 = { uImg: gl.getUniformLocation(GPU.p8, 'uImg'), uOut: gl.getUniformLocation(GPU.p8, 'uOut'), uKD: gl.getUniformLocation(GPU.p8, 'uKD') };
     GPU.tex = {};
-    for (const n of ['scene', 'glow', 'refl', 'ovA', 'ovM', 'img', 'map']) {
+    for (const n of ['scene', 'glow', 'refl', 'ovA', 'ovM', 'img']) {
       const t = gl.createTexture(); gl.bindTexture(gl.TEXTURE_2D, t);
       gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST); gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
       gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE); gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
@@ -3512,8 +3514,7 @@ function gpuSize() {                                  // (re)allocate the textur
   alloc('refl', SWD, SHD, gl.R32F, gl.RED, gl.FLOAT);
   alloc('ovA', OW, OH, gl.RGB32F, gl.RGB, gl.FLOAT); alloc('ovM', OW, OH, gl.RGB32F, gl.RGB, gl.FLOAT);
   alloc('img', OW, OH, gl.RGBA8, gl.RGBA, gl.UNSIGNED_BYTE);
-  alloc('map', OW, OH, gl.RG32I, gl.RG_INTEGER, gl.INT);
-  GPU.ovA = new Float32Array(OW * OH * 3); GPU.ovM = new Float32Array(OW * OH * 3); GPU.map = new Int32Array(OW * OH * 2);
+  GPU.ovA = new Float32Array(OW * OH * 3); GPU.ovM = new Float32Array(OW * OH * 3);
 }
 function upload(n, w, h, fmt, type, data) { gl.bindTexture(gl.TEXTURE_2D, GPU.tex[n]); gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, w, h, fmt, type, data); }
 function drawOverlays() {                             // everything drawn on top after the lean: weather, cockpit, readouts
@@ -3526,17 +3527,6 @@ function gpuFinish(hy) {
   const glowK = (1 + 0.35 * TH.night) * (1 - 0.25 * crownK), dimK = 1 - 0.38 * TH.night;
   const cr = dimK * (1 - 0.07 * crownK), cb = dimK * (1 + 0.08 * crownK);
   const rl = outside() ? 0 : roll;
-  if (rl !== 0) {                                      // leaning: where each screen pixel samples the scene, with the original maths
-    const ca = Math.cos(rl), sa = Math.sin(rl), pcx = OW / 2, pcy = OH / 2, scx = SWD / 2, scy = SHD / 2, m = GPU.map;
-    for (let oy = 0, o = 0; oy < OH; oy++) {
-      const dy = oy + 0.5 - pcy;
-      for (let ox = 0; ox < OW; ox++, o += 2) {
-        const dx = ox + 0.5 - pcx;
-        m[o] = clamp(Math.floor(ca * dx - sa * dy + scx), 0, SWD - 1); m[o + 1] = clamp(Math.floor(sa * dx + ca * dy + scy), 0, SHD - 1);
-      }
-    }
-    upload('map', OW, OH, gl.RG_INTEGER, gl.INT, m);
-  }
   upload('scene', SWD, SHD, gl.RGB, gl.FLOAT, colS); upload('glow', SWD, SHD, gl.RGB, gl.FLOAT, lb); upload('refl', SWD, SHD, gl.RED, gl.FLOAT, refl);
   // the overlays only ever paint over, add light or darken a pixel, so each pixel ends up as M * scene + A:
   // draw them once over 0 (gives A) and once over 1 (gives M + A)
@@ -3545,9 +3535,9 @@ function gpuFinish(hy) {
   colO.fill(1); drawOverlays(); for (let i = 0; i < GPU.ovM.length; i++) GPU.ovM[i] = colO[i] - GPU.ovA[i];
   upload('ovA', OW, OH, gl.RGB, gl.FLOAT, GPU.ovA); upload('ovM', OW, OH, gl.RGB, gl.FLOAT, GPU.ovM);
   const u = GPU.u, fl = crashFlash * 120;
-  gl.viewport(0, 0, OW, OH); gl.useProgram(GPU.p); gl.bindVertexArray(GPU.vao);
-  [['scene', 'uScene'], ['glow', 'uGlow'], ['refl', 'uRefl'], ['ovA', 'uOvA'], ['ovM', 'uOvM'], ['map', 'uMap']].forEach(([t, n], i) => { gl.activeTexture(gl.TEXTURE0 + i); gl.bindTexture(gl.TEXTURE_2D, GPU.tex[t]); gl.uniform1i(u[n], i); });
-  gl.uniform1i(u.uUseMap, rl !== 0 ? 1 : 0);
+  gl.viewport(0, 0, OW * KD, OH * KD); gl.useProgram(GPU.p); gl.bindVertexArray(GPU.vao);
+  [['scene', 'uScene'], ['glow', 'uGlow'], ['refl', 'uRefl'], ['ovA', 'uOvA'], ['ovM', 'uOvM']].forEach(([t, n], i) => { gl.activeTexture(gl.TEXTURE0 + i); gl.bindTexture(gl.TEXTURE_2D, GPU.tex[t]); gl.uniform1i(u[n], i); });
+  gl.uniform1f(u.uKD, KD);
   gl.uniform3f(u.uK, cr, dimK, cb); gl.uniform1f(u.uGlowK, glowK); gl.uniform1i(u.uHr, Math.round(hy)); gl.uniform1i(u.uRain, rainOn ? 1 : 0);
   gl.uniform2f(u.uRot, Math.cos(rl), Math.sin(rl)); gl.uniform4f(u.uGeom, OW / 2, OH / 2, SWD / 2, SHD / 2);
   gl.uniform2i(u.uScn, SWD, SHD); gl.uniform2i(u.uOut, OW, OH); gl.uniform3f(u.uFlash, fl, fl * 0.3, fl * 0.4);
@@ -3558,8 +3548,8 @@ function present8() {                                 // show a finished 8-bit f
   if (!GPU.ok) return;
   gpuSize();
   upload('img', OW, OH, gl.RGBA, gl.UNSIGNED_BYTE, img.data);
-  gl.viewport(0, 0, OW, OH); gl.useProgram(GPU.p8); gl.bindVertexArray(GPU.vao);
-  gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D, GPU.tex.img); gl.uniform1i(GPU.u8.uImg, 0); gl.uniform2i(GPU.u8.uOut, OW, OH);
+  gl.viewport(0, 0, OW * KD, OH * KD); gl.useProgram(GPU.p8); gl.bindVertexArray(GPU.vao);
+  gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D, GPU.tex.img); gl.uniform1i(GPU.u8.uImg, 0); gl.uniform2i(GPU.u8.uOut, OW, OH); gl.uniform1f(GPU.u8.uKD, KD);
   gl.drawArrays(gl.TRIANGLES, 0, 3);
 }
 if (gl) {
