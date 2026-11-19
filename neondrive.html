@@ -505,7 +505,7 @@ function useOut() { W = OW; H = OH; N = W * H; col = colO; }
 let sky1, sky2, mtn, stars = [], holoX = 0;
 const Z = new Float32Array(DRAW + 2), S = new Float32Array(DRAW + 2), CX = new Float32Array(DRAW + 2), GY = new Float32Array(DRAW + 2);
 const EL = new Float32Array(DRAW + 2), GYL = new Float32Array(DRAW + 2);   // road height above the city floor, and the floor's screen y
-let gloom = 0, starK = 0;
+let gloom = 0, starK = 0, SMROW = new Float32Array(0);
 
 function setup() {
   // every art pixel is a whole number of physical screen pixels, so the grid stays even and crisp on any screen,
@@ -800,7 +800,7 @@ function update(dt) {
   if ((zoneT -= dt) < 0) zoneEl.style.opacity = 0;
 
   // weather particles: rain, snow, sand or petals
-  const want = Math.round(W * ({ rain: 0.6, monsoon: 1.1, snow: 0.5, ash: 0.45, sand: 0.4, petals: 0.14, bubbles: 0.25, fireflies: 0.12 }[W_] || 0));
+  const want = Math.round((lite ? 0.55 : 1) * W * ({ rain: 0.6, monsoon: 1.1, snow: 0.5, ash: 0.45, sand: 0.4, petals: 0.14, bubbles: 0.25, fireflies: 0.12 }[W_] || 0));
   const respawn = s => {
     s.kind = W_;
     if (W_ === 'sand') { s.x = -Math.random() * 40; s.y = Math.random() * H; }
@@ -856,6 +856,13 @@ function addLight(x, y, R, c, I) {
     }
   }
 }
+// write a fogged colour straight into the buffer (callers keep x, y on screen); no arrays made per pixel
+function setF(x, y, c, fz) {
+  const i = y * W + x, j = i * 3;
+  col[j] = c[0] + (FOG[0] - c[0]) * fz; col[j + 1] = c[1] + (FOG[1] - c[1]) * fz; col[j + 2] = c[2] + (FOG[2] - c[2]) * fz; refl[i] = 0;
+}
+const C_TUN = { vacL: [80, 220, 255], vacD: [12, 14, 22], off: [30, 26, 36], seam: [28, 26, 34], lift: [30, 32, 44], plain: [44, 42, 52], lamp: [255, 196, 120], upL: [120, 255, 190], dnL: [255, 190, 110] };
+const C_SKW = { rail: [120, 140, 160], crowd: [16, 14, 20], deck: [48, 46, 60], paint: [150, 150, 160], tail: [255, 50, 60], head: [230, 235, 255], road: [30, 28, 38], lamp: [255, 210, 150], under: [22, 20, 30] };
 function put(x, y, r, g, b) {
   if (x < 0 || y < 0 || x >= W || y >= H) return;
   const i = (y * W + x) * 3; col[i] = r; col[i + 1] = g; col[i + 2] = b;
@@ -919,14 +926,17 @@ function drawSky(hy) {
   }
   // smog bands lit from below
   const smA = mix(mid, top, 0.2), smB = mix(hz, [255, 255, 255], 0.12);
-  for (let y = 0; y < hy * 0.85; y++) {
-    const glowK = y / hy, sc = mix(smA, smB, glowK * glowK);
-    for (let x = 0; x < W; x += 2) {                 // noise sampled every other column
-      const n = vnoise((x + bgX * 0.5) * 0.03 + T * 0.05, y * 0.12, 3) * 0.65 + vnoise((x + bgX * 0.5) * 0.08, y * 0.3, 5) * 0.35;
-      const d = n - 0.6;
-      if (d <= 0) continue;
-      if (d * 9 >= BAYER[(y & 3) * 4 + (x & 3)]) putc(x, y, sc);
-      if (x + 1 < W && d * 9 >= BAYER[(y & 3) * 4 + ((x + 1) & 3)]) putc(x + 1, y, sc);
+  // noise sampled every 4th column on every other row, blended in between: same clouds, an eighth of the work
+  // (lite mode skips the smog layer entirely)
+  const smN = (W >> 2) + 2, smRow = SMROW.length >= smN ? SMROW : (SMROW = new Float32Array(smN));
+  for (let y = 0; y < (lite ? 0 : hy * 0.85); y += 2) {
+    for (let q = 0; q < smN; q++) { const x = q * 4; smRow[q] = vnoise((x + bgX * 0.5) * 0.03 + T * 0.05, y * 0.12, 3) * 0.65 + vnoise((x + bgX * 0.5) * 0.08, y * 0.3, 5) * 0.35; }
+    for (let yy = y; yy < y + 2 && yy < hy * 0.85; yy++) {
+      const glowK = yy / hy, sc = mix(smA, smB, glowK * glowK);
+      for (let x = 0; x < W; x++) {
+        const q = x >> 2, d = smRow[q] + (smRow[q + 1] - smRow[q]) * (x & 3) * 0.25 - 0.6;
+        if (d > 0 && d * 9 >= BAYER[(yy & 3) * 4 + (x & 3)]) putc(x, yy, sc);
+      }
     }
   }
   const bx = Math.floor(bgX);
@@ -942,15 +952,18 @@ function drawSky(hy) {
       addLight(mx, my, mr * 2.4, mc, 0.18);
     }
   }
+  const winC = WIN.map(w => mix(w, [0, 0, 0], 0));     // window colours blended toward the haze, once per layer
   function towers(L, cBase, cWin, fog) {
+    for (let i = 0; i < 6; i++) winC[i] = mix(WIN[i], fog, cWin);
+    const yEnd = Math.min(H - 1, Math.floor(hy + 2)), r0 = cBase[0], g0 = cBase[1], b0 = cBase[2];
     for (let x = 0; x < W; x++) {
       const pc = ((x + bx) % PW + PW) % PW, h = L.h[pc], top = Math.round(hy - h), sd = L.seed[pc], wx = pc - L.x0[pc];
-      for (let y = Math.max(0, top); y <= hy + 2 && y < H; y++) {
+      const winCol = wx % 3 === 1, wc = winC[sd % 6], cr = L.crown[pc];
+      for (let y = Math.max(0, top), j = (Math.max(0, top) * W + x) * 3; y <= yEnd; y++, j += W * 3) {   // written straight into the buffer
         const hy2 = Math.round(hy - y);
-        let c = cBase;
-        if (y === top && L.crown[pc]) c = L.crown[pc];
-        else if (wx % 3 === 1 && hy2 % 3 === 1 && hash(pc, hy2, sd) < 0.28) c = mix(WIN[sd % 6], fog, cWin);
-        putc(x, y, c);
+        if (y === top && cr) { col[j] = cr[0]; col[j + 1] = cr[1]; col[j + 2] = cr[2]; }
+        else if (winCol && hy2 % 3 === 1 && hash(pc, hy2, sd) < 0.28) { col[j] = wc[0]; col[j + 1] = wc[1]; col[j + 2] = wc[2]; }
+        else { col[j] = r0; col[j + 1] = g0; col[j + 2] = b0; }
       }
       if (h > HB * 0.6 && wx === 2) {
         for (let k = 1; k < 5; k++) putc(x, top - k, cBase);
@@ -1005,11 +1018,17 @@ function drawSky(hy) {
     const cc = mix(mix(mid, hz, 0.5), [190, 185, 215], 0.3), y1 = Math.floor(hy - HB * 0.1);
     for (let y = 0; y < y1; y++) {
       const z = 40 * F / (hy - y), fade = smooth(0, 0.35, (hy - y) / HB) * crownK;
-      for (let x = 0; x < W; x += 2) {
-        const v = vnoise((x + bgX - W / 2) * z / F * 0.012, (camZ + z) * 0.01 + T * 0.01, 91), d = (v - 0.55) * 3;
-        if (d <= 0) continue;
-        const a = Math.min(1, d) * 0.55 * fade;
-        for (let q = 0; q < 2 && x + q < W; q++) { const i = (y * W + x + q) * 3; col[i] += (cc[0] - col[i]) * a; col[i + 1] += (cc[1] - col[i + 1]) * a; col[i + 2] += (cc[2] - col[i + 2]) * a; }
+      const zz = (camZ + z) * 0.01 + T * 0.01, sx = z / F * 0.012;
+      let vA = vnoise((0 + bgX - W / 2) * sx, zz, 91);
+      for (let x = 0; x < W; x += 4) {                // sampled every 4th column, blended in between
+        const vB = vnoise((x + 4 + bgX - W / 2) * sx, zz, 91);
+        for (let q = 0; q < 4 && x + q < W; q++) {
+          const d = (vA + (vB - vA) * q * 0.25 - 0.55) * 3;
+          if (d <= 0) continue;
+          const a = Math.min(1, d) * 0.55 * fade, i = (y * W + x + q) * 3;
+          col[i] += (cc[0] - col[i]) * a; col[i + 1] += (cc[1] - col[i + 1]) * a; col[i + 2] += (cc[2] - col[i + 2]) * a;
+        }
+        vA = vB;
       }
     }
   }
@@ -1388,15 +1407,15 @@ function drawSkywalk(k, n, o) {
       for (let x = Math.max(0, Math.ceil(cxx - span * sc)); x <= Math.min(W - 1, Math.ceil(cxx + span * sc) - 1); x++) {
         const lx = (x + 0.5 - cxx) / sc;
         let c;
-        if (t < 0.1 || t > 0.9) c = [120, 140, 160];
+        if (t < 0.1 || t > 0.9) c = C_SKW.rail;
         else if (o.kind === 0) {
           const dir = row % 2 ? 1 : -1, cell = Math.floor((lx + T * 1.1 * dir) / 0.8), hh = hash(cell, row, o.seed);
-          c = hh < 0.04 ? NEON[(hh * 150) | 0 % 6] : hh < 0.3 ? [16, 14, 20] : [48, 46, 60];
+          c = hh < 0.04 ? NEON[(hh * 150) | 0 % 6] : hh < 0.3 ? C_SKW.crowd : C_SKW.deck;
         } else {
           const dir = row < 3 ? 1 : -1, cell = Math.floor((lx - T * 14 * dir) / 6), hh = hash(cell, row, o.seed);
-          c = row === 3 && ((lx * 0.5) % 2 + 2) % 2 < 1 ? [150, 150, 160] : hh < 0.12 ? (dir > 0 ? [255, 50, 60] : [230, 235, 255]) : [30, 28, 38];
+          c = row === 3 && ((lx * 0.5) % 2 + 2) % 2 < 1 ? C_SKW.paint : hh < 0.12 ? (dir > 0 ? C_SKW.tail : C_SKW.head) : C_SKW.road;
         }
-        put(x, y, ...mix(c, FOG, fz)); refl[y * W + x] = 0;
+        setF(x, y, c, fz);
       }
     }
   } else if (yB2 > yB + 0.5) {                       // seen from below: the dark underside with a row of lamps
@@ -1404,7 +1423,7 @@ function drawSkywalk(k, n, o) {
       const t = (y - yB) / (yB2 - yB), sc = s + (s2 - s) * t, cxx = cx + (cx2 - cx) * t;
       for (let x = Math.max(0, Math.ceil(cxx - span * sc)); x <= Math.min(W - 1, Math.ceil(cxx + span * sc) - 1); x++) {
         const lx = (x + 0.5 - cxx) / sc, lamp = Math.abs(t - 0.5) < 0.12 && ((lx % 4) + 4) % 4 < 0.5;
-        put(x, y, ...mix(lamp ? [255, 210, 150] : [22, 20, 30], FOG, fz)); refl[y * W + x] = 0;
+        setF(x, y, lamp ? C_SKW.lamp : C_SKW.under, fz);
       }
     }
     if (PZ < 260) addLight(cx, (yB + yB2) / 2, Math.min(28, 6 * s), [255, 200, 140], 0.25 * (1 - fz));
@@ -1443,13 +1462,11 @@ function drawTunnel(k, n, lift, vac) {
     for (let y = Math.max(0, Math.ceil(yN)); y <= Math.min(H - 1, Math.ceil(yF) - 1); y++) {
       const t = (yF - y) / (yF - yN), iz = iF + (iN - iF) * t, z = 1 / iz, sc = F * iz;
       const cx = CX[f] + (CX[k] - CX[f]) * t, wz = camZ + z, fz = fogAt(z);
-      const lamp = (wz % 8) < 2.5, lc = lift ? (liftUp ? [120, 255, 190] : [255, 190, 110]) : [255, 196, 120];
+      const lamp = (wz % 8) < 2.5, lc = lift ? (liftUp ? C_TUN.upL : C_TUN.dnL) : C_TUN.lamp, seamW = 0.12 / Math.min(1, sc * 0.2);
+      const vc = vac ? ((((wz % 28) + 28) % 28) < 0.8 ? C_TUN.vacL : C_TUN.vacD) : null, body = lift ? C_TUN.lift : C_TUN.plain;
       for (let x = Math.max(0, Math.ceil(cx - TW_ * sc)); x <= Math.min(W - 1, Math.ceil(cx + TW_ * sc) - 1); x++) {
-        const lx = (x + 0.5 - cx) / sc;
-        let c = vac ? ((((wz % 28) + 28) % 28) < 0.8 ? [80, 220, 255] : [12, 14, 22])
-          : Math.abs(lx) < 0.6 ? (lamp ? lc : [30, 26, 36]) : ((Math.abs(lx) % 2.5) < 0.12 / Math.min(1, sc * 0.2) ? [28, 26, 34] : lift ? [30, 32, 44] : [44, 42, 52]);
-        put(x, y, c[0] + (FOG[0] - c[0]) * fz, c[1] + (FOG[1] - c[1]) * fz, c[2] + (FOG[2] - c[2]) * fz);
-        refl[y * W + x] = 0;
+        const al = Math.abs((x + 0.5 - cx) / sc);
+        setF(x, y, vc || (al < 0.6 ? (lamp ? lc : C_TUN.off) : (al % 2.5) < seamW ? C_TUN.seam : body), fz);
       }
     }
   }
@@ -1795,7 +1812,7 @@ function drawTube(k, n) {
       for (let x = Math.max(0, Math.ceil(cx - TW_ * sc)); x <= Math.min(W - 1, Math.ceil(cx + TW_ * sc) - 1); x++) {
         const lx = (x + 0.5 - cx) / sc, ca = 0.5 + 0.5 * Math.sin(lx * 1.7 + wz * 0.6 + T * 2) * Math.sin(lx * 0.7 - wz * 0.3 + T);
         const c = rib ? [70, 84, 100] : [20 + 30 * ca, 90 + 60 * ca, 120 + 50 * ca];
-        put(x, y, c[0] + (FOG[0] - c[0]) * fz, c[1] + (FOG[1] - c[1]) * fz, c[2] + (FOG[2] - c[2]) * fz);
+        setF(x, y, c, fz);
         refl[y * W + x] = 0;
       }
     }
@@ -2240,6 +2257,8 @@ function wallTex(B, u, v, front, mpp) {
   if (!front) for (const b of B.bbs) if (u >= b.u0 && u < b.u1 && v >= b.v0 && v < b.v1) {
     billboard(b, (u - b.u0) / (b.u1 - b.u0), 1 - (v - b.v0) / (b.v1 - b.v0)); return;
   }
+  // far away, any facade above the shopfronts settles to its average colour: no speckle, and much less work
+  if (mpp > 0.9 && v >= 3.8 && B.style !== 7 && B.style !== 10 && B.style !== 11) { TR = B.avg[0]; TG = B.avg[1]; TB = B.avg[2]; return; }
   const bc = B.base;
   if (B.style === 2) {                              // glass spires: big windows, running LED strips, bright lobby
     const bayN = Math.floor(u / 1.8), fu = u / 1.8 - bayN;
@@ -2433,7 +2452,7 @@ function wallTex(B, u, v, front, mpp) {
       const k = 0.5 + 0.5 * Math.sin(T * 2 + sp * 300), c = sp < 0.015 ? [255, 120, 220] : [120, 255, 240];
       TR = c[0] * k; TG = c[1] * k; TB = c[2] * k; return;
     }
-    const k = 0.7 + 0.6 * (mpp < 0.5 ? vnoise(u * 0.2, v * 0.2, B.seed % 991) : 0.5);   // texture only up close
+    const k = 0.7 + 0.6 * (mpp < 0.3 ? vnoise(u * 0.2, v * 0.2, B.seed % 991) : 0.5);   // texture only up close
     TR = bc[0] * k; TG = bc[1] * k; TB = bc[2] * k; return;
   }
   if (B.style === D.FAIR) {                         // carnival isle: striped booths, marquee bulbs chasing round every window
@@ -2530,18 +2549,20 @@ function drawWall(k, side, n) {
   const iN = 1 / Z[k], iF = 1 / Z[f];
   const ybA = GYL[k], ybB = GYL[f], ytA = ybA - B.h * S[k], ytB = ybB - B.h * S[f];
   const u0 = (n - B.start) * SEGL;
+  drawWallFaces(k, n, B, sg, wx, f, xa, xb, span, iN, iF, ybA, ybB, ytA, ytB, u0);
+  drawWallRest(k, side, n, B, sg, wx, f, ytA, ytB, u0);
+}
+function drawWallFaces(k, n, B, sg, wx, f, xa, xb, span, iN, iF, ybA, ybB, ytA, ytB, u0) {
   if (Math.abs(span) > 1e-4) {
     const x0 = Math.max(0, Math.ceil(Math.min(xa, xb))), x1 = Math.min(W - 1, Math.ceil(Math.max(xa, xb)) - 1);
+    // close walls are textured in 2x2 blocks: their details are bigger than a pixel anyway, and it is 4x less work
+    let pX = -9, pY0 = 0, pY1 = -1;
     for (let x = x0; x <= x1; x++) {
       const t = clamp((x + 0.5 - xa) / span, 0, 1), iz = iN + (iF - iN) * t, z = 1 / iz;
-      const u = u0 + (z - Z[k]), yt = ytA + (ytB - ytA) * t, yb = ybA + (ybB - ybA) * t, hp = yb - yt, fz = fogAt(z);
-      for (let y = Math.max(0, Math.ceil(yt)); y <= Math.min(H - 1, Math.ceil(yb) - 1); y++) {
-        wallTex(B, u, (yb - y - 0.5) / hp * B.h, false, z / F);
-        if (TR < 0) continue;
-        const i = y * W + x, j = i * 3;
-        col[j] = TR + (FOG[0] - TR) * fz; col[j + 1] = TG + (FOG[1] - TG) * fz; col[j + 2] = TB + (FOG[2] - TB) * fz;
-        refl[i] = 0;
-      }
+      const u = u0 + (z - Z[k]), yt = ytA + (ytB - ytA) * t, yb = ybA + (ybB - ybA) * t, hp = yb - yt, fz = fogAt(z), mpp = z / F;
+      const y0 = Math.max(0, Math.ceil(yt)), y1 = Math.min(H - 1, Math.ceil(yb) - 1);
+      wallCol(B, u, yb, hp, fz, mpp, x, y0, y1, mpp < WALL_BLK && (x & 1) && pX === x - 1 ? [pY0, pY1] : null, false);
+      pX = x; pY0 = y0; pY1 = y1;
     }
   }
   // corner face of the building, facing us
@@ -2549,17 +2570,29 @@ function drawWall(k, side, n) {
     const s = S[k], xw = CX[k] + wx * s, xo = CX[k] + (wx + sg * 80) * s, fz = fogAt(Z[k]);
     const ytop = GYL[k] - B.h * s, ybot = GYL[k];
     const x0 = Math.max(0, Math.ceil(Math.min(xw, xo))), x1 = Math.min(W - 1, Math.ceil(Math.max(xw, xo)) - 1);
-    for (let x = x0; x <= x1; x++) {
-      const u = Math.abs(x + 0.5 - xw) / s;
-      for (let y = Math.max(0, Math.ceil(ytop)); y <= Math.min(H - 1, Math.ceil(ybot) - 1); y++) {
-        wallTex(B, u, (ybot - y - 0.5) / s, true, 1 / s);
-        if (TR < 0) continue;
-        const i = y * W + x, j = i * 3, r = TR * 0.7, g = TG * 0.7, b = TB * 0.7;
-        col[j] = r + (FOG[0] - r) * fz; col[j + 1] = g + (FOG[1] - g) * fz; col[j + 2] = b + (FOG[2] - b) * fz;
-        refl[i] = 0;
-      }
-    }
+    const y0 = Math.max(0, Math.ceil(ytop)), y1 = Math.min(H - 1, Math.ceil(ybot) - 1), near = 1 / s < WALL_BLK;
+    for (let x = x0; x <= x1; x++)
+      wallCol(B, Math.abs(x + 0.5 - xw) / s, ybot, B.h * s, fz, 1 / s, x, y0, y1, near && ((x - x0) & 1) ? [y0, y1] : null, true);
   }
+}
+// one column of a facade; `left` = the rows the column to its left just drew, to reuse for a 2x2 block
+function wallCol(B, u, yb, hp, fz, mpp, x, y0, y1, left, front) {
+  const blk = mpp < WALL_BLK, k = front ? 0.7 : 1;
+  let have = false, r = 0, g = 0, b = 0;
+  for (let y = y0; y <= y1; y++) {
+    const i = y * W + x, j = i * 3;
+    if (left && y >= left[0] && y <= left[1]) { col[j] = col[j - 3]; col[j + 1] = col[j - 2]; col[j + 2] = col[j - 1]; refl[i] = 0; continue; }
+    if (!(blk && have && ((y - y0) & 1))) {
+      wallTex(B, u, (yb - y - 0.5) / hp * B.h, front, mpp);
+      if (TR < 0) { have = false; continue; }
+      r = TR * k; g = TG * k; b = TB * k;
+      r += (FOG[0] - r) * fz; g += (FOG[1] - g) * fz; b += (FOG[2] - b) * fz;
+      have = true;
+    }
+    col[j] = r; col[j + 1] = g; col[j + 2] = b; refl[i] = 0;
+  }
+}
+function drawWallRest(k, side, n, B, sg, wx, f, ytA, ytB, u0) {
   // rooftop, when you ride above it
   if (ytB < ytA - 0.5) {
     drawRoof(k, B, wx, sg, ytA, ytB);
@@ -3407,6 +3440,10 @@ function renderScene(realZ, realPx) {
   // roll the scene (motorcycle lean) into the output buffer
   {
     const rl = outside() ? 0 : roll, ca = Math.cos(rl), sa = Math.sin(rl), pcx = OW / 2, pcy = OH / 2, scx = SWD / 2, scy = SHD / 2, src = colS, dst = colO;
+    if (Math.abs(rl) < 0.004) {                       // riding upright: a plain copy of the centre, row by row
+      const ox0 = Math.floor(scx - pcx), oy0 = Math.floor(scy - pcy);
+      for (let oy = 0; oy < OH; oy++) { const j = ((oy + oy0) * SWD + ox0) * 3; dst.set(src.subarray(j, j + OW * 3), oy * OW * 3); }
+    } else
     for (let oy = 0, o = 0; oy < OH; oy++) {
       const dy = oy + 0.5 - pcy;
       for (let ox = 0; ox < OW; ox++, o += 3) {
@@ -3434,8 +3471,19 @@ function renderScene(realZ, realPx) {
   ctx.putImageData(img, 0, 0);
 }
 
+// a quiet governor: if busy scenes drag the frame rate down, lighten the work until it recovers
+let lite = false, frameAvg = 1 / 60, slowT = 0, fastT = 0, WALL_BLK = 0.5;
+function governor(rawDt) {
+  if (rawDt <= 0 || rawDt > 0.5) return;               // ignore pauses and tab switches
+  frameAvg += (rawDt - frameAvg) * 0.1;
+  if (frameAvg > 1 / 30) { slowT += rawDt; fastT = 0; } else if (frameAvg < 1 / 45) { fastT += rawDt; slowT = 0; } else { slowT = fastT = 0; }
+  if (!lite && slowT > 1.5) { lite = true; slowT = 0; }
+  if (lite && fastT > 5) { lite = false; fastT = 0; }
+  WALL_BLK = lite ? 1.1 : 0.5;
+}
 function frame(now) {
   const rawDt = (now - last) / 1000;
+  governor(rawDt);
   const dt = Math.min(0.05, Math.max(0, rawDt)); last = now;
   T += dt;
   update(dt);
