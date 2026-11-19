@@ -860,6 +860,7 @@ function addLight(x, y, R, c, I) {
   R = Math.min(30 * PXS, Math.round(R)); if (R < 2 * PXS) return;
   x = Math.round(x); y = Math.round(y);
   if (x + R < 0 || x - R >= W || y + R < 0 || y - R >= H) return;
+  if (GSON) { const o = gsLight(5, x - R, y - R, x + R, y + R); if (o >= 0) { const P = GS.lights; P[o] = x; P[o + 1] = y; P[o + 2] = R; P[o + 3] = c[0]; P[o + 4] = c[1]; P[o + 5] = c[2]; P[o + 6] = I; } return; }
   const R2 = R * R;
   for (let dy = -R; dy <= R; dy++) {
     const yy = y + dy; if (yy < 0 || yy >= H) continue;
@@ -876,6 +877,7 @@ function addLight(x, y, R, c, I) {
 }
 function put(x, y, r, g, b) {
   if (x < 0 || y < 0 || x >= W || y >= H) return;
+  if (GSON) { gsPut(x, y, r, g, b); return; }
   const i = (y * W + x) * 3; col[i] = r; col[i + 1] = g; col[i + 2] = b; GID[i / 3] = 0;
 }
 // building pixels whose texture the graphics chip fills in: GID = (wall quad + 1) * 4096 + how much of the texture shows (0..4095)
@@ -884,6 +886,7 @@ function canDefer(B) { return DEFER && B.style !== 11 && B.style !== 14 && B.sty
 function putc(x, y, c) { put(x, y, c[0], c[1], c[2]); }
 function addc(x, y, c, a) {
   if (x < 0 || y < 0 || x >= W || y >= H) return;
+  if (GSON) { gsAdd(x, y, c[0] * a, c[1] * a, c[2] * a); return; }
   const i = (y * W + x) * 3; col[i] += c[0] * a; col[i + 1] += c[1] * a; col[i + 2] += c[2] * a;
 }
 
@@ -895,7 +898,8 @@ function drawSky(hy) {
     const qq = Math.min(1, q / 20), c = qq < 0.6 ? mix(top, mid, qq / 0.6) : mix(mid, hz, (qq - 0.6) / 0.4), fl = flash * 70 * (1 - qq * 0.5), dk = 1 - 0.45 * gloom;
     LUT.push([c[0] * dk + fl, c[1] * dk + fl, c[2] * dk + fl * 1.2]);
   }
-  for (let y = 0; y < H; y++) {
+  if (GSON) { GS.skyV.lut = new Float32Array(LUT.flat()); gsOpen(GS_NORMAL, 20, 0, 0, W - 1, H - 1); }
+  else for (let y = 0; y < H; y++) {
     const t20 = clamp(y / hy, 0, 1) * 20, row = y * W * 3;
     for (let x = 0, i = row; x < W; x++, i += 3) {
       const c = LUT[Math.floor(t20 + BAYER[(y & 3) * 4 + (x & 3)])];
@@ -916,7 +920,8 @@ function drawSky(hy) {
     }
   }
   // aurora curtains
-  if (TH.aurora > 0.02) {
+  if (TH.aurora > 0.02 && GSON) { const o = gsOpen(GS_ADD, 27, 0, 0, W - 1, H - 1); if (o >= 0) GS.inst[o] = TH.aurora; }
+  else if (TH.aurora > 0.02) {
     for (let x = 0; x < W; x++) {
       const pxa = x + bgX * 0.3;
       const yb = hy * 0.16 + Math.sin(pxa * 0.013 + T * 0.2) * hy * 0.06 + Math.sin(pxa * 0.031 - T * 0.35) * hy * 0.03;
@@ -940,7 +945,8 @@ function drawSky(hy) {
   }
   // smog bands lit from below
   const smA = mix(mid, top, 0.2), smB = mix(hz, [255, 255, 255], 0.12);
-  for (let y = 0; y < hy * 0.85; y++) {
+  if (GSON) { const o = gsOpen(GS_NORMAL, 21, 0, 0, W - 1, Math.ceil(hy * 0.85) - 1); if (o >= 0) GS.inst.set([...smA, ...smB], o); }
+  else for (let y = 0; y < hy * 0.85; y++) {
     const glowK = y / hy, sc = mix(smA, smB, glowK * glowK);
     for (let x = 0; x < W; x += 2) {                 // noise sampled every other column
       const n = vnoise((x + bgX * 0.5) * 0.03 + T * 0.05, y * 0.12, 3) * 0.65 + vnoise((x + bgX * 0.5) * 0.08, y * 0.3, 5) * 0.35;
@@ -964,6 +970,15 @@ function drawSky(hy) {
     }
   }
   function towers(L, cBase, cWin, fog) {
+    if (GSON) {                                      // the layer on the graphics chip; only the blinking beacons' glow is placed here
+      const o = gsOpen(GS_NORMAL, 22, 0, 0, W - 1, Math.floor(hy + 2));
+      if (o >= 0) GS.inst.set([L === sky1 ? 0 : 1, ...cBase, cWin, ...fog], o);
+      for (let x = 0; x < W; x++) {
+        const pc = ((x + bx) % PW + PW) % PW, h = L.h[pc];
+        if (h > HB * 0.6 && pc - L.x0[pc] === 2 && (T * 1.3 + L.seed[pc]) % 2 < 0.9) addLight(x, Math.round(hy - h) - 5, 3, [255, 40, 40], 0.5);
+      }
+      return;
+    }
     for (let x = 0; x < W; x++) {
       const pc = ((x + bx) % PW + PW) % PW, h = L.h[pc], top = Math.round(hy - h), sd = L.seed[pc], wx = pc - L.x0[pc];
       for (let y = Math.max(0, top); y <= hy + 2 && y < H; y++) {
@@ -981,7 +996,8 @@ function drawSky(hy) {
   }
   // distant snowy mountains
   const mSnow = mix([200, 214, 232], hz, 0.35), mRock = mix([34, 46, 66], hz, 0.45);
-  if (TH.mountains > 0.02) {
+  if (TH.mountains > 0.02 && GSON) { const o = gsOpen(GS_NORMAL, 23, 0, 0, W - 1, Math.floor(hy + 2)); if (o >= 0) GS.inst.set([...mSnow, ...mRock, TH.mountains], o); }
+  else if (TH.mountains > 0.02) {
     for (let x = 0; x < W; x++) {
       const pc = ((x + bx) % PW + PW) % PW, mh = mtn[pc], top = Math.round(hy - mh);
       for (let y = Math.max(0, top); y <= hy + 2 && y < H; y++) {
@@ -1004,7 +1020,8 @@ function drawSky(hy) {
   }
   // coral deep: light shafts from the surface far above, whales gliding over the city
   if (TH.deep > 0.02) {
-    for (let x = 0; x < W; x++) {
+    if (GSON) { const o = gsOpen(GS_ADD, 25, 0, 0, W - 1, Math.ceil(hy) - 1); if (o >= 0) GS.inst[o] = TH.deep; }
+    else for (let x = 0; x < W; x++) {
       const k = Math.sin((x + bx * 0.2) * 0.045 + T * 0.25) * Math.sin((x + bx * 0.2) * 0.017 - T * 0.1);
       if (k < 0.3) continue;
       for (let y = 0; y < hy; y++) addc(x + Math.round(y * 0.25), y, [120, 220, 255], (k - 0.3) * 0.12 * TH.deep * (1 - y / hy));
@@ -1024,7 +1041,8 @@ function drawSky(hy) {
   // up at the crown: a cloud deck drifting just overhead, thinning toward the horizon
   if (crownK > 0.02) {
     const cc = mix(mix(mid, hz, 0.5), [190, 185, 215], 0.3), y1 = Math.floor(hy - HB * 0.1);
-    for (let y = 0; y < y1; y++) {
+    if (GSON) { const o = gsOpen(GS_NORMAL, 24, 0, 0, W - 1, y1 - 1); if (o >= 0) GS.inst.set([...cc, crownK], o); }
+    else for (let y = 0; y < y1; y++) {
       const z = 40 * F / (hy - y), fade = smooth(0, 0.35, (hy - y) / HB) * crownK;
       for (let x = 0; x < W; x += 2) {
         const v = vnoise((x + bgX - W / 2) * z / F * 0.012, (camZ + z) * 0.01 + T * 0.01, 91), d = (v - 0.55) * 3;
@@ -1130,13 +1148,14 @@ function drawSky(hy) {
     if (bxs < -W || bxs > 2 * W) continue;
     const ang = Math.sin(T * 0.35 + i * 2.1) * 0.55, ta = Math.tan(ang), base = hy - HB * 0.2;
     const c = i === 1 ? [255, 120, 220] : [170, 210, 255];
+    if (GSON) { const o = gsOpen(GS_ADD, 26, 0, 0, W - 1, Math.floor(base)); if (o >= 0) GS.inst.set([bxs, ta, base, ...c], o); continue; }
     for (let y = Math.floor(base); y >= 0; y--) {
       const d = base - y, cxl = bxs + d * ta, hw = 1 + d * 0.06;
       for (let x = Math.max(0, Math.floor(cxl - hw)); x <= Math.min(W - 1, cxl + hw); x++)
         addc(x, y, c, 0.07 * (1 - d / base) * (1 - Math.abs(x - cxl) / (hw + 1)));
     }
   }  // heat shimmer: the rows near the horizon wobble sideways
-  if (TH.shimmer > 0.02) {
+  if (TH.shimmer > 0.02 && !GSON) {                  // (on the graphics chip this happens where the sky is laid down)
     const y0 = Math.max(0, Math.floor(hy - HB * 0.4)), y1 = Math.min(H - 1, Math.floor(hy + 1)), tmp = new Float32Array(W * 3);
     for (let y = y0; y <= y1; y++) {
       const off = Math.round(Math.sin(y * 0.9 + T * 5) * 1.6 * TH.shimmer * (y - y0) / (y1 - y0 + 1));
@@ -1156,6 +1175,11 @@ function drawGround(k, d, deckOnly) {
   if (yF >= yN) return;
   const y0 = Math.max(0, Math.ceil(yF)), y1 = Math.min(H - 1, Math.ceil(yN) - 1);
   const iN = 1 / Z[k], iF = 1 / Z[f];
+  if (GSON) {                                        // the road and ground, painted on the graphics chip
+    const o = gsOpen(GS_NORMAL, 10, 0, y0, W - 1, y1);
+    if (o >= 0) { const I = GS.inst; I[o] = yN; I[o + 1] = yF; I[o + 2] = iN; I[o + 3] = iF; I[o + 4] = CX[k]; I[o + 5] = CX[f]; I[o + 6] = d; I[o + 7] = deckOnly ? 1 : 0; }
+    return;
+  }
   for (let y = y0; y <= y1; y++) {
     const t = (y - yF) / (yN - yF), iz = iF + (iN - iF) * t, z = 1 / iz, s = F * iz;
     const cx = CX[f] + (CX[k] - CX[f]) * t, wz = camZ + z, fz = fogAt(z), pxw = 1 / s;
@@ -1249,6 +1273,17 @@ function quadWall(k, lat, h0, h1, tex, zlo, zhi) {
   if (Math.abs(span) < 1e-4) return;
   const iN = 1 / Z[k], iF = 1 / Z[f];
   const x0 = Math.max(0, Math.ceil(Math.min(xa, xb))), x1 = Math.min(W - 1, Math.ceil(Math.max(xa, xb)) - 1);
+  const tid = GSON ? GS.TEX.get(tex) : undefined;
+  if (tid !== undefined) {                           // textured on the graphics chip
+    const ytA = GY[k] - h1 * S[k], ytB = GY[f] - h1 * S[f], ybA = GY[k] - h0 * S[k], ybB = GY[f] - h0 * S[f];
+    const o = gsOpen(GS_NORMAL, 9, x0, Math.ceil(Math.min(ytA, ytB)), x1, Math.ceil(Math.max(ybA, ybB)) - 1);
+    if (o >= 0) {
+      const I = GS.inst; I[o] = xa; I[o + 1] = span; I[o + 2] = iN; I[o + 3] = iF; I[o + 4] = GY[k]; I[o + 5] = GY[f]; I[o + 6] = h0; I[o + 7] = h1;
+      I[o + 8] = tid; I[o + 9] = tid === 2 ? (liftUp ? 1 : 0) : tid === 10 || tid === 11 ? stEL : 0;
+      I[o + 10] = zlo === undefined ? -1e9 : zlo; I[o + 11] = zlo === undefined ? 0 : zhi; I[o + 12] = GS.camZ - GS.O + Z[k];
+    }
+    return;
+  }
   for (let x = x0; x <= x1; x++) {
     const t = clamp((x + 0.5 - xa) / span, 0, 1), iz = iN + (iF - iN) * t, z = 1 / iz;
     if (zlo !== undefined && (z < zlo || z > zhi)) continue;
@@ -1257,6 +1292,7 @@ function quadWall(k, lat, h0, h1, tex, zlo, zhi) {
       tex(wz, h0 + (yb - y - 0.5) / (yb - yt) * (h1 - h0), z, s);
       if (TR < 0) continue;
       const i = y * W + x, j = i * 3;
+      if (GSON) { put(x, y, TR + (FOG[0] - TR) * fz, TG + (FOG[1] - TG) * fz, TB + (FOG[2] - TB) * fz); refl[i] = 0; continue; }
       col[j] = TR + (FOG[0] - TR) * fz; col[j + 1] = TG + (FOG[1] - TG) * fz; col[j + 2] = TB + (FOG[2] - TB) * fz;
       refl[i] = 0; GID[i] = 0;
     }
@@ -1266,6 +1302,12 @@ function quadWall(k, lat, h0, h1, tex, zlo, zhi) {
 function lineS(x0, y0, x1, y1, c, fz) {
   const n = Math.ceil(Math.max(Math.abs(x1 - x0), Math.abs(y1 - y0)));
   const r = c[0] + (FOG[0] - c[0]) * fz, g = c[1] + (FOG[1] - c[1]) * fz, b = c[2] + (FOG[2] - c[2]) * fz;
+  if (GSON) {
+    const ax = Math.round(x0), bx = Math.round(x1), ay = Math.round(y0), by = Math.round(y1);
+    const o = gsOpen(GS_NORMAL, 4, Math.min(ax, bx), Math.min(ay, by), Math.max(ax, bx), Math.max(ay, by));
+    if (o >= 0) { const I = GS.inst; I[o] = x0; I[o + 1] = y0; I[o + 2] = x1; I[o + 3] = y1; I[o + 4] = r; I[o + 5] = g; I[o + 6] = b; }
+    return;
+  }
   for (let i = 0; i <= n; i++) {
     const x = Math.round(x0 + (x1 - x0) * i / (n || 1)), y = Math.round(y0 + (y1 - y0) * i / (n || 1));
     if (x < 0 || y < 0 || x >= W || y >= H) continue;
@@ -1274,6 +1316,11 @@ function lineS(x0, y0, x1, y1, c, fz) {
 }
 function blob(cx, cy, rx, ry, c, a, fz) {
   const r = c[0] + (FOG[0] - c[0]) * fz, g = c[1] + (FOG[1] - c[1]) * fz, b = c[2] + (FOG[2] - c[2]) * fz;
+  if (GSON) {
+    const o = gsOpen(GS_NORMAL, 3, Math.floor(cx - rx), Math.floor(cy - ry), Math.floor(cx + rx), Math.floor(cy + ry));
+    if (o >= 0) { const I = GS.inst; I[o] = cx; I[o + 1] = cy; I[o + 2] = rx; I[o + 3] = ry; I[o + 4] = r; I[o + 5] = g; I[o + 6] = b; I[o + 7] = a; }
+    return;
+  }
   for (let y = Math.max(0, Math.floor(cy - ry)); y <= Math.min(H - 1, cy + ry); y++)
     for (let x = Math.max(0, Math.floor(cx - rx)); x <= Math.min(W - 1, cx + rx); x++) {
       if (((x - cx) / rx) ** 2 + ((y - cy) / ry) ** 2 > 1) continue;
@@ -1320,12 +1367,18 @@ function roofTex(B, ul, wz, mpp) {
 }
 function drawRoof(k, B, wx, sg, yN, yF) {
   const f = k + 1, iN = 1 / Z[k], iF = 1 / Z[f];
+  if (GSON) {
+    const o = gsOpen(GS_NORMAL, 16, 0, Math.ceil(yF), W - 1, Math.ceil(yN) - 1);
+    if (o >= 0) GS.inst.set([yN, yF, iN, iF, CX[k], CX[f], wx, sg, B.id, ((camZ - B.start * SEGL) % LEN + LEN) % LEN], o);
+    return;
+  }
   for (let y = Math.max(0, Math.ceil(yF)); y <= Math.min(H - 1, Math.ceil(yN) - 1); y++) {
     const t = (y - yF) / (yN - yF), iz = iF + (iN - iF) * t, z = 1 / iz, s = F * iz, cx = CX[f] + (CX[k] - CX[f]) * t;
     const xa = cx + wx * s, xb = cx + (wx + sg * 36) * s, fz = fogAt(z), wz = camZ + z;
     for (let x = Math.max(0, Math.ceil(Math.min(xa, xb))); x <= Math.min(W - 1, Math.ceil(Math.max(xa, xb)) - 1); x++) {
       roofTex(B, Math.abs((x + 0.5 - cx) / s - wx), wz, 1 / s);
       const i = y * W + x, j = i * 3;
+      if (GSON) { put(x, y, TR + (FOG[0] - TR) * fz, TG + (FOG[1] - TG) * fz, TB + (FOG[2] - TB) * fz); refl[i] = 0; continue; }
       col[j] = TR + (FOG[0] - TR) * fz; col[j + 1] = TG + (FOG[1] - TG) * fz; col[j + 2] = TB + (FOG[2] - TB) * fz;
       refl[i] = 0; GID[i] = 0;
     }
@@ -1337,6 +1390,11 @@ function drawLower(k, d) {
   const f = k + 1, yN = GYL[k], yF = GYL[f];
   if (yF >= yN) return;
   const water = d === D.CANALS, iN = 1 / Z[k], iF = 1 / Z[f];
+  if (GSON) {
+    const o = gsOpen(GS_NORMAL, 12, 0, Math.ceil(yF), W - 1, Math.ceil(yN) - 1);
+    if (o >= 0) { const I = GS.inst; I[o] = yN; I[o + 1] = yF; I[o + 2] = iN; I[o + 3] = iF; I[o + 4] = CX[k]; I[o + 5] = CX[f]; I[o + 6] = water ? 1 : 0; }
+    return;
+  }
   for (let y = Math.max(0, Math.ceil(yF)); y <= Math.min(H - 1, Math.ceil(yN) - 1); y++) {
     const t = (y - yF) / (yN - yF), iz = iF + (iN - iF) * t, z = 1 / iz, s = F * iz, pxw = 1 / s;
     const cx = CX[f] + (CX[k] - CX[f]) * t, wz = camZ + z, fz = fogAt(z), dash = (wz % 10) < 4.5, lw = Math.max(0.1, pxw * 0.55);
@@ -1365,6 +1423,7 @@ function drawLower(k, d) {
         }
       }
       const i = y * W + x, j = i * 3, fe = em ? fz * 0.6 : fz;    // lights cut through the haze further than the dark
+      if (GSON) { put(x, y, r + (FOG[0] - r) * fe, g + (FOG[1] - g) * fe, b + (FOG[2] - b) * fe); refl[i] = rf * (1 - fz) * wet; continue; }
       col[j] = r + (FOG[0] - r) * fe; col[j + 1] = g + (FOG[1] - g) * fe; col[j + 2] = b + (FOG[2] - b) * fe;
       refl[i] = rf * (1 - fz) * wet; GID[i] = 0;
     }
@@ -1459,7 +1518,11 @@ function drawTunnel(k, n, lift, vac) {
   quadWall(k, -TW_, 0, TH_, wt);
   quadWall(k, TW_, 0, TH_, wt);
   const f = k + 1, yN = GY[k] - TH_ * S[k], yF = GY[f] - TH_ * S[f];
-  if (yN < yF) {
+  if (yN < yF && GSON) {                            // the ceiling, on the graphics chip
+    const o = gsOpen(GS_NORMAL, 14, 0, Math.ceil(yN), W - 1, Math.ceil(yF) - 1);
+    if (o >= 0) GS.inst.set([yN, yF, 1 / Z[k], 1 / Z[f], CX[k], CX[f], vac ? 2 : lift ? 1 : 0, liftUp ? 1 : 0], o);
+  }
+  else if (yN < yF) {
     const iN = 1 / Z[k], iF = 1 / Z[f];
     for (let y = Math.max(0, Math.ceil(yN)); y <= Math.min(H - 1, Math.ceil(yF) - 1); y++) {
       const t = (yF - y) / (yF - yN), iz = iF + (iN - iF) * t, z = 1 / iz, sc = F * iz;
@@ -1487,7 +1550,12 @@ function drawPortal(k, label, lc) {
   const xa = Math.max(0, Math.ceil(PCX - 50 * s)), xb = Math.min(W - 1, Math.ceil(PCX + 50 * s) - 1);
   const ya = Math.max(0, Math.ceil(PGY - 24 * s)), yb = Math.min(H - 1, Math.ceil(Math.max(PGY, PGL)) - 1);
   const cols = label ? label.length * 4 : 0;
-  for (let x = xa; x <= xb; x++) {
+  if (GSON && (!label || ((!GS.lbl || GS.lbl === label) && label.length <= 16))) {   // one sign's letters per frame go to the chip
+    if (label && !GS.lbl) { GS.lbl = label; GS.lblBits = new Int32Array(32); for (let i = 0; i < label.length; i++) { const g = FONT[label[i]] || FONT[' ']; for (let b = 0; b < 15; b++) if (g[b] === '1') GS.lblBits[i * 2 + (b < 8 ? 0 : 1)] |= 1 << (b < 8 ? b : b - 8); } }
+    const o = gsOpen(GS_NORMAL, 15, xa, ya, xb, yb);
+    if (o >= 0) GS.inst.set([PCX, PGY, s, fz, ...(lc || [0, 0, 0]), ...rimC, label ? 1 : 0], o);
+  }
+  else for (let x = xa; x <= xb; x++) {
     const lx = (x + 0.5 - PCX) / s;
     for (let y = ya; y <= yb; y++) {
       const h = (PGY - y - 0.5) / s;
@@ -1808,7 +1876,11 @@ function drawTube(k, n) {
   quadWall(k, -TW_, 0, TH_, glassTex);
   quadWall(k, TW_, 0, TH_, glassTex);
   const f = k + 1, yN = GY[k] - TH_ * S[k], yF = GY[f] - TH_ * S[f];
-  if (yN < yF) {
+  if (yN < yF && GSON) {                            // the ceiling, on the graphics chip
+    const o = gsOpen(GS_NORMAL, 14, 0, Math.ceil(yN), W - 1, Math.ceil(yF) - 1);
+    if (o >= 0) GS.inst.set([yN, yF, 1 / Z[k], 1 / Z[f], CX[k], CX[f], 3, liftUp ? 1 : 0], o);
+  }
+  else if (yN < yF) {
     const iN = 1 / Z[k], iF = 1 / Z[f];
     for (let y = Math.max(0, Math.ceil(yN)); y <= Math.min(H - 1, Math.ceil(yF) - 1); y++) {
       const t = (yF - y) / (yF - yN), iz = iF + (iN - iF) * t, z = 1 / iz, sc = F * iz;
@@ -1845,7 +1917,7 @@ function drawHighway(k, n, z) {
   quadWall(k, -(RW + SW), 0, 1.1, barrierTex);
   quadWall(k, RW + SW, 0, 1.1, barrierTex);
   const l = n - z[0];
-  quadWall(k, RW + SW + 6, -1.5, 0.4, (wz, v) => { TR = 46; TG = 44; TB = 56; });
+  quadWall(k, RW + SW + 6, -1.5, 0.4, constTex46);
   if (l % 70 === 35 && ELEV[n] < LH[2] - 1) drawOverpass(k, n);
   if (n % 9 === 0) { drawLamp(k, n, -1); drawLamp(k, n, 1); }
 }
@@ -2553,6 +2625,12 @@ function drawWall(k, side, n) {
   const u0 = (n - B.start) * SEGL;
   if (Math.abs(span) > 1e-4) {
     const x0 = Math.max(0, Math.ceil(Math.min(xa, xb))), x1 = Math.min(W - 1, Math.ceil(Math.max(xa, xb)) - 1);
+    if (GSON) {                                   // the whole face is one record for the graphics chip
+      const o = gsOpen(GS_NORMAL, 7, x0, Math.ceil(Math.min(ytA, ytB)), x1, Math.ceil(Math.max(ybA, ybB)) - 1);
+      if (o >= 0) { const I = GS.inst; I[o] = xa; I[o + 1] = span; I[o + 2] = iN; I[o + 3] = iF; I[o + 4] = u0; I[o + 5] = Z[k]; I[o + 6] = ybA; I[o + 7] = ybB;
+        I[o + 8] = ytA; I[o + 9] = ytB; I[o + 10] = bi; I[o + 11] = F; }
+    }
+    else {
     const dq = canDefer(B) && x0 <= x1 ? NQ++ : -1;
     if (dq >= 0) {                                    // the texture is filled in on the graphics chip: note the quad, mark the pixels
       const o = dq * 16; QD[o] = xa; QD[o + 1] = span; QD[o + 2] = iN; QD[o + 3] = iF; QD[o + 4] = u0; QD[o + 5] = Z[k]; QD[o + 6] = ybA; QD[o + 7] = ybB;
@@ -2574,9 +2652,11 @@ function drawWall(k, side, n) {
         wallTex(B, u, (yb - y - 0.5) / hp * B.h, false, z / F);
         if (TR < 0) continue;
         const i = y * W + x, j = i * 3;
+        if (GSON) { put(x, y, TR + (FOG[0] - TR) * fz, TG + (FOG[1] - TG) * fz, TB + (FOG[2] - TB) * fz); refl[i] = 0; continue; }
         col[j] = TR + (FOG[0] - TR) * fz; col[j + 1] = TG + (FOG[1] - TG) * fz; col[j + 2] = TB + (FOG[2] - TB) * fz;
         refl[i] = 0; GID[i] = 0;
       }
+    }
     }
   }
   // corner face of the building, facing us
@@ -2584,6 +2664,11 @@ function drawWall(k, side, n) {
     const s = S[k], xw = CX[k] + wx * s, xo = CX[k] + (wx + sg * 80) * s, fz = fogAt(Z[k]);
     const ytop = GYL[k] - B.h * s, ybot = GYL[k];
     const x0 = Math.max(0, Math.ceil(Math.min(xw, xo))), x1 = Math.min(W - 1, Math.ceil(Math.max(xw, xo)) - 1);
+    if (GSON) {
+      const o = gsOpen(GS_NORMAL, 8, x0, Math.ceil(ytop), x1, Math.ceil(ybot) - 1);
+      if (o >= 0) { const I = GS.inst; I[o] = xw; I[o + 1] = s; I[o + 2] = ybot; I[o + 3] = bi; I[o + 4] = fz; }
+    }
+    else {
     const dq = canDefer(B) && x0 <= x1 ? NQ++ : -1;
     if (dq >= 0) {
       const o = dq * 16; QD[o] = xw; QD[o + 1] = s; QD[o + 2] = ybot; QD[o + 3] = bi; QD[o + 12] = 1;
@@ -2599,9 +2684,11 @@ function drawWall(k, side, n) {
         wallTex(B, u, (ybot - y - 0.5) / s, true, 1 / s);
         if (TR < 0) continue;
         const i = y * W + x, j = i * 3, r = TR * 0.7, g = TG * 0.7, b = TB * 0.7;
+        if (GSON) { put(x, y, r + (FOG[0] - r) * fz, g + (FOG[1] - g) * fz, b + (FOG[2] - b) * fz); refl[i] = 0; continue; }
         col[j] = r + (FOG[0] - r) * fz; col[j + 1] = g + (FOG[1] - g) * fz; col[j + 2] = b + (FOG[2] - b) * fz;
         refl[i] = 0; GID[i] = 0;
       }
+    }
     }
   }
   // rooftop, when you ride above it
@@ -2685,6 +2772,11 @@ function drawSign(k, dz, wx, inward, sn) {
 
 function rect(xa, xb, ya, yb, c, fz) {
   const r = c[0] + (FOG[0] - c[0]) * fz, g = c[1] + (FOG[1] - c[1]) * fz, b = c[2] + (FOG[2] - c[2]) * fz;
+  if (GSON) {
+    const o = gsOpen(GS_NORMAL, 2, Math.ceil(Math.min(xa, xb)), Math.ceil(ya), Math.ceil(Math.max(xa, xb)) - 1, Math.ceil(yb) - 1);
+    if (o >= 0) { const I = GS.inst; I[o] = r; I[o + 1] = g; I[o + 2] = b; I[o + 3] = 0; I[o + 4] = 1; }
+    return;
+  }
   for (let x = Math.max(0, Math.ceil(Math.min(xa, xb))); x <= Math.min(W - 1, Math.ceil(Math.max(xa, xb)) - 1); x++)
     for (let y = Math.max(0, Math.ceil(ya)); y <= Math.min(H - 1, Math.ceil(yb) - 1); y++) {
       const i = y * W + x, j = i * 3; col[j] = r; col[j + 1] = g; col[j + 2] = b; refl[i] = 0; GID[i] = 0;
@@ -2829,12 +2921,22 @@ function drawGlass() {
   }
 }
 
+const DISKS = {};                                    // the disc a thick line is stamped with: offsets in drawing order, and which are highlight
 function thick(x0, y0, x1, y1, r, c, hi) {
+  let D = DISKS[r];
+  if (!D) { D = []; for (let a = -r; a <= r; a++) for (let b = -r; b <= r; b++) if (a * a + b * b <= r * r + 0.5) D.push(a, b, b < -r * 0.4 ? 1 : 0); DISKS[r] = D; }
   const n = Math.ceil(Math.hypot(x1 - x0, y1 - y0) * 2);
+  let px = NaN, py = NaN;
   for (let i = 0; i <= n; i++) {
-    const x = x0 + (x1 - x0) * i / n, y = y0 + (y1 - y0) * i / n;
-    for (let a = -r; a <= r; a++) for (let b = -r; b <= r; b++)
-      if (a * a + b * b <= r * r + 0.5) putc(Math.round(x + a), Math.round(y + b), b < -r * 0.4 ? hi : c);
+    // round(x + a) = round(x) + a for whole a, so each step is one rounding; a step landing where the last one did repaints the same pixels
+    const rx = Math.round(x0 + (x1 - x0) * i / n), ry = Math.round(y0 + (y1 - y0) * i / n);
+    if (rx === px && ry === py) continue;
+    px = rx; py = ry;
+    for (let k = 0; k < D.length; k += 3) {
+      const x = rx + D[k], y = ry + D[k + 1];
+      if (x < 0 || y < 0 || x >= W || y >= H) continue;
+      const cc = D[k + 2] ? hi : c, j = (y * W + x) * 3; col[j] = cc[0]; col[j + 1] = cc[1]; col[j + 2] = cc[2];
+    }
   }
 }
 
@@ -2979,6 +3081,7 @@ function drawBike() {
 // (it used to be one round glow, which the stepped light bands boiled down to a lone blob in the middle of the road)
 function headlight(hy) {
   const e = eye(), k0 = 0.14 + 0.22 * TH.dark + 0.08 * TH.night, yFar = hy + e * F / 32, yNear = Math.min(H - 1, hy + e * F / 2.5);
+  if (GSON) { const o = gsLight(11, 0, Math.ceil(yFar), W - 1, Math.floor(yNear)); if (o >= 0) { const P = GS.lights; P[o] = hy; P[o + 1] = e; P[o + 2] = k0; } return; }
   for (let y = Math.max(0, Math.ceil(yFar)); y <= yNear; y++) {
     const z = e * F / (y - hy), w = 2.8 * F / z, a = k0 * smooth(32, 9, z) * smooth(2.5, 6, z);
     for (let x = Math.max(0, Math.floor(W / 2 - w)); x <= Math.min(W - 1, W / 2 + w); x++) {
@@ -3143,7 +3246,7 @@ function drawCycle(k, dz, bxw, hy) {
       const i = yy * W + xx;
       if (zp >= ZB[i]) continue;
       if (ZB[i] === 1e9) touched.push(i);
-      ZB[i] = zp; col[i * 3] = r; col[i * 3 + 1] = g; col[i * 3 + 2] = b; refl[i] = 0; GID[i] = 0;
+      ZB[i] = zp; if (GSON) put(xx, yy, r, g, b); else { col[i * 3] = r; col[i * 3 + 1] = g; col[i * 3 + 2] = b; GID[i] = 0; } refl[i] = 0;
     }
   }
   for (const i of touched) ZB[i] = 1e9;
@@ -3283,7 +3386,7 @@ function renderScene(realZ, realPx) {
   useSky();
   F = F0 * (1 - 0.14 * smooth(45, 85, speed));      // the view widens as you go faster
   vib = (Math.random() - 0.5) * 2 * smooth(62, 83, speed);   // and the bars hum at the top end
-  lb.fill(0); refl.fill(0);
+  if (!(gl && GPU.ok && GS.ok && !forceCPU)) { lb.fill(0); refl.fill(0); }   // (the graphics chip clears its own layers)
   const base = Math.floor(camZ / SEGL), frac = camZ / SEGL - base;
   const b0 = base % NSEG, b1 = (base + 1) % NSEG;
   const camY = hill[b0] + (hill[b1] - hill[b0]) * frac + eye() + Math.sin(camZ * 0.9) * 0.015 * Math.min(1, speed / 20);
@@ -3297,10 +3400,11 @@ function renderScene(realZ, realPx) {
   blendTheme(base);
 
   // the sky on the art grid, then spread over the finer city buffer
-  const lbS = lb; if (RS > 1) { lb = lb1; lb.fill(0); }
-  drawSky(hy);
+  const lbS = lb, gsOn = !!(gl && GPU.ok && GS.ok && !forceCPU);
+  if (gsOn) { GS.skyV = { hy, bgX, camZ, F }; gsBegin(true); drawSky(hy); gsEnd(); }   // the sky as its own list, into its own layer
+  else { if (RS > 1) { lb = lb1; lb.fill(0); } drawSky(hy); }
   const F1 = F;
-  if (RS > 1) {
+  if (RS > 1 && !gsOn) {
     lb = lbS;
     const r = RS, w1 = SWD, w2 = SW2;
     for (let y = 0; y < SHD; y++) for (let x = 0; x < w1; x++) {
@@ -3310,9 +3414,11 @@ function renderScene(realZ, realPx) {
       }
     }
   }
+  lb = lbS;
   useScene();
   hy = hy * RS; F = F1 * RS;
-  GID.fill(0); NQ = 0; DEFER = !!(gl && GPU.ok && GPU.rtt && !forceCPU);
+  if (gsOn) { DEFER = false; gsBegin(false); }
+  else { GID.fill(0); NQ = 0; DEFER = !!(gl && GPU.ok && GPU.rtt && !forceCPU); }
 
   let x = 0, dx = -curve[b0] * frac;
   for (let k = 0; k <= DRAW; k++) {
@@ -3443,6 +3549,7 @@ function renderScene(realZ, realPx) {
   }
 
   if (lightOn && !outside()) headlight(hy);
+  if (gsOn) gsEnd();
   F = F1;
   if (gl && GPU.ok && !forceCPU) { gpuFinish(hy); return; }
 
@@ -3502,7 +3609,8 @@ function renderScene(realZ, realPx) {
 // translucent drawn over it later), and this pass fills in the texture at the city's full resolution
 const WALL_GLSL = `
 uniform highp sampler2D uBld, uQuad, uGid;
-uniform float uT, uFlash2, uT4m6;
+uniform float uT, uFlash2, uT4m6; uniform int uExact;
+bool gHole;                                          // set by wallTex where the facade is see-through (the JavaScript's TR = -1)
 float gMpp;                                          // the real size of the pixel on the wall (wallTex itself gets 0: full detail)
 uniform ivec2 uFont[10];
 const vec3 WIN_[6] = vec3[6](vec3(255, 200, 120), vec3(255, 170, 90), vec3(120, 220, 255), vec3(255, 120, 200), vec3(200, 190, 255), vec3(255, 236, 190));
@@ -3673,6 +3781,19 @@ vec3 wallTex(float u, float v, bool front, float mpp) {
     bool pnl = mpp < 0.6 && jm(u, 3.0) < 0.08;
     return pnl ? vec3(24, 28, 34) : vec3(10, 12, 16);
   }
+  if (bStyle == 11) {                                // construction: open steel skeleton, tarps, hoarding
+    if (v < 3.6) {
+      if (v > 2.2 && v < 2.6) { bool st = jm(u + v, 1.2) < 0.6; return st ? vec3(220, 170, 30) : vec3(20, 18, 16); }
+      if (v < 2.6) return vec3(90, 78, 58);
+    }
+    float ff = floor(v / 3.6); int fl = int(ff); float fv = v / 3.6 - ff, bf = floor(u / 4.0); int bayN = int(bf); float fu = u / 4.0 - bf;
+    float thick_ = max(0.1, gMpp * 0.25);
+    if (fv < 0.1 + thick_ * 0.3 || fu < 0.09 + thick_ * 0.3) return vec3(150, 82, 30);
+    if (hsh(bayN, fl, bSeed) < 0.3 && v < bH - 6.0) { vec3 tc = hsh(bayN, fl, bSeed + 1) < 0.5 ? vec3(40, 80, 160) : vec3(150, 150, 160); return tc * (0.8 + 0.2 * sin(u * 3.0 + uT * 2.0)); }
+    if (abs(fu - fv) < 0.05 + thick_ * 0.2 && hsh(bayN, fl, bSeed + 2) < 0.5) return vec3(130, 70, 26);
+    if (fu < 0.2 && fv < 0.25 && hsh(bayN, fl, bSeed + 4) < 0.08 && jm(uT * 2.0 + float(bayN), 1.0) < 0.5) return vec3(255, 150, 40);
+    gHole = true; return vec3(0);
+  }
   if (bStyle == 12) {
     if (v > bH - 1.2) { bool e = v > bH - 0.3; return e ? vec3(70, 52, 50) : vec3(28, 22, 26); }
     if (v < 3.8) {
@@ -3688,6 +3809,14 @@ vec3 wallTex(float u, float v, bool front, float mpp) {
       float pk = jm(v, 0.5) < 0.05 ? 0.7 : 1.0; return bc * pk;
     }
     return vec3(bc.r * 1.2, bc.g * 1.1, bc.b);
+  }
+  if (bStyle == 14) {                                // stilt canals: houses on poles above the water
+    if (v < 3.4) {
+      if (v > 3.0) { bool lt = jm(u, 1.5) < 0.2 && mpp < 0.6; return lt ? vec3(255, 210, 140) : vec3(60, 48, 40); }
+      if (jm(u, 4.0) < 0.5) return vec3(40, 34, 40);
+      gHole = true; return vec3(0);
+    }
+    v -= 3.4;
   }
   if (bStyle == 15) {
     if (v > bH - 0.8) return vec3(bc.r * 1.35, bc.g * 1.3, bc.b * 1.2);
@@ -3775,6 +3904,20 @@ vec3 wallTex(float u, float v, bool front, float mpp) {
       if (hsh(bay, fl, bSeed + 21) < 0.3 && fv > 0.28 && fv < 0.82 && fu > 0.15 && fu < 0.85) return vec3(4, 4, 6);
     }
   }
+  if (bStyle == ${D.CITADEL}) {                      // storm citadel: battlements, buttresses, pointed windows
+    if (v > bH - 1.6) { if (jm(u, 2.4) < 1.2) return bc * 1.2; gHole = true; return vec3(0); }
+    float bf = floor(u / 4.0); int bay = int(bf); float fu = u / 4.0 - bf;
+    if (bay % 3 == 0 && fu < 0.16) return bc * 1.5;
+    if (mpp > 1.0) return bAvg;
+    float ff = floor(v / 8.0); int fl = int(ff); float fv = v / 8.0 - ff;
+    if (v > 3.8 && fu > 0.32 && fu < 0.68 && fv > 0.12 && fv < 0.88 && (fv < 0.7 || abs(fu - 0.5) < (0.88 - fv))) {
+      if (mpp < 0.4 && (jm(fu * 4.0, 1.0) < 0.1 || jm(fv * 8.0, 1.0) < 0.08)) return vec3(20, 22, 30);
+      float k = hsh(bay, fl, bSeed) < bWinP ? 0.6 + 0.2 * sin(uT * 0.7 + float(bay)) + uFlash2 * 0.3 : 0.1;
+      return vec3(150, 190, 255) * k;
+    }
+    bool blk = mpp < 0.5 && (jm(v, 1.2) < 0.08 || jm(u + floor(v / 1.2) * 0.9, 1.8) < 0.08);
+    return bc * (blk ? 0.75 : 1.0);
+  }
   if (bStyle == ${D.BAZAAR}) {
     if (v < 4.2) {
       float cf = floor(u / 3.2); int cell = int(cf); float cu = u / 3.2 - cf, top = min(3.6, 3.0 + (0.5 - abs(cu - 0.5)) * 1.6);
@@ -3823,17 +3966,21 @@ vec3 wallTex(float u, float v, bool front, float mpp) {
 // every distance gets the full detail: one sample up close, and further out a grid of samples across the
 // pixel's footprint on the wall, averaged, so far facades show their real windows smoothed instead of
 // switching from a flat colour to detail (the JavaScript's distance cut-offs) as they come closer
-vec3 facade(float uc, float vc, float du, float dv, bool front, float mpp) {
+vec4 facade(float uc, float vc, float du, float dv, bool front, float mpp) {
   gMpp = mpp;
+  if (uExact == 1) { gHole = false; vec3 c = wallTex(uc, vc, front, mpp); return vec4(c, gHole ? 0.0 : 1.0); }   // testing only: the original single sample
   int nu = clamp(int(ceil(du / 0.22)), 1, 4), nv = clamp(int(ceil(dv / 0.22)), 1, 4);
-  vec3 acc = vec3(0);
+  vec3 acc = vec3(0); float n = 0.0;
   for (int i = 0; i < 4; i++) { if (i >= nu) break;
     for (int j = 0; j < 4; j++) { if (j >= nv) break;
-      acc += wallTex(uc + du * ((float(i) + 0.5) / float(nu) - 0.5), vc + dv * ((float(j) + 0.5) / float(nv) - 0.5), front, 0.0);
+      gHole = false;
+      vec3 c = wallTex(uc + du * ((float(i) + 0.5) / float(nu) - 0.5), vc + dv * ((float(j) + 0.5) / float(nv) - 0.5), front, 0.0);
+      if (!gHole) { acc += c; n += 1.0; }
     } }
-  vec3 c = acc / float(nu * nv);
-  // a footprint wider than the 4 samples can resolve: ease towards the facade's average colour (gradually, no switch)
-  return mix(c, bAvg, smoothstep(0.9, 2.6, max(du, dv)));
+  if (n == 0.0) return vec4(0);
+  // a footprint wider than the samples can resolve: ease towards the facade's average colour (gradually, no switch);
+  // see-through facades (skeletons, battlements, stilts) cover the pixel only partly
+  return vec4(mix(acc / n, bAvg, smoothstep(0.9, 2.6, max(du, dv))), n / float(nu * nv));
 }
 // a wall quad (4 texels): side face (xa, span, iN, iF), (u0, Zk, ybA, ybB), (ytA, ytB, building, F), (0, ...)
 // or the corner face (xw, s, ybot, building), -, -, (1, ...)
@@ -3848,11 +3995,11 @@ vec3 wallAt(int q, ivec2 p) {
     // how far along the wall one pixel reaches (the wall recedes, so this grows quickly with distance)
     float t1 = clamp((x + 0.5 - a.x) / a.y, 0.0, 1.0), t0 = clamp((x - 0.5 - a.x) / a.y, 0.0, 1.0);
     float i1 = a.z + (a.w - a.z) * t1, i0 = a.z + (a.w - a.z) * t0, du = abs(1.0 / i1 - 1.0 / i0);
-    return facade(u, (yb - y - 0.5) / hp * bH, du, bH / hp, false, z / c.w);
+    return facade(u, (yb - y - 0.5) / hp * bH, du, bH / hp, false, z / c.w).rgb;
   }
   loadB(int(a.w));
   float s = a.y, u = abs(x - a.x) / s;
-  return facade(u, (a.z - y - 0.5) / s, 1.0 / s, 1.0 / s, true, 1.0 / s) * 0.7;
+  return facade(u, (a.z - y - 0.5) / s, 1.0 / s, 1.0 / s, true, 1.0 / s).rgb * 0.7;
 }
 `;
 const GPU_FSR = `#version 300 es
@@ -3867,6 +4014,678 @@ void main() {
   if (g > 0) a += wallAt(g / 4096 - 1, p) * (float(g % 4096) / 4095.0);
   outC = vec4(a, 1.0);
 }`;
+
+// ---------- the whole city drawn on the graphics chip ----------
+// JavaScript no longer touches the city's pixels: every drawing call becomes one record in an ordered list
+// (an instance), and the chip draws the list in order, so what overlaps what is exactly as before.
+// Three layers: colour (C), glow (G, light added up) and wet-road reflection strength (R).
+// Anything not yet turned into a record is drawn by JavaScript into a scratch layer that joins the list as a sprite.
+const GS_VS = `#version 300 es
+precision highp float;
+layout(location = 0) in vec4 a0; layout(location = 1) in vec4 a1; layout(location = 2) in vec4 a2;
+layout(location = 3) in vec4 a3; layout(location = 4) in vec4 a4; layout(location = 5) in vec4 a5;
+uniform vec2 uSize;
+flat out vec4 v0, v1, v2, v3, v4, v5;
+void main() {
+  v0 = a0; v1 = a1; v2 = a2; v3 = a3; v4 = a4; v5 = a5;
+  // the instance's pixel box: columns a0.z..a1.x, rows a0.w..a1.y (inclusive)
+  vec2 c = vec2(float(gl_VertexID & 1), float(gl_VertexID >> 1));
+  vec2 p = mix(vec2(a0.z, a0.w), vec2(a1.x, a1.y) + 1.0, c);
+  gl_Position = vec4(p / uSize * 2.0 - 1.0, 0.0, 1.0);
+}`;
+const GS_FS = `#version 300 es
+precision highp float; precision highp int; precision highp sampler2D;
+layout(location = 0) out vec4 oC; layout(location = 1) out vec4 oG; layout(location = 2) out vec4 oR;
+flat in vec4 v0, v1, v2, v3, v4, v5;
+uniform sampler2D uSky, uSkyG, uAtlas;
+uniform highp usampler2D uXr;
+uniform int uRS, uNSEG, uW;
+uniform float uCamL, uO, uFogA, uFogB, uWet, uF;
+uniform vec3 uFOG;
+uniform float uPh3, uPh5, uPh04, uPh13, uPh2, uPh06, uPh03;
+uniform float uTb, uTr, uRacerD, uTrainD, uSkyD, uLEN, uSTH, uSTLEN, uTH;
+uniform sampler2D uTow;                               // skyline layers (rows 0, 1: height, start, seed, crown colour) and mountains (row 2)
+uniform vec3 uLUT[22], uNEON[6];
+uniform float uHyS, uBgX, uBx, uHB, uShim, uCz, uF1; uniform int uPW, uShY0, uShY1, uW1;
+const float BAY[16] = float[16](0.03125, 0.53125, 0.15625, 0.65625, 0.78125, 0.28125, 0.90625, 0.40625, 0.21875, 0.71875, 0.09375, 0.59375, 0.96875, 0.46875, 0.84375, 0.34375);
+${WALL_GLSL}
+float P(int i) { return i < 4 ? v2[i] : i < 8 ? v3[i - 4] : i < 12 ? v4[i - 8] : v5[i - 12]; }
+float smo(float a, float b, float v) { float t = clamp((v - a) / (b - a), 0.0, 1.0); return t * t * (3.0 - 2.0 * t); }
+float fogAt(float z) { return smo(uFogA, uFogB, z) * 0.97; }
+vec3 fogged(vec3 c, float fz) { return c + (uFOG - c) * fz; }
+bool XR(int seg) { seg = ((seg % uNSEG) + uNSEG) % uNSEG; return texelFetch(uXr, ivec2(seg % 1024, seg / 1024), 0).r > 0u; }
+// world z = uO + w, with uO a multiple of 1680 metres kept out of the 32-bit sums (every period used divides it)
+int wInt(float k, float w) { return int(floor(uO * k + 0.5)) + int(floor(w * k)); }        // floor(wz * k) for k with uO * k whole
+
+// ---- rooftops (roofTex), with the building loaded: ul across the roof, w world z (local), lz along the building, mpp ----
+vec3 roofTex(float ul, float w, float lz, float mpp) {
+  vec4 t9 = bt(9); float L = t9.x * ${SEGL}.0; int kindR = int(t9.y), roofB = int(t9.z);
+  if (ul < 0.5) return bHasCrown ? bCrown : vec3(80, 72, 98);
+  float ku = ul - 13.0, kz = lz - L / 2.0;
+  if (kindR == 2 && L > 15.0) {
+    float d = length(vec2(ku, kz));
+    if (d < 7.5) {
+      if (d > 6.4) return vec3(230, 190, 40);
+      if (abs(ku) < 2.6 && abs(kz) < 3.2 && (abs(ku) > 1.7 || abs(kz) < 0.45)) return vec3(235, 235, 240);
+      return vec3(44, 48, 60);
+    }
+  } else if (kindR == 3) {
+    if (jm(lz, 4.0) < 0.3) { bool on = hsh(int(floor(ul * 2.0)), int(floor(lz / 4.0)), int(floor(uT * 3.0))) < 0.9; return on ? vec3(255, 205, 130) : vec3(90, 70, 50); }
+    if (mpp < 0.5 && hsh(int(floor(ul / 2.5)), int(floor(lz / 2.5)), bSeed) < 0.18 && jm(ul, 2.5) < 1.1 && jm(lz, 2.5) < 1.1) return vec3(120, 60, 50);
+    bool pl = mpp < 0.4 && jm(lz, 0.8) < 0.08; return pl ? vec3(44, 30, 24) : vec3(78, 52, 36);
+  } else if (kindR == 4 && L > 12.0) {
+    if (abs(ku) < 9.0 && abs(kz) < L / 2.0 - 2.0) {
+      int cu = int(floor((ku + 9.0) / 1.5)), cz = int(floor(lz / 1.5));
+      bool on = (cu % 4 != 3) && hsh(cu >> 2, (cu & 3) + (cz % 5) * 3, bSeed) < 0.55; float fl = hsh(int(floor(uT * 6.0)), bId, 3) < 0.05 ? 0.3 : 1.0;
+      if (on) return bLobby * fl;
+      return vec3(18, 16, 24);
+    }
+  } else if (kindR == 5) {
+    if (jm(lz, 3.0) < 2.2 && jm(ul, 2.6) < 2.2) { bool ln = mpp < 0.4 && (jm(lz, 0.55) < 0.05 || jm(ul, 0.55) < 0.05); return ln ? vec3(70, 90, 140) : vec3(28, 46, 104); }
+    return vec3(40, 40, 48);
+  }
+  float fxq = floor(ul / 5.0), fzq = floor(w / 5.0); int tx = int(fxq), tz = int(floor(uO / 5.0 + 0.5)) + int(fzq);
+  float h = hsh(tx, tz, bSeed), fu = ul / 5.0 - fxq, fz = w / 5.0 - fzq;
+  int hk = int(h * 10.0) + roofB * 2, kind = hk > 13 ? 9 : hk % 10;
+  if (kind < 4) { bool ln = mpp < 0.5 && (fu < 0.05 || fz < 0.05); return ln ? vec3(26, 24, 32) : vec3(44, 42, 54); }
+  if (kind < 6) { bool tree = mpp < 1.0 && hsh(int(floor(ul * 1.2)), wInt(1.2, w), bSeed + 5) < 0.35; return tree ? vec3(60, 140, 74) : vec3(28, 66, 40); }
+  if (kind < 8) { bool st = mpp < 0.6 && jm(fz * 5.0, 1.0) < 0.15; return st ? vec3(70, 90, 140) : vec3(24, 42, 84); }
+  if (kind < 9) { bool box = fu > 0.25 && fu < 0.75 && fz > 0.25 && fz < 0.75; return box ? vec3(96, 96, 106) : vec3(44, 42, 54); }
+  bool pool = fu > 0.15 && fu < 0.85 && fz > 0.2 && fz < 0.8; float ww = 0.7 + 0.3 * sin(w * 2.0 + uPh2 + uT * 2.0 + ul);
+  return pool ? vec3(30.0 * ww, 180.0 * ww, 210.0 * ww) : vec3(44, 42, 54);
+}
+uniform ivec2 uLbl[16]; uniform int uLblN;            // the portal sign's letters (FONT bits), one sign per frame
+// ---- textures of the faces parallel to the road (quadWall): tex ids as in GS.TEX ----
+vec4 qtex(int id, float w, float v, float z, float s, float ex) {
+  vec3 c;
+  if (id == 1) {                                     // tunnel
+    if (v > 4.55 && v < 4.85) return vec4(0, 200, 255, 1);
+    if (v < 0.8) { bool st = jm(w + v * 1.5, 1.2) < 0.6; return st ? vec4(190, 150, 30, 1) : vec4(20, 18, 24, 1); }
+    bool grout = jm(v, 1.0) < 0.08 || jm(w, 2.0) < 0.08;
+    return grout ? vec4(36, 34, 44, 1) : vec4(64, 60, 74, 1);
+  }
+  if (id == 2) {                                     // level-change tunnel (ex: 1 going up)
+    bool up = ex > 0.5; vec3 lc = up ? vec3(80, 255, 150) : vec3(255, 170, 60);
+    if (v > 4.6 && v < 4.85) return vec4(lc, 1);
+    if (v > 1.4 && v < 3.4) {
+      float u = jm(jm(w, 6.0) + 6.0, 6.0), vv = (v - 2.4) * (up ? 1.0 : -1.0);
+      if (abs(u - 3.0 - abs(vv) * 1.2) < 0.35) { float k = fract(uT * 3.0 - w * 0.3) < 0.5 ? 1.0 : 0.35; return vec4(lc * k, 1); }
+    }
+    bool seam = jm(w, 3.0) < 0.1 || jm(v, 1.6) < 0.06;
+    return seam ? vec4(20, 22, 30, 1) : vec4(34, 36, 48, 1);
+  }
+  if (id == 3) {                                     // vactrain tube
+    float u = jm(jm(w, 28.0) + 28.0, 28.0);
+    if (u < 0.8) { float p = 0.7 + 0.3 * sin(uT * 8.0); return vec4(vec3(80, 220, 255) * p, 1); }
+    if (v > 3.1 && v < 3.25) return vec4(40, 90, 160, 1);
+    bool seam = jm(w, 4.0) < 0.08 || jm(v, 1.5) < 0.05;
+    return seam ? vec4(8, 9, 14, 1) : vec4(16, 18, 28, 1);
+  }
+  if (id == 4) {                                     // rail
+    if (v > 1.0) return vec4(0, 210, 255, 1);
+    if (jm(w, 2.5) < 0.18 || (v > 0.5 && v < 0.62)) return vec4(70, 70, 90, 1);
+    return vec4(0, 0, 0, -1);
+  }
+  if (id == 5) {                                     // spiral-ramp tower
+    if (jm(v, 9.0) < 0.35) return vec4(0, 200, 255, 1);
+    float mpp = z / uF;
+    if (mpp < 0.6) {
+      float q = uTr + w / 2.2, fq = floor(q); int bx = int(uTb) + int(fq); float fv0 = floor(v / 1.8); int by = int(fv0);
+      float fu = q - fq, fv = v / 1.8 - fv0;
+      if (fu > 0.12 && fu < 0.88 && fv > 0.2 && fv < 0.8) {
+        bool lit = hsh(bx, by, 91) < 0.3; vec3 wc = WIN_[int(hsh(bx, by, 92) * 6.0)];
+        return lit ? vec4(wc * 0.7, 1) : vec4(14, 18, 30, 1);
+      }
+    }
+    return vec4(26, 30, 44, 1);
+  }
+  if (id == 6) {                                     // highway barrier
+    if (v > 0.75 && v < 0.9) { bool r = jm(w, 4.0) < 0.4; return r ? vec4(255, 120, 40, 1) : vec4(200, 200, 210, 1); }
+    return vec4(70, 70, 82, 1);
+  }
+  if (id == 7) {                                     // the racing train beside the highway
+    float u = uRacerD + z;
+    if (u < 0.0 || u > 90.0) return vec4(0, 0, 0, -1);
+    if (v < 0.8) return vec4(30, 30, 40, 1);
+    if (v > 1.4 && v < 1.6) return vec4(0, 230, 255, 1);
+    if (v > 2.0 && v < 3.0 && jm(u, 2.2) > 0.35 && u > 2.0 && u < 88.0) return vec4(255, 220, 170, 1);
+    if (u > 86.0 || u < 1.5) return vec4(255, 255, 255, 1);
+    return vec4(220, 226, 236, 1);
+  }
+  if (id == 8) {                                     // waterfall
+    float st = jm(jm(v * 0.9 + uT * 14.0 + sin(w * 3.0 + uPh3) * 2.0, 3.0) + 3.0, 3.0), k = st < 0.6 ? 1.0 : 0.6 + 0.15 * sin(w * 5.0 + uPh5 + v);
+    return vec4(vec3(150, 210, 230) * k, 1);
+  }
+  if (id == 9) {                                     // ferry hull
+    if (v > 1.9) return vec4(230, 230, 235, 1);
+    if (v > 1.6) return vec4(40, 40, 50, 1);
+    float port = jm(jm(w, 5.0) + 5.0, 5.0);
+    if (v > 0.6 && v < 1.2 && port > 2.0 && port < 3.0) return vec4(255, 220, 150, 1);
+    return vec4(160, 30, 36, 1);
+  }
+  if (id == 10) {                                    // sky-train beam (ex: stEL)
+    float av = v + ex;
+    if (av > uSTH - 0.15) return vec4(255, 46, 170, 1);
+    bool seam = jm(w, 8.0) < 0.3; return seam ? vec4(24, 22, 32, 1) : vec4(40, 38, 54, 1);
+  }
+  if (id == 11) {                                    // sky train (ex: stEL)
+    float av = v + ex - uSTH, u = uSkyD + z; if (u >= uLEN) u -= uLEN;
+    if (u > uSTLEN) return vec4(0, 0, 0, -1);
+    if (u < 1.2 || u > uSTLEN - 1.2) return vec4(230, 245, 255, 1);
+    if (av > 0.5 && av < 0.7) return vec4(0, 220, 255, 1);
+    if (av > 1.3 && av < 2.4 && jm(u, 2.6) > 0.35) { bool lit = hsh(int(floor(u / 2.6)), 1, 88) < 0.8; return lit ? vec4(255, 220, 170, 1) : vec4(40, 50, 70, 1); }
+    return vec4(214, 218, 230, 1);
+  }
+  if (id == 12) {                                    // aqua tube glass
+    if (jm(w, 6.0) < 0.35) return vec4(70, 84, 100, 1);
+    if (v > 4.4 && v < 4.65) return vec4(0, 220, 255, 1);
+    float depth = v / uTH, wave = 0.5 + 0.5 * sin(w * 0.4 + uPh04 + uT * 1.5 + v);
+    float fq = (w + uT * 3.0) / 1.4; bool fish = hsh(int(floor(uO / 1.4 + 0.5)) + int(floor(fq)), int(floor(v * 1.6)), 5) < 0.035;
+    if (fish) return vec4(255.0, 170.0 + v * 10.0, 90.0, 1);
+    return vec4(6.0 + 10.0 * depth, 40.0 + 40.0 * depth + 12.0 * wave, 70.0 + 50.0 * depth + 10.0 * wave, 1);
+  }
+  if (id == 13) {                                    // deck edge
+    if (v > -0.3) return vec4(74, 72, 90, 1);
+    if (v < -1.15) return vec4(0, 180, 220, 1);
+    return vec4(36, 34, 46, 1);
+  }
+  if (id == 14) {                                    // monorail beam
+    if (v > 12.35) return vec4(0, 220, 255, 1);
+    return jm(w, 6.0) < 0.2 ? vec4(20, 18, 28, 1) : vec4(40, 36, 52, 1);
+  }
+  if (id == 15) {                                    // monorail train
+    float u = uTrainD + z; if (u >= uLEN) u -= uLEN;
+    if (v < 13.1) return vec4(30, 32, 44, 1);
+    if (v < 13.35) return vec4(255, 46, 170, 1);
+    if (v > 13.7 && v < 14.9 && jm(u, 2.4) > 0.3 && u > 1.5 && u < 58.5) return hsh(int(floor(u / 2.4)), 1, 77) < 0.75 ? vec4(255, 214, 150, 1) : vec4(40, 50, 70, 1);
+    if (u < 1.2 || u > 58.8) return vec4(210, 230, 255, 1);
+    return vec4(52, 56, 74, 1);
+  }
+  if (id == 16) return vec4(46, 44, 56, 1);          // highway shoulder kerb
+  return vec4(255, 0, 255, 1);
+}
+vec3 ground(float lx, float w, float z, float pxw, float fz, int d, bool deckOnly, float deckW, out float rfo, out float opo, out bool skip) {
+  skip = false;
+  bool water = d == ${D.BRIDGE} || d == ${D.CANALS} || d == ${D.FERRY} || d == ${D.PONTOON}, deck = d == ${D.HIGHWAY} || d == ${D.RAMP}, sand = d == ${D.CANYON};
+  bool lava = d == ${D.VOLCANO}, cloud = d == ${D.CLOUDS}, salt = d == ${D.SALT}, forge = d == ${D.FORGE}, ruin = d == ${D.RUIN};
+  bool pontoon = d == ${D.PONTOON}, ferry = d == ${D.FERRY};
+  bool dash = jm(w, 10.0) < 4.5; float lw = max(0.09, pxw * 0.55); bool tileRow = jm(w, 1.6) < max(0.12, pxw);
+  int zq = wInt(3.0, w);
+  int seg = int(floor(uO / ${SEGL}.0 + 0.5)) + int(floor(w / ${SEGL}.0)); float lz = w - floor(w / ${SEGL}.0) * ${SEGL}.0;
+  bool xr = XR(seg), nx1 = XR(seg + 1), nx2 = XR(seg + 2), pv = XR(seg - 1);
+  bool zebra = !xr && (nx1 || pv) && lz > 0.4 && lz < 3.6;
+  bool stopL = !xr && !nx1 && nx2 && lz > 3.2 && lz < 3.7;
+  float a = abs(lx);
+  if (deckOnly && a >= deckW) { skip = true; return vec3(0); }
+  vec3 c; float rf = 0.0, op = 1.0;
+  float RW_ = ${RW}.0, SW_ = ${SW};
+  if (a < RW_ || (xr && a < RW_ + SW_ + 30.0)) {
+    if (xr && a >= RW_) { float h = pxw < 0.35 ? hsh(int(floor(lx * 3.0)), zq, 9) * 9.0 : 4.5; c = vec3(24.0 + h, 22.0 + h, 34.0 + h); rf = 0.5; if (abs(lz - 2.0) < lw * 1.2 && jm(a * 0.5, 2.0) < 1.0) c = vec3(190, 190, 210); }
+    else if (zebra && jm(a + 0.45, 1.0) < 0.55) { c = vec3(215, 215, 225); rf = 0.15; }
+    else if (stopL && lx > 0.3) { c = vec3(225, 225, 235); rf = 0.15; }
+    else if (!xr && abs(a - 0.2) < lw) { c = vec3(235, 165, 40); rf = 0.2; }
+    else if (!xr && !zebra && dash && abs(a - 3.5) < lw) { c = vec3(190, 190, 210); rf = 0.2; }
+    else if (!xr && abs(a - (RW_ - 0.3)) < lw) { c = vec3(200, 200, 215); rf = 0.2; }
+    else {
+      float h = pxw < 0.35 ? hsh(int(floor(lx * 3.0)), zq, 9) * 9.0 : 4.5; c = vec3(24.0 + h, 22.0 + h, 34.0 + h); rf = 0.5;
+      if (deckOnly) { c = vec3(14, 30, 48); op = 0.3; rf = 0.15; }
+      if (sand && a > RW_ - 1.6 && hsh(int(floor(lx * 2.0)), wInt(0.7, w), 33) < (a - RW_ + 1.6) * 0.6) { c = vec3(150, 92, 54); rf = 0.0; }
+    }
+  } else if (deck) {
+    if (a < RW_ + SW_) { float h = pxw < 0.35 ? hsh(int(floor(lx * 3.0)), zq, 19) * 6.0 : 3.0; c = vec3(30.0 + h, 28.0 + h, 38.0 + h); rf = 0.3; if (deckOnly) op = 0.55; }
+    else {
+      int gx = int(floor(lx / 3.0)), gz = int(floor(uO / 3.0 + 0.5)) + int(floor(w / 3.0));
+      bool lt = pxw < 1.2 && hsh(gx, gz, 57) < 0.07;
+      c = lt ? WIN_[int(hsh(gx, gz, 58) * 6.0)] * 0.7 : vec3(8, 6, 14);
+    }
+  } else if (a < RW_ + 0.3) {
+    if (sand) c = vec3(120, 70, 40); else { c = vec3(0, 225, 255); rf = 0.3; }
+  } else if (a < RW_ + SW_) {
+    if (d == ${D.CANALS}) { bool pl = pxw < 0.5 && jm(w, 0.8) < max(0.1, pxw); c = pl ? vec3(40, 26, 22) : vec3(82, 56, 40); rf = 0.2; }
+    else if (sand) { float h = hsh(int(floor(lx * 2.0)), zq, 34) * 14.0; c = vec3(130.0 + h, 78.0 + h * 0.6, 46.0); }
+    else {
+      bool ln = pxw < 0.5 && (tileRow || jm(a - RW_, 1.6) < max(0.1, pxw));
+      c = ln ? vec3(30, 26, 42) : vec3(46, 40, 60); rf = 0.25;
+      if (deckOnly) { op = ln ? 0.9 : 0.35; rf = 0.1; }
+    }
+  } else if (water) {
+    bool sp = pxw < 0.4 && hsh(int(floor(lx * 2.0)), zq, 21) < 0.012;
+    c = sp ? vec3(120, 130, 170) : vec3(6, 10, 24); rf = 0.85;
+  } else if (lava) {
+    if (a < RW_ + SW_ + 2.5) c = vec3(40, 26, 24);
+    else {
+      float v = vns(lx * 0.12, uO * 0.06 + w * 0.06 - uT * 0.15, 61) * 0.7 + vns(lx * 0.4, uO * 0.2 + w * 0.2, 62) * 0.3;
+      if (v > 0.52) { float h = smo(0.52, 0.75, v); c = vec3(200.0 + 55.0 * h, 60.0 + 120.0 * h, 10.0 + 40.0 * h); } else c = vec3(34, 16, 12);
+    }
+  } else if (cloud) {
+    float v = vns(lx * 0.035 + uT * 0.04, uO * 0.012 + w * 0.012, 71) * 0.7 + vns(lx * 0.11, uO * 0.04 + w * 0.04 - uT * 0.05, 72) * 0.3, h = smo(0.3, 0.75, v);
+    c = vec3(40.0 + 170.0 * h, 46.0 + 166.0 * h, 80.0 + 160.0 * h);
+  } else if (salt) {
+    float fr = floor(w / 3.5); int rz = int(floor(uO / 3.5 + 0.5)) + int(fr); float cu = lx / 4.0 + float(rz & 1) * 0.5, fx = cu - floor(cu), fzz = w / 3.5 - fr;
+    bool edge = pxw < 0.6 && (fx < 0.05 || fzz < 0.05);
+    c = edge ? vec3(150, 152, 165) : vec3(200, 204, 218); rf = 0.85;
+  } else if (sand) c = vec3(110, 60, 34);
+  else c = vec3(18, 14, 26);
+  if (forge) {
+    if (a >= RW_ && a < RW_ + 0.3) { float fl = 0.75 + 0.25 * sin(w * 1.3 + uPh13 - uT * 4.0); c = vec3(255.0 * fl, 110.0 * fl, 20.0); rf = 0.1; }
+    else if (a < RW_ && mod(w, 12.0) < 1.6 && (abs(a - 1.75) < 0.8 || abs(a - 5.25) < 0.8)) {
+      bool bar = pxw < 0.25 && (int(floor(lx * 5.0)) & 1) == 1; float fl = 0.7 + 0.3 * sin(w * 2.0 + uPh2 + uT * 3.0 + lx);
+      c = bar ? vec3(30, 20, 16) : vec3(255.0 * fl, 120.0 * fl, 30.0 * fl); rf = 0.0;
+    }
+  }
+  if (ruin && a < RW_ + SW_ && pxw < 0.5) {
+    float hc = hsh(int(floor(lx * 2.5)), wInt(2.5, w), 44);
+    if (hc < 0.05) { c = vec3(40, 90, 40); rf = 0.0; } else if (hc < 0.09) c = vec3(10, 10, 12);
+  }
+  if (deckOnly && a < RW_ && !xr && abs(a - (RW_ - 0.3)) < lw) { c = vec3(90, 230, 255); op = 1.0; }
+  if (pontoon && a >= RW_ + 0.3 && a < RW_ + SW_) { c = vec3(90, 50, 34); rf = 0.1; }
+  if (pontoon && a < RW_ + SW_ && mod(w, 24.0) < 0.5) { c = vec3(8, 8, 12); rf = 0.0; }
+  if (ferry && a >= RW_ + 0.3 && a < RW_ + SW_) { c = vec3(40, 70, 60); rf = 0.15; }
+  rfo = rf == 0.85 ? rf : rf * (1.0 - fz) * uWet * (1.0 - smo(45.0, 170.0, z)); opo = op;
+  return fogged(c, fz);
+}
+void main() {
+  int type = int(v0.x);
+  ivec2 ip = ivec2(gl_FragCoord.xy); float x = float(ip.x), y = float(ip.y);
+  oC = vec4(0); oG = vec4(0); oR = vec4(0);
+  if (type == 0) {                                   // sky (drawn on the art grid, spread over the finer city grid)
+    ivec2 q = ip / uRS, qc = q;
+    if (uShim > 0.02 && q.y >= uShY0 && q.y <= uShY1) {   // heat shimmer: the rows near the horizon wobble sideways
+      int off = int(floor(sin(float(q.y) * 0.9 + uT * 5.0) * 1.6 * uShim * float(q.y - uShY0) / float(uShY1 - uShY0 + 1) + 0.5));
+      qc.x = clamp(q.x - off, 0, uW1 - 1);
+    }
+    oC = vec4(texelFetch(uSky, qc, 0).rgb, 1); oG = vec4(texelFetch(uSkyG, q, 0).rgb, 1); oR = vec4(0, 0, 0, 1);
+  } else if (type == 13) {                           // added-light sprite from the scratch layer
+    vec4 s = texelFetch(uAtlas, ip + ivec2(int(P(0)), int(P(1))), 0);
+    if (s.a < -0.75) discard;
+    oC = vec4(s.rgb, 0);
+  } else if (type == 20) {                           // sky gradient, dithered through 22 steps
+    float t20 = clamp(y / uHyS, 0.0, 1.0) * 20.0;
+    oC = vec4(uLUT[int(floor(t20 + BAY[(ip.y & 3) * 4 + (ip.x & 3)]))], 1); oR = vec4(0, 0, 0, 1);
+  } else if (type == 21) {                           // smog bands lit from below (noise taken every other column): P0..2 smA, P3..5 smB
+    float xe = float(ip.x & ~1), gk = y / uHyS;
+    float n = vns((xe + uBgX * 0.5) * 0.03 + uT * 0.05, y * 0.12, 3) * 0.65 + vns((xe + uBgX * 0.5) * 0.08, y * 0.3, 5) * 0.35, d = n - 0.6;
+    if (d <= 0.0 || d * 9.0 < BAY[(ip.y & 3) * 4 + (ip.x & 3)]) discard;
+    oC = vec4(mix(vec3(P(0), P(1), P(2)), vec3(P(3), P(4), P(5)), gk * gk), 1); oR = vec4(0, 0, 0, 1);
+  } else if (type == 22) {                           // a skyline layer: P0 layer, P1..3 wall, P4 window mix, P5..7 haze
+    int pc = ((ip.x + int(uBx)) % uPW + uPW) % uPW;
+    vec4 L = texelFetch(uTow, ivec2(pc, int(P(0))), 0);
+    float h = L.x; int sd = int(L.y), wxi = pc - int(L.z), cr = int(L.w);
+    float top = floor(uHyS - h + 0.5); vec3 cb = vec3(P(1), P(2), P(3)), c;
+    if (y >= max(0.0, top) && y <= uHyS + 2.0) {
+      int hy2 = int(floor(uHyS - y + 0.5));
+      c = cb;
+      if (y == top && cr >= 0) c = uNEON[cr];
+      else if (wxi % 3 == 1 && hy2 >= 0 && hy2 % 3 == 1 && hsh(pc, hy2, sd) < 0.28) c = mix(WIN_[sd % 6], vec3(P(5), P(6), P(7)), P(4));
+    } else if (h > uHB * 0.6 && wxi == 2 && y >= top - 5.0 && y < top) {
+      if (y > top - 5.0) c = cb;
+      else if (mod(uT * 1.3 + float(sd % 2), 2.0) < 0.9) c = vec3(255, 40, 40);
+      else discard;
+    } else discard;
+    oC = vec4(c, 1); oR = vec4(0, 0, 0, 1);
+  } else if (type == 23) {                           // distant mountains: P0..2 snow, P3..5 rock, P6 how present
+    int pc = ((ip.x + int(uBx)) % uPW + uPW) % uPW;
+    float mh = texelFetch(uTow, ivec2(pc, 2), 0).x, top = floor(uHyS - mh + 0.5);
+    if (y < max(0.0, top) || y > uHyS + 2.0) discard;
+    bool snow = (y - top) < mh * 0.22 + hsh(pc, 1, 9) * 3.0;
+    oC = vec4(snow ? vec3(P(0), P(1), P(2)) : vec3(P(3), P(4), P(5)), P(6));
+  } else if (type == 24) {                           // the crown's cloud deck overhead: P0..2 colour, P3 crownK
+    float z = 40.0 * uF1 / (uHyS - y), fade = smo(0.0, 0.35, (uHyS - y) / uHB) * P(3), xe = float(ip.x & ~1);
+    float v = vns((xe + uBgX - float(uW1) / 2.0) * z / uF1 * 0.012, uCz + z * 0.01 + uT * 0.01, 91), d = (v - 0.55) * 3.0;
+    if (d <= 0.0) discard;
+    oC = vec4(P(0), P(1), P(2), min(1.0, d) * 0.55 * fade);
+  } else if (type == 25) {                           // coral deep: light shafts from the surface (P0 strength)
+    if (y >= uHyS) discard;
+    float xs = x - floor(y * 0.25 + 0.5);
+    if (xs < 0.0 || xs >= float(uW1)) discard;
+    float k = sin((xs + uBx * 0.2) * 0.045 + uT * 0.25) * sin((xs + uBx * 0.2) * 0.017 - uT * 0.1);
+    if (k < 0.3) discard;
+    oC = vec4(vec3(120, 220, 255) * ((k - 0.3) * 0.12 * P(0) * (1.0 - y / uHyS)), 0);
+  } else if (type == 26) {                           // a searchlight: P0 x at the base, P1 tan(angle), P2 base y, P3..5 colour
+    float base = P(2), d = base - y, cxl = P(0) + d * P(1), hw = 1.0 + d * 0.06;
+    if (x < floor(cxl - hw) || x > cxl + hw) discard;
+    oC = vec4(vec3(P(3), P(4), P(5)) * (0.07 * (1.0 - d / base) * (1.0 - abs(x - cxl) / (hw + 1.0))), 0);
+  } else if (type == 27) {                           // aurora curtains (P0 strength)
+    float pxa = x + uBgX * 0.3;
+    float yb = uHyS * 0.16 + sin(pxa * 0.013 + uT * 0.2) * uHyS * 0.06 + sin(pxa * 0.031 - uT * 0.35) * uHyS * 0.03;
+    float L = uHyS * 0.28 * (0.6 + 0.4 * sin(pxa * 0.05 + uT * 0.5)), str = P(0) * (0.55 + 0.45 * sin(pxa * 0.11 + uT * 1.3));
+    if (y < max(0.0, floor(yb)) || y >= yb + L) discard;
+    float u = (y - yb) / L;
+    oC = vec4((u < 0.15 ? vec3(190, 100, 255) : vec3(70, 255, 160)) * (0.3 * str * (1.0 - u) * (u < 0.15 ? u / 0.15 : 1.0)), 0);
+  } else if (type == 1) {                            // sprite from the scratch layer: rgb, and a = -0.5 colour only, >= 0 colour and reflection
+    vec4 s = texelFetch(uAtlas, ip + ivec2(int(P(0)), int(P(1))), 0);
+    if (s.a < -0.75) discard;
+    oC = vec4(s.rgb, 1); oR = s.a >= 0.0 ? vec4(s.a, 0, 0, 1) : vec4(0);
+  } else if (type == 2) {                            // filled box: P0..2 colour, P3 reflection (< 0 keep), P4 opacity
+    oC = vec4(P(0), P(1), P(2), P(4)); oR = P(3) >= 0.0 ? vec4(P(3), 0, 0, 1) : vec4(0);
+  } else if (type == 3) {                            // blob: P0 cx, P1 cy, P2 rx, P3 ry, P4..6 colour, P7 opacity
+    float ex = (x - P(0)) / P(2), ey = (y - P(1)) / P(3);
+    if (ex * ex + ey * ey > 1.0) discard;
+    oC = vec4(P(4), P(5), P(6), P(7)); oR = P(7) >= 1.0 ? vec4(0, 0, 0, 1) : vec4(0);
+  } else if (type == 4) {                            // line, point by point as lineS steps it
+    float x0 = P(0), y0 = P(1), dx = P(2) - x0, dy = P(3) - y0, n = ceil(max(abs(dx), abs(dy))), nn = n > 0.0 ? n : 1.0;
+    bool hit = false;
+    float c = abs(dx) >= abs(dy) ? (dx != 0.0 ? (x - x0) * nn / dx : 0.0) : (dy != 0.0 ? (y - y0) * nn / dy : 0.0);
+    for (int k = -1; k <= 2; k++) {
+      float i = floor(c) + float(k);
+      if (i < 0.0 || i > n) continue;
+      if (floor(x0 + dx * i / nn + 0.5) == x && floor(y0 + dy * i / nn + 0.5) == y) hit = true;
+    }
+    if (!hit) discard;
+    oC = vec4(P(4), P(5), P(6), 1); oR = vec4(0, 0, 0, 1);
+  } else if (type == 5) {                            // light into the glow layer: P0 x, P1 y, P2 R, P3..5 colour, P6 strength
+    float ddx = x - P(0), ddy = y - P(1), d2 = ddx * ddx + ddy * ddy, R = P(2);
+    if (d2 >= R * R) discard;
+    float f = 1.0 - sqrt(d2) / R; f = f * f * P(6); f = floor(f * 6.0) / 6.0;
+    if (f <= 0.0) discard;
+    oG = vec4(vec3(P(3), P(4), P(5)) * f, 0);
+  } else if (type == 6) {                            // added light straight onto the colour (addc): P0..2
+    oC = vec4(P(0), P(1), P(2), 0);
+  } else if (type == 7 || type == 8) {               // building faces: side (7) or the corner face (8)
+    vec4 c; float fz;
+    if (type == 7) {
+      float xa = P(0), span = P(1), iN = P(2), iF = P(3), u0 = P(4), ybA = P(6), ybB = P(7), ytA = P(8), ytB = P(9);
+      float t = clamp((x + 0.5 - xa) / span, 0.0, 1.0), diz = (iF - iN) * t, iz = iN + diz, z = 1.0 / iz;
+      float yt = ytA + (ytB - ytA) * t, yb = ybA + (ybB - ybA) * t;
+      if (y < ceil(yt) || y > ceil(yb) - 1.0) discard;
+      loadB(int(P(10)));
+      float u = u0 - diz / (iz * iN), hp = yb - yt;
+      float t1 = clamp((x + 1.0 - xa) / span, 0.0, 1.0), t0 = clamp((x - xa) / span, 0.0, 1.0);
+      float du = abs(1.0 / (iN + (iF - iN) * t1) - 1.0 / (iN + (iF - iN) * t0));
+      c = facade(u, (yb - y - 0.5) / hp * bH, du, bH / hp, false, z / P(11)); fz = fogAt(z);
+    } else {
+      float xw = P(0), s = P(1), ybot = P(2); loadB(int(P(3)));
+      float ytop = ybot - bH * s;
+      if (y < ceil(ytop) || y > ceil(ybot) - 1.0) discard;
+      float u = abs(x + 0.5 - xw) / s;
+      c = facade(u, (ybot - y - 0.5) / s, 1.0 / s, 1.0 / s, true, 1.0 / s); c.rgb *= 0.7; fz = P(4);
+    }
+    if (c.a <= 0.0) discard;
+    oC = vec4(fogged(c.rgb, fz), c.a); oR = vec4(0, 0, 0, c.a);
+  } else if (type == 9) {                            // a face parallel to the road (quadWall)
+    float xa = P(0), span = P(1), iN = P(2), iF = P(3), gk = P(4), gf = P(5), h0 = P(6), h1 = P(7);
+    float t = clamp((x + 0.5 - xa) / span, 0.0, 1.0), diz = (iF - iN) * t, iz = iN + diz, z = 1.0 / iz;
+    if (P(10) > -1e8 && (z < P(10) || z > P(11))) discard;
+    float wq = P(12) - diz / (iz * iN);               // world position: the segment's start (exact, from JavaScript) plus the distance into it
+    float g = gk + (gf - gk) * t, s = uF * iz, yt = g - h1 * s, yb = g - h0 * s;
+    if (y < ceil(yt) || y > ceil(yb) - 1.0) discard;
+    vec4 tc = qtex(int(P(8)), wq, h0 + (yb - y - 0.5) / (yb - yt) * (h1 - h0), z, s, P(9));
+    if (tc.a < 0.0) discard;
+    oC = vec4(fogged(tc.rgb, fogAt(z)), 1); oR = vec4(0, 0, 0, 1);
+  } else if (type == 10) {                           // road and ground: P0 yN, P1 yF, P2 iN, P3 iF, P4 CXk, P5 CXf, P6 district, P7 deck only
+    float yN = P(0), yF = P(1), iN = P(2), iF = P(3);
+    float t = (y - yF) / (yN - yF), iz = iF + (iN - iF) * t, z = 1.0 / iz, s = uF * iz;
+    float cx = P(5) + (P(4) - P(5)) * t, pxw = 1.0 / s, fz = fogAt(z);
+    int d = int(P(6)); bool deckOnly = P(7) > 0.5; float deckW = d == ${D.HIGHWAY} ? ${RW}.0 + ${SW} : ${RW}.0 + 1.5;
+    float rf, op; bool skip;
+    vec3 c = ground((x - cx) * pxw, uCamL + z, z, pxw, fz, d, deckOnly, deckW, rf, op, skip);
+    if (skip) discard;
+    oC = vec4(c, op); oR = vec4(rf, 0, 0, 1);
+  } else if (type == 12) {                           // the lower levels seen from above: P0 yN, P1 yF, P2 iN, P3 iF, P4 CXk, P5 CXf, P6 water
+    float yN = P(0), yF = P(1), iN = P(2), iF = P(3);
+    float t = (y - yF) / (yN - yF), iz = iF + (iN - iF) * t, z = 1.0 / iz, s = uF * iz, pxw = 1.0 / s;
+    float cx = P(5) + (P(4) - P(5)) * t, w = uCamL + z, fz = fogAt(z); bool dash = jm(w, 10.0) < 4.5; float lw = max(0.1, pxw * 0.55);
+    float lx = (x - cx) * pxw, a = abs(lx), RW_ = ${RW}.0, SW_ = ${SW};
+    vec3 c; float rf = 0.0; bool em = false;
+    if (a < RW_) {
+      if (abs(a - 0.2) < lw) c = vec3(150, 110, 40);
+      else if (dash && abs(a - 3.5) < lw) c = vec3(110, 110, 130);
+      else { c = vec3(16, 15, 22); rf = 0.2; }
+    } else if (a < RW_ + 0.3) c = vec3(0, 150, 180);
+    else if (a < RW_ + SW_) c = vec3(30, 27, 40);
+    else if (P(6) > 0.5) { c = vec3(6, 12, 26); rf = 0.5; }
+    else {
+      float gx = mod(lx, 48.0), gz = mod(w, 48.0);
+      if (gx < 7.0 || gz < 7.0) {
+        bool lamp = (gx < 7.0 && (gx < 0.9 || gx > 6.1) && mod(w, 12.0) < 0.9) || (gz < 7.0 && (gz < 0.9 || gz > 6.1) && mod(lx, 12.0) < 0.9);
+        int o7 = int(floor(uO / 7.0 + 0.5));
+        if (lamp) { c = vec3(255, 180, 90); em = true; }
+        else if (gx < 7.0 && abs(gx - 2.0) < 0.7 && hsh(o7 + int(floor((w - uT * 12.0) / 7.0)), int(floor(lx / 48.0)), 401) < 0.15) { c = vec3(255, 60, 60); em = true; }
+        else if (gx < 7.0 && abs(gx - 5.0) < 0.7 && hsh(o7 + int(floor((w + uT * 12.0) / 7.0)), int(floor(lx / 48.0)), 402) < 0.15) { c = vec3(240, 240, 255); em = true; }
+        else c = vec3(24, 22, 30);
+      } else {
+        bool lit = hsh(int(floor(lx / 3.0)), int(floor(uO / 3.0 + 0.5)) + int(floor(w / 3.0)), 403) < 0.08;
+        c = lit ? vec3(200, 160, 110) : vec3(14, 12, 20); em = lit;
+      }
+    }
+    oC = vec4(fogged(c, em ? fz * 0.6 : fz), 1); oR = vec4(rf * (1.0 - fz) * uWet, 0, 0, 1);
+  } else if (type == 14) {                           // tunnel ceiling: P0 yN, P1 yF, P2 iN, P3 iF, P4 CXk, P5 CXf, P6 kind (0 tunnel, 1 lift, 2 vactrain, 3 aqua tube), P7 going up
+    float yN = P(0), yF = P(1), iN = P(2), iF = P(3);
+    float t = (yF - y) / (yF - yN), iz = iF + (iN - iF) * t, z = 1.0 / iz, sc = uF * iz, cx = P(5) + (P(4) - P(5)) * t, w = uCamL + z;
+    float TW = ${RW}.0 + 1.2;
+    if (x < ceil(cx - TW * sc) || x > ceil(cx + TW * sc) - 1.0) discard;
+    float lx = (x + 0.5 - cx) / sc; int kind = int(P(6));
+    bool lamp = jm(w, 8.0) < 2.5; vec3 lc = kind == 1 ? (P(7) > 0.5 ? vec3(120, 255, 190) : vec3(255, 190, 110)) : vec3(255, 196, 120), c;
+    if (kind == 3) {
+      float ca = 0.5 + 0.5 * sin(lx * 1.7 + w * 0.6 + uPh06 + uT * 2.0) * sin(lx * 0.7 - w * 0.3 - uPh03 + uT);
+      c = jm(w, 6.0) < 0.35 ? vec3(70, 84, 100) : vec3(20.0 + 30.0 * ca, 90.0 + 60.0 * ca, 120.0 + 50.0 * ca);
+    }
+    else if (kind == 2) c = mod(w, 28.0) < 0.8 ? vec3(80, 220, 255) : vec3(12, 14, 22);
+    else c = abs(lx) < 0.6 ? (lamp ? lc : vec3(30, 26, 36)) : (jm(abs(lx), 2.5) < 0.12 / min(1.0, sc * 0.2) ? vec3(28, 26, 34) : kind == 1 ? vec3(30, 32, 44) : vec3(44, 42, 54));
+    oC = vec4(fogged(c, fogAt(z)), 1); oR = vec4(0, 0, 0, 1);
+  } else if (type == 15) {                           // tunnel portal: P0 PCX, P1 PGY, P2 s, P3 fog, P4..6 sign colour, P7..9 rim, P10 has the sign
+    float s = P(2), lx = (x + 0.5 - P(0)) / s, h = (P(1) - y - 0.5) / s, TW = ${RW}.0 + 1.2, TH = uTH;
+    if (abs(lx) < TW && h < TH) discard;              // the opening
+    vec3 c, lc = vec3(P(4), P(5), P(6));
+    if (abs(lx) < TW + 0.5 && h < TH + 0.5) c = vec3(P(7), P(8), P(9));
+    else if (abs(lx) < 13.0 && h > 8.0 && h < 12.5) {
+      if (P(10) > 0.5) {
+        int cols = uLblN * 4, gi = int(floor((lx + 13.0) / 26.0 * float(cols + 2))) - 1, gj = int(floor((12.5 - h) / 4.5 * 7.0)) - 1;
+        bool on = false;
+        if (gi >= 0 && gi < cols && gi % 4 != 3 && gj >= 0 && gj < 5) { ivec2 g = uLbl[gi >> 2]; int b = gj * 3 + (gi & 3); on = b < 8 ? ((g.x >> b) & 1) == 1 : ((g.y >> (b - 8)) & 1) == 1; }
+        c = on ? lc : vec3(12, 12, 18);
+      } else {
+        int gi = int(floor((lx + 10.0) / 20.0 * 30.0)), gj = int(floor((h - 8.0) / 3.5 * 5.0));
+        c = abs(lx) < 10.0 && h < 11.5 && gi % 4 != 3 && hsh(gi >> 2, (gi & 3) + gj * 3, 4242) < 0.55 ? vec3(0, 230, 255) : vec3(16, 14, 22);
+      }
+    } else c = (jm(h, 3.0) < 0.15 || jm(abs(lx), 6.0) < 0.2) ? vec3(26, 24, 32) : vec3(46, 42, 54);
+    oC = vec4(fogged(c, P(3)), 1); oR = vec4(0, 0, 0, 1);
+  } else if (type == 16) {                           // a rooftop seen from above: P0 yN, P1 yF, P2 iN, P3 iF, P4 CXk, P5 CXf, P6 wx, P7 side, P8 building, P9 lz at the camera
+    float yN = P(0), yF = P(1), iN = P(2), iF = P(3);
+    float t = (y - yF) / (yN - yF), iz = iF + (iN - iF) * t, z = 1.0 / iz, s = uF * iz, cx = P(5) + (P(4) - P(5)) * t;
+    float wx = P(6), xa = cx + wx * s, xb = cx + (wx + P(7) * 36.0) * s;
+    if (x < ceil(min(xa, xb)) || x > ceil(max(xa, xb)) - 1.0) discard;
+    loadB(int(P(8)));
+    float lz = P(9) + z; if (lz >= uLEN) lz -= uLEN;
+    vec3 c = roofTex(abs((x + 0.5 - cx) / s - wx), uCamL + z, lz, 1.0 / s);
+    oC = vec4(fogged(c, fogAt(z)), 1); oR = vec4(0, 0, 0, 1);
+  } else if (type == 11) {                           // the headlight's pool of light: P0 hy, P1 eye height, P2 k0
+    float hy = P(0), e = P(1), k0 = P(2);
+    float z = e * uF / (y - hy), w = 2.8 * uF / z, a = k0 * smo(32.0, 9.0, z) * smo(2.5, 6.0, z), cxw = float(uW) * 0.5;
+    if (x < floor(cxw - w) || x > cxw + w) discard;
+    float u = (x - cxw) / w, f = a * (1.0 - u * u);
+    oG = vec4(vec3(190, 215, 255) * f, 0);
+  }
+}`;
+
+const GS = { ok: false, cap: 16384, n: 0, done: 0, nl: 0, lcap: 4096, batches: [], lastMode: -1, dirty: false, sx0: 0, sy0: 0, sx1: 0, sy1: 0,
+  AW: 2048, AH: 2048, ax: 0, ay: 0, rowH: 0, size: '', reflReal: null, flushes: 0, sprPx: 0 };
+const GS_NORMAL = 0, GS_ADD = 1;
+let GSON = false;                                     // true while the city is being drawn as a list for the graphics chip
+// the faces parallel to the road that the chip knows how to texture (ids as in qtex)
+function constTex46(wz, v) { TR = 46; TG = 44; TB = 56; }
+GS.TEX = new Map([[tunnelTex, 1], [liftTex, 2], [vacTex, 3], [railTex, 4], [towerTex, 5], [barrierTex, 6], [racerTex, 7], [fallTex, 8], [hullTex, 9],
+  [stBeamTex, 10], [stTrainTex, 11], [glassTex, 12], [edgeTex, 13], [beamTex, 14], [trainTex, 15], [constTex46, 16]]);
+GS.inst = new Float32Array(GS.cap * 24); GS.lights = new Float32Array(GS.lcap * 24);
+// open one record: returns where its 16 parameters go, or -1 if it covers no pixel
+function gsOpen(mode, type, bx0, by0, bx1, by1) {
+  if (bx0 < 0) bx0 = 0; if (by0 < 0) by0 = 0; if (bx1 > W - 1) bx1 = W - 1; if (by1 > H - 1) by1 = H - 1;
+  if (bx0 > bx1 || by0 > by1) return -1;
+  if (GS.dirty) gsFlush();
+  if (GS.n >= GS.cap) { const a = new Float32Array(GS.cap * 2 * 24); a.set(GS.inst); GS.inst = a; GS.cap *= 2; }
+  if (mode !== GS.lastMode) { GS.batches.push(GS.n, mode); GS.lastMode = mode; }
+  const o = GS.n++ * 24, I = GS.inst;
+  I[o] = type; I[o + 1] = 0; I[o + 2] = bx0; I[o + 3] = by0; I[o + 4] = bx1; I[o + 5] = by1; I[o + 6] = 0; I[o + 7] = 0;
+  return o + 8;
+}
+// light only adds to the glow layer, so its order doesn't matter: these go in a list of their own, drawn last
+function gsLight(type, bx0, by0, bx1, by1) {
+  if (bx0 < 0) bx0 = 0; if (by0 < 0) by0 = 0; if (bx1 > W - 1) bx1 = W - 1; if (by1 > H - 1) by1 = H - 1;
+  if (bx0 > bx1 || by0 > by1) return -1;
+  if (GS.nl >= GS.lcap) { const a = new Float32Array(GS.lcap * 2 * 24); a.set(GS.lights); GS.lights = a; GS.lcap *= 2; }
+  const o = GS.nl++ * 24, I = GS.lights;
+  I[o] = type; I[o + 1] = 0; I[o + 2] = bx0; I[o + 3] = by0; I[o + 4] = bx1; I[o + 5] = by1; I[o + 6] = 0; I[o + 7] = 0;
+  return o + 8;
+}
+// the scratch layer: put() writes here (rgb, and a: -1 untouched, -0.5 colour only, >= 0 colour and reflection)
+function gsPut(x, y, r, g, b) {
+  if (GS.dirty && GS.kind !== 0) gsFlush();
+  GS.kind = 0;
+  const o = (y * W + x) * 4, s = GS.spr;
+  s[o] = r; s[o + 1] = g; s[o + 2] = b; if (s[o + 3] < -0.75) s[o + 3] = -0.5;
+  if (!GS.dirty) { GS.dirty = true; GS.sx0 = GS.sx1 = x; GS.sy0 = GS.sy1 = y; }
+  else { if (x < GS.sx0) GS.sx0 = x; else if (x > GS.sx1) GS.sx1 = x; if (y < GS.sy0) GS.sy0 = y; else if (y > GS.sy1) GS.sy1 = y; }
+}
+function gsAdd(x, y, r, g, b) {                      // added light, collected in the same scratch layer
+  if (GS.dirty && GS.kind !== 1) gsFlush();
+  GS.kind = 1;
+  const o = (y * W + x) * 4, s = GS.spr;
+  if (s[o + 3] < -0.75) { s[o] = r; s[o + 1] = g; s[o + 2] = b; s[o + 3] = 0; } else { s[o] += r; s[o + 1] += g; s[o + 2] += b; }
+  if (!GS.dirty) { GS.dirty = true; GS.sx0 = GS.sx1 = x; GS.sy0 = GS.sy1 = y; }
+  else { if (x < GS.sx0) GS.sx0 = x; else if (x > GS.sx1) GS.sx1 = x; if (y < GS.sy0) GS.sy0 = y; else if (y > GS.sy1) GS.sy1 = y; }
+}
+// the scratch so far becomes one sprite in the list (placed in the atlas texture), and the scratch is cleared
+function gsFlush() {
+  GS.dirty = false;
+  const x0 = GS.sx0, y0 = GS.sy0, w = GS.sx1 - x0 + 1, h = GS.sy1 - y0 + 1, s = GS.spr, sr = GS.sprR;
+  if (GS.kind === 0) for (let y = y0; y < y0 + h; y++) for (let i = y * W + x0, e = i + w; i < e; i++) {
+    const r = sr[i]; if (r === r) { if (s[i * 4 + 3] > -0.75) s[i * 4 + 3] = r; sr[i] = NaN; }
+  }
+  if (GS.ax + w > GS.AW) { GS.ax = 0; GS.ay += GS.rowH; GS.rowH = 0; }
+  if (GS.ay + h > GS.AH) { gsExecute(); GS.ax = 0; GS.ay = 0; GS.rowH = 0; }   // atlas full: draw what's queued, start it again
+  gl.bindTexture(gl.TEXTURE_2D, GS.tex.atlas);
+  gl.pixelStorei(gl.UNPACK_ROW_LENGTH, W); gl.pixelStorei(gl.UNPACK_SKIP_PIXELS, x0); gl.pixelStorei(gl.UNPACK_SKIP_ROWS, y0);
+  gl.texSubImage2D(gl.TEXTURE_2D, 0, GS.ax, GS.ay, w, h, gl.RGBA, gl.FLOAT, s);
+  gl.pixelStorei(gl.UNPACK_ROW_LENGTH, 0); gl.pixelStorei(gl.UNPACK_SKIP_PIXELS, 0); gl.pixelStorei(gl.UNPACK_SKIP_ROWS, 0);
+  const o = GS.kind === 0 ? gsOpen(GS_NORMAL, 1, x0, y0, x0 + w - 1, y0 + h - 1) : gsOpen(GS_ADD, 13, x0, y0, x0 + w - 1, y0 + h - 1);
+  GS.inst[o] = GS.ax - x0; GS.inst[o + 1] = GS.ay - y0;
+  GS.ax += w; if (h > GS.rowH) GS.rowH = h;
+  for (let y = y0; y < y0 + h; y++) for (let o4 = (y * W + x0) * 4 + 3, e = o4 + w * 4; o4 < e; o4 += 4) s[o4] = -1;
+  GS.flushes++; GS.sprPx += w * h;
+}
+function gsInit() {
+  try {
+    const sh = (type, src) => { const o = gl.createShader(type); gl.shaderSource(o, src); gl.compileShader(o); if (!gl.getShaderParameter(o, gl.COMPILE_STATUS)) throw new Error(gl.getShaderInfoLog(o)); return o; };
+    const p = gl.createProgram(); gl.attachShader(p, sh(gl.VERTEX_SHADER, GS_VS)); gl.attachShader(p, sh(gl.FRAGMENT_SHADER, GS_FS)); gl.linkProgram(p);
+    if (!gl.getProgramParameter(p, gl.LINK_STATUS)) throw new Error(gl.getProgramInfoLog(p));
+    GS.p = p; GS.u = {};
+    for (const n of ['uSize', 'uSky', 'uSkyG', 'uAtlas', 'uXr', 'uBld', 'uRS', 'uNSEG', 'uW', 'uCamL', 'uO', 'uFogA', 'uFogB', 'uWet', 'uF', 'uFOG', 'uT', 'uFlash2', 'uT4m6', 'uFont',
+      'uPh3', 'uPh5', 'uPh04', 'uPh13', 'uPh2', 'uPh06', 'uPh03', 'uTb', 'uTr', 'uRacerD', 'uTrainD', 'uSkyD', 'uLEN', 'uSTH', 'uSTLEN', 'uTH', 'uExact', 'uTow', 'uLUT', 'uNEON', 'uHyS', 'uBgX', 'uBx', 'uHB', 'uShim', 'uCz', 'uF1', 'uPW', 'uShY0', 'uShY1', 'uW1', 'uLbl', 'uLblN']) GS.u[n] = gl.getUniformLocation(p, n);
+    GS.f32blend = !!gl.getExtension('EXT_float_blend');
+    const T2 = () => { const t = gl.createTexture(); gl.bindTexture(gl.TEXTURE_2D, t);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST); gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE); gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE); return t; };
+    GS.tex = { C: T2(), G: T2(), R: T2(), C1: T2(), G1: T2(), R1: T2(), atlas: T2(), xr: T2(), tow: T2() };
+    GS.fbo1 = gl.createFramebuffer();
+    gl.bindTexture(gl.TEXTURE_2D, GS.tex.atlas); gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA32F, GS.AW, GS.AH, 0, gl.RGBA, gl.FLOAT, null);
+    const xh = Math.ceil(NSEG / 1024), xd = new Uint8Array(1024 * xh); for (let i = 0; i < NSEG; i++) xd[i] = XROAD[i] ? 1 : 0;
+    gl.bindTexture(gl.TEXTURE_2D, GS.tex.xr); gl.texImage2D(gl.TEXTURE_2D, 0, gl.R8UI, 1024, xh, 0, gl.RED_INTEGER, gl.UNSIGNED_BYTE, xd);
+    GS.fbo = gl.createFramebuffer();
+    GS.vao = gl.createVertexArray(); GS.vbo = gl.createBuffer(); GS.lvbo = gl.createBuffer();
+    GS.ok = true;
+  } catch (e) { GS.ok = false; GS.err = String(e); }
+}
+function gsSize() {
+  const key = SW2 + 'x' + SH2 + '/' + PW;
+  if (GS.size === key) return;
+  GS.size = key;
+  const fmt = GS.f32blend ? gl.RGBA32F : gl.RGBA16F;
+  for (const n of ['C', 'G', 'R']) { gl.bindTexture(gl.TEXTURE_2D, GS.tex[n]); gl.texImage2D(gl.TEXTURE_2D, 0, fmt, SW2, SH2, 0, gl.RGBA, gl.FLOAT, null); }
+  for (const n of ['C1', 'G1', 'R1']) { gl.bindTexture(gl.TEXTURE_2D, GS.tex[n]); gl.texImage2D(gl.TEXTURE_2D, 0, fmt, SWD, SHD, 0, gl.RGBA, gl.FLOAT, null); }
+  gl.bindFramebuffer(gl.FRAMEBUFFER, GS.fbo1);
+  ['C1', 'G1', 'R1'].forEach((n, i) => gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0 + i, gl.TEXTURE_2D, GS.tex[n], 0));
+  if (gl.checkFramebufferStatus(gl.FRAMEBUFFER) !== gl.FRAMEBUFFER_COMPLETE) GS.ok = false;
+  // the skyline layers and mountains (they only change with the screen size)
+  const td = new Float32Array(PW * 3 * 4);
+  [sky1, sky2].forEach((L, r) => { for (let x = 0; x < PW; x++) { const o = (r * PW + x) * 4; td[o] = L.h[x]; td[o + 1] = L.seed[x]; td[o + 2] = L.x0[x]; td[o + 3] = L.crown[x] ? NEON.indexOf(L.crown[x]) : -1; } });
+  for (let x = 0; x < PW; x++) td[(2 * PW + x) * 4] = mtn[x];
+  gl.bindTexture(gl.TEXTURE_2D, GS.tex.tow); gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA32F, PW, 3, 0, gl.RGBA, gl.FLOAT, td);
+  gl.bindFramebuffer(gl.FRAMEBUFFER, GS.fbo);
+  ['C', 'G', 'R'].forEach((n, i) => gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0 + i, gl.TEXTURE_2D, GS.tex[n], 0));
+  if (gl.checkFramebufferStatus(gl.FRAMEBUFFER) !== gl.FRAMEBUFFER_COMPLETE) GS.ok = false;
+  gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+  GS.spr = new Float32Array(SW2 * SH2 * 4); for (let i = 3; i < GS.spr.length; i += 4) GS.spr[i] = -1;
+  GS.sprR = new Float32Array(SW2 * SH2).fill(NaN);
+}
+// start a list: 'sky' (the sky on the art grid, into its own small layer) or the city (which starts by laying that sky down)
+function gsBegin(sky) {
+  gsSize();
+  GS.sky = sky; GS.tw = sky ? SWD : SW2; GS.th = sky ? SHD : SH2;
+  if (sky) GS.lbl = null;
+  GS.n = 0; GS.done = 0; GS.nl = 0; GS.batches.length = 0; GS.lastMode = -1; GS.dirty = false; GS.ax = 0; GS.ay = 0; GS.rowH = 0;
+  if (sky) { GS.flushes = 0; GS.sprPx = 0; }
+  gl.bindFramebuffer(gl.FRAMEBUFFER, sky ? GS.fbo1 : GS.fbo);
+  gl.drawBuffers([gl.COLOR_ATTACHMENT0, gl.COLOR_ATTACHMENT1, gl.COLOR_ATTACHMENT2]);
+  gl.clearColor(0, 0, 0, 0); gl.clear(gl.COLOR_BUFFER_BIT);
+  gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+  GS.F = F; GS.camZ = camZ; GS.O = Math.floor(camZ / 1680) * 1680;
+  GS.reflReal = refl; refl = GS.sprR; GSON = true;
+  if (!sky) gsOpen(GS_NORMAL, 0, 0, 0, W - 1, H - 1);
+}
+function gsBind(buf, data, from, to) {
+  gl.bindBuffer(gl.ARRAY_BUFFER, buf);
+  const bytes = GS.cap * 96;
+  if (buf === GS.vbo && GS.vboCap !== GS.cap) { gl.bufferData(gl.ARRAY_BUFFER, bytes, gl.DYNAMIC_DRAW); GS.vboCap = GS.cap; }
+  if (buf === GS.lvbo && GS.lvboCap !== GS.lcap) { gl.bufferData(gl.ARRAY_BUFFER, GS.lcap * 96, gl.DYNAMIC_DRAW); GS.lvboCap = GS.lcap; }
+  if (to > from) gl.bufferSubData(gl.ARRAY_BUFFER, from * 96, data, from * 24, (to - from) * 24);
+}
+function gsAttribs(first) {
+  for (let i = 0; i < 6; i++) { gl.enableVertexAttribArray(i); gl.vertexAttribPointer(i, 4, gl.FLOAT, false, 96, first * 96 + i * 16); gl.vertexAttribDivisor(i, 1); }
+}
+function gsState() {                                  // program, layers, textures and the per-frame values the shader needs
+  gl.bindFramebuffer(gl.FRAMEBUFFER, GS.sky ? GS.fbo1 : GS.fbo);
+  gl.drawBuffers([gl.COLOR_ATTACHMENT0, gl.COLOR_ATTACHMENT1, gl.COLOR_ATTACHMENT2]);
+  gl.viewport(0, 0, GS.tw, GS.th); gl.useProgram(GS.p); gl.bindVertexArray(GS.vao); gl.enable(gl.BLEND);
+  const u = GS.u, tx = [[GS.sky ? 'C' : 'C1', 'uSky', 1], [GS.sky ? 'G' : 'G1', 'uSkyG', 2], ['atlas', 'uAtlas', 3], ['xr', 'uXr', 4], ['tow', 'uTow', 6]];   // (the sky pass can't read its own layer)
+  for (const [t, n, i] of tx) { gl.activeTexture(gl.TEXTURE0 + i); gl.bindTexture(gl.TEXTURE_2D, GS.tex[t]); gl.uniform1i(u[n], i); }
+  gl.activeTexture(gl.TEXTURE5); gl.bindTexture(gl.TEXTURE_2D, GPU.tex.bld); gl.uniform1i(u.uBld, 5);
+  const O = GS.O, ph = k => ((k * O) % (2 * Math.PI));
+  gl.uniform2f(u.uSize, GS.tw, GS.th);
+  const sk = GS.skyV;                                 // the sky's own values (art grid), noted when it was drawn
+  if (sk) {
+    gl.uniform3fv(u.uLUT, sk.lut); gl.uniform1f(u.uHyS, sk.hy); gl.uniform1f(u.uBgX, sk.bgX); gl.uniform1f(u.uBx, Math.floor(sk.bgX)); gl.uniform1f(u.uHB, HB);
+    gl.uniform1f(u.uShim, TH.shimmer); gl.uniform1i(u.uShY0, Math.max(0, Math.floor(sk.hy - HB * 0.4))); gl.uniform1i(u.uShY1, Math.min(SHD - 1, Math.floor(sk.hy + 1)));
+    gl.uniform1f(u.uCz, sk.camZ * 0.01); gl.uniform1f(u.uF1, sk.F); gl.uniform1i(u.uPW, PW); gl.uniform1i(u.uW1, SWD);
+  }
+  gl.uniform3fv(u.uNEON, GS.neon || (GS.neon = new Float32Array(NEON.flat())));
+  if (GS.lbl) { gl.uniform2iv(u.uLbl, GS.lblBits); gl.uniform1i(u.uLblN, GS.lbl.length); } gl.uniform1i(u.uRS, RS); gl.uniform1i(u.uNSEG, NSEG); gl.uniform1i(u.uW, W);
+  gl.uniform1f(u.uCamL, GS.camZ - O); gl.uniform1f(u.uO, O);
+  gl.uniform1f(u.uFogA, 50 * fogK); gl.uniform1f(u.uFogB, DRAW * SEGL * (0.42 + 0.4 * fogK)); gl.uniform1f(u.uWet, wet); gl.uniform1f(u.uF, GS.F);
+  gl.uniform3f(u.uFOG, FOG[0], FOG[1], FOG[2]); gl.uniform1f(u.uT, T); gl.uniform1f(u.uFlash2, flash); gl.uniform1f(u.uT4m6, (T * 4) % 6);
+  gl.uniform2iv(u.uFont, GPU.font);
+  gl.uniform1f(u.uPh3, ph(3)); gl.uniform1f(u.uPh5, ph(5)); gl.uniform1f(u.uPh04, ph(0.4)); gl.uniform1f(u.uPh13, ph(1.3)); gl.uniform1f(u.uPh2, ph(2));
+  gl.uniform1f(u.uPh06, ph(0.6)); gl.uniform1f(u.uPh03, ph(0.3));
+  const tq = O / 2.2, tb = Math.floor(tq); gl.uniform1f(u.uTb, tb); gl.uniform1f(u.uTr, tq - tb);
+  gl.uniform1f(u.uRacerD, GS.camZ - racer.z); gl.uniform1f(u.uLEN, LEN);
+  gl.uniform1f(u.uTrainD, ((GS.camZ - train.z) % LEN + LEN) % LEN); gl.uniform1f(u.uSkyD, ((GS.camZ - skyT.z) % LEN + LEN) % LEN);
+  gl.uniform1f(u.uSTH, ST_H); gl.uniform1f(u.uSTLEN, ST_LEN); gl.uniform1f(u.uTH, TH_); gl.uniform1i(u.uExact, GS.exact ? 1 : 0);
+}
+// draw the queued records [done, n) in order: runs of the same blend in one call each
+function gsExecute() {
+  if (GS.n <= GS.done) return;
+  gsState();
+  gsBind(GS.vbo, GS.inst, GS.done, GS.n);
+  const B = GS.batches;
+  for (let b = 0; b < B.length; b += 2) {
+    const s = Math.max(B[b], GS.done), e = Math.min(b + 2 < B.length ? B[b + 2] : GS.n, GS.n);
+    if (e <= s) continue;
+    if (B[b + 1] === GS_ADD) gl.blendFunc(gl.ONE, gl.ONE); else gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+    gsAttribs(s); gl.drawArraysInstanced(gl.TRIANGLE_STRIP, 0, 4, e - s);
+  }
+  GS.done = GS.n;
+  gl.disable(gl.BLEND); gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+}
+function gsEnd() {
+  if (GS.dirty) gsFlush();
+  GSON = false; refl = GS.reflReal;
+  gsExecute();
+  if (GS.nl) {                                        // all the light, added into the glow layer
+    gsState(); gsBind(GS.lvbo, GS.lights, 0, GS.nl); gl.blendFunc(gl.ONE, gl.ONE); gsAttribs(0);
+    gl.drawArraysInstanced(gl.TRIANGLE_STRIP, 0, 4, GS.nl);
+    gl.disable(gl.BLEND); gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+  }
+}
+
 // ---------- the graphics-chip finish: glow, wet-road reflections, lean and output in one shader ----------
 let forceCPU = false;
 const GPU = { ok: false };
@@ -3923,6 +4742,7 @@ function gpuInit() {
       GPU.fbo = gl.createFramebuffer();
       GPU.rtt = blocks.length <= gl.getParameter(gl.MAX_TEXTURE_SIZE);
     } catch (e) { GPU.rtt = false; GPU.rttErr = String(e); }
+    if (GPU.rtt) gsInit();
     GPU.u = {};
     for (const n of ['uScene', 'uGlow', 'uRefl', 'uOvA', 'uOvM', 'uKD', 'uRS', 'uK', 'uGlowK', 'uHr', 'uRain', 'uRot', 'uGeom', 'uScn', 'uOut', 'uFlash']) GPU.u[n] = gl.getUniformLocation(GPU.p, n);
     GPU.u8 = { uImg: gl.getUniformLocation(GPU.p8, 'uImg'), uOut: gl.getUniformLocation(GPU.p8, 'uOut'), uKD: gl.getUniformLocation(GPU.p8, 'uKD') };
@@ -3942,6 +4762,7 @@ function gpuInit() {
         const o = B.id * 72, put4 = (t, a, b, c, e) => { d[o + t * 4] = a; d[o + t * 4 + 1] = b; d[o + t * 4 + 2] = c; d[o + t * 4 + 3] = e; };
         const c3 = (t, c) => put4(t, c ? c[0] : 0, c ? c[1] : 0, c ? c[2] : 0, 0);
         put4(0, B.style, B.h, B.seed, B.id); put4(1, B.winP, B.dark, B.crown ? 1 : 0, Math.min(2, B.bbs.length));
+        put4(9, B.len, B.roofKind, B.roof, B.start);
         c3(2, B.base); c3(3, B.crown); c3(4, B.lobby); c3(5, B.avg); c3(6, B.shop[0]); c3(7, B.shop[1]); c3(8, B.shop[2]);
         B.bbs.slice(0, 2).forEach((b, i) => {
           put4(10 + 4 * i, b.u0, b.u1, b.v0, b.v1); put4(11 + 4 * i, b.kind, b.seed, b.seed % (2 * Math.PI), b.seed % 4); c3(12 + 4 * i, b.c1); c3(13 + 4 * i, b.c2);
@@ -3983,8 +4804,9 @@ function gpuFinish(hy) {
   const glowK = (1 + 0.35 * TH.night) * (1 - 0.25 * crownK), dimK = 1 - 0.38 * TH.night;
   const cr = dimK * (1 - 0.07 * crownK), cb = dimK * (1 + 0.08 * crownK);
   const rl = outside() ? 0 : roll;
-  upload('scene', SW2, SH2, gl.RGB, gl.FLOAT, colS); upload('glow', SW2, SH2, gl.RGB, gl.FLOAT, lb); upload('refl', SW2, SH2, gl.RED, gl.FLOAT, refl);
-  let sceneTex = GPU.tex.scene;
+  let sceneTex = GPU.tex.scene, glowTex = GPU.tex.glow, reflTex = GPU.tex.refl;
+  if (GS.ok && !forceCPU) { sceneTex = GS.tex.C; glowTex = GS.tex.G; reflTex = GS.tex.R; }   // the city was drawn on the chip
+  else { upload('scene', SW2, SH2, gl.RGB, gl.FLOAT, colS); upload('glow', SW2, SH2, gl.RGB, gl.FLOAT, lb); upload('refl', SW2, SH2, gl.RED, gl.FLOAT, refl); }
   if (DEFER && NQ > 0) {                               // fill in the building faces at the city's resolution
     upload('gid', SW2, SH2, gl.RED, gl.FLOAT, GID);
     gl.bindTexture(gl.TEXTURE_2D, GPU.tex.quad); gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, 4, NQ, gl.RGBA, gl.FLOAT, QD, 0);
@@ -4004,7 +4826,7 @@ function gpuFinish(hy) {
   upload('ovA', OW, OH, gl.RGB, gl.FLOAT, GPU.ovA); upload('ovM', OW, OH, gl.RGB, gl.FLOAT, GPU.ovM);
   const u = GPU.u, fl = crashFlash * 120;
   gl.viewport(0, 0, OW * KD, OH * KD); gl.useProgram(GPU.p); gl.bindVertexArray(GPU.vao);
-  [['scene', 'uScene'], ['glow', 'uGlow'], ['refl', 'uRefl'], ['ovA', 'uOvA'], ['ovM', 'uOvM']].forEach(([t, n], i) => { gl.activeTexture(gl.TEXTURE0 + i); gl.bindTexture(gl.TEXTURE_2D, t === 'scene' ? sceneTex : GPU.tex[t]); gl.uniform1i(u[n], i); });
+  [['scene', 'uScene'], ['glow', 'uGlow'], ['refl', 'uRefl'], ['ovA', 'uOvA'], ['ovM', 'uOvM']].forEach(([t, n], i) => { gl.activeTexture(gl.TEXTURE0 + i); gl.bindTexture(gl.TEXTURE_2D, t === 'scene' ? sceneTex : t === 'glow' ? glowTex : t === 'refl' ? reflTex : GPU.tex[t]); gl.uniform1i(u[n], i); });
   gl.uniform1f(u.uKD, KD); gl.uniform1f(u.uRS, RS);
   gl.uniform3f(u.uK, cr, dimK, cb); gl.uniform1f(u.uGlowK, glowK); gl.uniform1i(u.uHr, Math.round(hy)); gl.uniform1i(u.uRain, rainOn ? 1 : 0);
   gl.uniform2f(u.uRot, Math.cos(rl), Math.sin(rl)); gl.uniform4f(u.uGeom, OW / 2, OH / 2, SWD / 2, SHD / 2);
