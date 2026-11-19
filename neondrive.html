@@ -784,7 +784,7 @@ function update(dt) {
   flash *= Math.exp(-dt * 4);
   // fireworks
   if (TH.fireworks > 0.3 && Math.random() < dt * 0.9 * TH.fireworks) {
-    const c = (th.t > 0.5 ? th.b : th.a).neon[(Math.random() * 6) | 0], pc = bgX + Math.random() * W, y = MY + HB * (0.12 + Math.random() * 0.35);
+    const c = (th.t > 0.5 ? th.b : th.a).neon[(Math.random() * 6) | 0], pc = bgX + Math.random() * W, y = HB * (0.12 + Math.random() * 0.35);   // measured from the top of the screen
     for (let i = 0; i < 34; i++) { const a = i / 34 * Math.PI * 2, v = 26 + Math.random() * 18; fw.push({ pc, y, vx: Math.cos(a) * v, vy: Math.sin(a) * v, life: 1.6, c }); }
   }
   for (let i = fw.length - 1; i >= 0; i--) { const f = fw[i]; f.pc += f.vx * dt; f.y += f.vy * dt; f.vy += 22 * dt; f.vx *= 0.98; f.life -= dt; if (f.life <= 0) fw.splice(i, 1); }
@@ -1117,7 +1117,7 @@ function drawSky(hy) {
   }
   // fireworks
   for (const f of fw) {
-    const x = ((Math.round(f.pc - bx)) % PW + PW) % PW, y = Math.round(f.y);
+    const x = ((Math.round(f.pc - bx)) % PW + PW) % PW, y = Math.round(f.y + MY);
     if (x < 0 || x >= W) continue;
     addc(x, y, f.c, Math.min(1, f.life)); addc(x - Math.sign(f.vx), y - Math.sign(f.vy), f.c, 0.4 * Math.min(1, f.life));
     if (f.life > 1.45) addLight(x, y, 8, f.c, 0.12);
@@ -2555,14 +2555,11 @@ function drawWall(k, side, n) {
 function drawWallFaces(k, n, B, sg, wx, f, xa, xb, span, iN, iF, ybA, ybB, ytA, ytB, u0) {
   if (Math.abs(span) > 1e-4) {
     const x0 = Math.max(0, Math.ceil(Math.min(xa, xb))), x1 = Math.min(W - 1, Math.ceil(Math.max(xa, xb)) - 1);
-    // close walls are textured in 2x2 blocks: their details are bigger than a pixel anyway, and it is 4x less work
-    let pX = -9, pY0 = 0, pY1 = -1;
     for (let x = x0; x <= x1; x++) {
       const t = clamp((x + 0.5 - xa) / span, 0, 1), iz = iN + (iF - iN) * t, z = 1 / iz;
       const u = u0 + (z - Z[k]), yt = ytA + (ytB - ytA) * t, yb = ybA + (ybB - ybA) * t, hp = yb - yt, fz = fogAt(z), mpp = z / F;
       const y0 = Math.max(0, Math.ceil(yt)), y1 = Math.min(H - 1, Math.ceil(yb) - 1);
-      wallCol(B, u, yb, hp, fz, mpp, x, y0, y1, mpp < WALL_BLK && (x & 1) && pX === x - 1 ? [pY0, pY1] : null, false);
-      pX = x; pY0 = y0; pY1 = y1;
+      wallCol(B, u, yb, hp, fz, mpp, x, y0, y1, null, false);
     }
   }
   // corner face of the building, facing us
@@ -2570,12 +2567,13 @@ function drawWallFaces(k, n, B, sg, wx, f, xa, xb, span, iN, iF, ybA, ybB, ytA, 
     const s = S[k], xw = CX[k] + wx * s, xo = CX[k] + (wx + sg * 80) * s, fz = fogAt(Z[k]);
     const ytop = GYL[k] - B.h * s, ybot = GYL[k];
     const x0 = Math.max(0, Math.ceil(Math.min(xw, xo))), x1 = Math.min(W - 1, Math.ceil(Math.max(xw, xo)) - 1);
-    const y0 = Math.max(0, Math.ceil(ytop)), y1 = Math.min(H - 1, Math.ceil(ybot) - 1), near = 1 / s < WALL_BLK;
+    const y0 = Math.max(0, Math.ceil(ytop)), y1 = Math.min(H - 1, Math.ceil(ybot) - 1);
     for (let x = x0; x <= x1; x++)
-      wallCol(B, Math.abs(x + 0.5 - xw) / s, ybot, B.h * s, fz, 1 / s, x, y0, y1, near && ((x - x0) & 1) ? [y0, y1] : null, true);
+      wallCol(B, Math.abs(x + 0.5 - xw) / s, ybot, B.h * s, fz, 1 / s, x, y0, y1, null, true);
   }
 }
-// one column of a facade; `left` = the rows the column to its left just drew, to reuse for a 2x2 block
+// one column of a facade; only on walls right beside you, where every texture detail is several pixels tall,
+// is each texel reused for the pixel below it (never across columns: perspective would skew it)
 function wallCol(B, u, yb, hp, fz, mpp, x, y0, y1, left, front) {
   const blk = mpp < WALL_BLK, k = front ? 0.7 : 1;
   let have = false, r = 0, g = 0, b = 0;
@@ -3109,7 +3107,7 @@ const CYC = [];                                       // [x, y, z, nx, ny, nz, r
 let ZB = null;
 function drawCycle(k, dz, bxw, hy) {
   if (!projAt(k, dz)) return;
-  if (!ZB || ZB.length !== N) ZB = new Float32Array(N).fill(1e9);
+  if (!ZB || ZB.length < N) ZB = new Float32Array(N).fill(1e9);
   const PZ0 = PZ, xr0 = (PCX - W / 2) / PS + bxw, yr0 = (PGY - hy) / PS, cl = Math.cos(roll), sl = Math.sin(roll), touched = [];
   const sky = mix(SKY[1], SKY[2], 0.5), fz = fogAt(PZ0), spin = camZ / 0.5, cs = Math.cos(spin), ss = Math.sin(spin);
   for (const p of CYC) {
@@ -3235,7 +3233,7 @@ function renderSide() {
 }
 // the cycle seen exactly side-on (its left side faces away, the camera is on its right)
 function drawCycleSide(cx, roadY, ppm) {
-  if (!ZB || ZB.length !== N) ZB = new Float32Array(N).fill(1e9);
+  if (!ZB || ZB.length < N) ZB = new Float32Array(N).fill(1e9);
   const touched = [], spin = camZ / 0.5, cs = Math.cos(spin), ss = Math.sin(spin), sky = mix(SKY[1], SKY[2], 0.5), sz = Math.max(1, Math.ceil(ppm * 0.028));
   for (const p of CYC) {
     let py0 = p[1], pz0 = p[2];
@@ -3269,10 +3267,15 @@ function render() {
   camZ = realZ;
 }
 function renderScene(realZ, realPx) {
+  // draw only as much margin around the screen as this frame's lean needs (riding upright: almost none)
+  const th = Math.min(0.43, (outside() ? 0 : Math.abs(roll)) + 0.05);
+  MX = Math.ceil((OW * (Math.cos(th) - 1) + OH * Math.sin(th)) / 2) + 2;
+  MY = Math.ceil((OW * Math.sin(th) + OH * (Math.cos(th) - 1)) / 2) + 2;
+  SWD = OW + 2 * MX; SHD = OH + 2 * MY; HOR = MY + HB;
   useScene();
   F = F0 * (1 - 0.14 * smooth(45, 85, speed));      // the view widens as you go faster
   vib = (Math.random() - 0.5) * 2 * smooth(62, 83, speed);   // and the bars hum at the top end
-  lb.fill(0); refl.fill(0);
+  lb.fill(0, 0, N * 3); refl.fill(0, 0, N);
   const base = Math.floor(camZ / SEGL), frac = camZ / SEGL - base;
   const b0 = base % NSEG, b1 = (base + 1) % NSEG;
   const camY = hill[b0] + (hill[b1] - hill[b0]) * frac + eye() + Math.sin(camZ * 0.9) * 0.015 * Math.min(1, speed / 20);
@@ -3472,14 +3475,14 @@ function renderScene(realZ, realPx) {
 }
 
 // a quiet governor: if busy scenes drag the frame rate down, lighten the work until it recovers
-let lite = false, frameAvg = 1 / 60, slowT = 0, fastT = 0, WALL_BLK = 0.5;
+let lite = false, frameAvg = 1 / 60, slowT = 0, fastT = 0, WALL_BLK = 0.12;
 function governor(rawDt) {
   if (rawDt <= 0 || rawDt > 0.5) return;               // ignore pauses and tab switches
   frameAvg += (rawDt - frameAvg) * 0.1;
   if (frameAvg > 1 / 30) { slowT += rawDt; fastT = 0; } else if (frameAvg < 1 / 45) { fastT += rawDt; slowT = 0; } else { slowT = fastT = 0; }
   if (!lite && slowT > 1.5) { lite = true; slowT = 0; }
   if (lite && fastT > 5) { lite = false; fastT = 0; }
-  WALL_BLK = lite ? 1.1 : 0.5;
+  WALL_BLK = 0.12;
 }
 function frame(now) {
   const rawDt = (now - last) / 1000;
