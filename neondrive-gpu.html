@@ -27,8 +27,8 @@
   .btn.on { background: rgba(255, 60, 190, 0.45); }
   #bl { left: 18px; } #br { left: 104px; }
   #bb { right: 104px; } #bg { right: 18px; border-color: rgba(0, 230, 255, 0.7); color: #a8f6ff; }
-  #ba, #br2, #bs, #bv, #bh, #bc { right: 18px; top: 18px; bottom: auto; height: 44px; width: 74px; font-size: 13px; }
-  #br2 { top: 72px; } #bs { top: 126px; } #bv { top: 180px; } #bh { top: 234px; } #bc { top: 288px; }
+  #ba, #br2, #bs, #bv, #bh, #bc, #bd { right: 18px; top: 18px; bottom: auto; height: 44px; width: 74px; font-size: 13px; }
+  #br2 { top: 72px; } #bs { top: 126px; } #bv { top: 180px; } #bh { top: 234px; } #bc { top: 288px; } #bd { top: 342px; }
   #fps { left: 12px; top: 12px; font-size: 11px; padding: 3px 7px; color: #9ff4ff; border-color: #1d4f5a; }
   #zone { left: 50%; top: 58px; transform: translateX(-50%); font-size: 16px; letter-spacing: 6px; color: #9ff4ff;
     border-color: #1d4f5a; transition: opacity 1.2s; opacity: 0; }
@@ -36,7 +36,7 @@
 </head>
 <body>
 <canvas id="c"></canvas>
-<div id="hint" class="tag">&larr; &rarr; steer &nbsp;&middot;&nbsp; &uarr; gas &nbsp;&middot;&nbsp; &darr; brake &nbsp;&middot;&nbsp; A autopilot &nbsp;&middot;&nbsp; W weather &nbsp;&middot;&nbsp; S bike &nbsp;&middot;&nbsp; C camera &nbsp;&middot;&nbsp; V cruise &nbsp;&middot;&nbsp; L headlight &nbsp;&middot;&nbsp; H hide this</div>
+<div id="hint" class="tag">&larr; &rarr; steer &nbsp;&middot;&nbsp; &uarr; gas &nbsp;&middot;&nbsp; &darr; brake &nbsp;&middot;&nbsp; A autopilot &nbsp;&middot;&nbsp; W weather &nbsp;&middot;&nbsp; S bike &nbsp;&middot;&nbsp; C camera &nbsp;&middot;&nbsp; V cruise &nbsp;&middot;&nbsp; L headlight &nbsp;&middot;&nbsp; D detail &nbsp;&middot;&nbsp; H hide this</div>
 <div id="zone" class="tag"></div>
 <div id="fps" class="tag"></div>
 <div id="pad">
@@ -48,6 +48,7 @@
   <div class="btn" id="bv">CRZ</div>
   <div class="btn on" id="bh">LIGHT</div>
   <div class="btn" id="bc">CAM</div>
+  <div class="btn on" id="bd">HD</div>
 </div>
 <script>
 // Pseudo-3D city street rendered into a small pixel buffer; CSS scales it up with nearest-neighbour.
@@ -504,9 +505,12 @@ function airOk(n) {                                   // no air traffic inside t
 
 // ---------- buffers ----------
 let FRAC = 0, F0 = 1, vib = 0, W, H, N, PX, F, HOR, HB, PW, img, fb, col, lb, refl;
-let KD = 1, OW, OH, SWD, SHD, MX, MY, colS, colO, bmask, bcol, vmask, vcol;
-function useScene() { W = SWD; H = SHD; N = W * H; col = colS; }
-function useOut() { W = OW; H = OH; N = W * H; col = colO; }
+let GID = new Float32Array(1), DEFER = false, NQ = 0;
+const QD = new Float32Array(4096 * 16);
+let KD = 1, RS = 1, PXS = 1, HDK = 2, SW2, SH2, colS1, lb1, OW, OH, SWD, SHD, MX, MY, colS, colO, bmask, bcol, vmask, vcol;
+function useScene() { W = SW2; H = SH2; N = W * H; col = colS; PXS = RS; }    // the city, drawn RS times finer than the art grid
+function useSky() { W = SWD; H = SHD; N = W * H; col = colS1; PXS = 1; }      // the sky stays on the art grid
+function useOut() { W = OW; H = OH; N = W * H; col = colO; PXS = 1; }
 let sky1, sky2, mtn, stars = [], holoX = 0;
 const Z = new Float32Array(DRAW + 2), S = new Float32Array(DRAW + 2), CX = new Float32Array(DRAW + 2), GY = new Float32Array(DRAW + 2);
 const EL = new Float32Array(DRAW + 2), GYL = new Float32Array(DRAW + 2);   // road height above the city floor, and the floor's screen y
@@ -529,7 +533,11 @@ function setup() {
   cv.style.width = OW * PX + 'px'; cv.style.height = OH * PX + 'px';
   img = new ImageData(OW, OH);
   fb = new Uint32Array(img.data.buffer);
-  colS = new Float32Array(SWD * SHD * 3); lb = new Float32Array(SWD * SHD * 3); refl = new Float32Array(SWD * SHD);
+  RS = gl ? HDK : 1;                                 // with the graphics chip the city is drawn finer (the sky and cockpit keep the art grid)
+  SW2 = SWD * RS; SH2 = SHD * RS;
+  colS = new Float32Array(SW2 * SH2 * 3); lb = new Float32Array(SW2 * SH2 * 3); refl = new Float32Array(SW2 * SH2);
+  GID = new Float32Array(SW2 * SH2);
+  colS1 = RS > 1 ? new Float32Array(SWD * SHD * 3) : colS; lb1 = RS > 1 ? new Float32Array(SWD * SHD * 3) : lb;
   colO = new Float32Array(OW * OH * 3);
   F = F0 = Math.max(OW * 0.62, OH * 0.8);
   HB = Math.round(OH * 0.45);
@@ -845,7 +853,7 @@ function update(dt) {
 // ---------- drawing ----------
 function addLight(x, y, R, c, I) {
   if (I <= 0.02) return;
-  R = Math.min(30, Math.round(R)); if (R < 2) return;
+  R = Math.min(30 * PXS, Math.round(R)); if (R < 2 * PXS) return;
   x = Math.round(x); y = Math.round(y);
   if (x + R < 0 || x - R >= W || y + R < 0 || y - R >= H) return;
   const R2 = R * R;
@@ -864,8 +872,11 @@ function addLight(x, y, R, c, I) {
 }
 function put(x, y, r, g, b) {
   if (x < 0 || y < 0 || x >= W || y >= H) return;
-  const i = (y * W + x) * 3; col[i] = r; col[i + 1] = g; col[i + 2] = b;
+  const i = (y * W + x) * 3; col[i] = r; col[i + 1] = g; col[i + 2] = b; GID[i / 3] = 0;
 }
+// building pixels whose texture the graphics chip fills in: GID = (wall quad + 1) * 4096 + how much of the texture shows (0..4095)
+function fadeGid(i, a) { const g = GID[i]; if (g) { const m = g % 4096; GID[i] = g - m + Math.round(m * (1 - a)); } }   // something translucent drawn over it
+function canDefer(B) { return DEFER && B.style !== 11 && B.style !== 14 && B.style !== D.CITADEL && NQ < 4095; }
 function putc(x, y, c) { put(x, y, c[0], c[1], c[2]); }
 function addc(x, y, c, a) {
   if (x < 0 || y < 0 || x >= W || y >= H) return;
@@ -1221,8 +1232,8 @@ function drawGround(k, d, deckOnly) {
       if (ferry && a >= RW + 0.3 && a < RW + SW) { r = 40; g = 70; b = 60; rf = 0.15; }
       const i = y * W + x, j = i * 3;
       r += (FOG[0] - r) * fz; g += (FOG[1] - g) * fz; b += (FOG[2] - b) * fz;
-      if (op < 1) { col[j] += (r - col[j]) * op; col[j + 1] += (g - col[j + 1]) * op; col[j + 2] += (b - col[j + 2]) * op; }
-      else { col[j] = r; col[j + 1] = g; col[j + 2] = b; }
+      if (op < 1) { col[j] += (r - col[j]) * op; col[j + 1] += (g - col[j + 1]) * op; col[j + 2] += (b - col[j + 2]) * op; fadeGid(i, op); }
+      else { col[j] = r; col[j + 1] = g; col[j + 2] = b; GID[i] = 0; }
       refl[i] = rf === 0.85 ? rf : rf * (1 - fz) * wet * (1 - smooth(45, 170, z));
     }
   }
@@ -1243,7 +1254,7 @@ function quadWall(k, lat, h0, h1, tex, zlo, zhi) {
       if (TR < 0) continue;
       const i = y * W + x, j = i * 3;
       col[j] = TR + (FOG[0] - TR) * fz; col[j + 1] = TG + (FOG[1] - TG) * fz; col[j + 2] = TB + (FOG[2] - TB) * fz;
-      refl[i] = 0;
+      refl[i] = 0; GID[i] = 0;
     }
   }
 }
@@ -1263,8 +1274,8 @@ function blob(cx, cy, rx, ry, c, a, fz) {
     for (let x = Math.max(0, Math.floor(cx - rx)); x <= Math.min(W - 1, cx + rx); x++) {
       if (((x - cx) / rx) ** 2 + ((y - cy) / ry) ** 2 > 1) continue;
       const i = (y * W + x) * 3;
-      if (a >= 1) { col[i] = r; col[i + 1] = g; col[i + 2] = b; refl[y * W + x] = 0; }
-      else { col[i] += (r - col[i]) * a; col[i + 1] += (g - col[i + 1]) * a; col[i + 2] += (b - col[i + 2]) * a; }
+      if (a >= 1) { col[i] = r; col[i + 1] = g; col[i + 2] = b; refl[y * W + x] = 0; GID[y * W + x] = 0; }
+      else { col[i] += (r - col[i]) * a; col[i + 1] += (g - col[i + 1]) * a; col[i + 2] += (b - col[i + 2]) * a; fadeGid(y * W + x, a); }
     }
 }
 
@@ -1312,7 +1323,7 @@ function drawRoof(k, B, wx, sg, yN, yF) {
       roofTex(B, Math.abs((x + 0.5 - cx) / s - wx), wz, 1 / s);
       const i = y * W + x, j = i * 3;
       col[j] = TR + (FOG[0] - TR) * fz; col[j + 1] = TG + (FOG[1] - TG) * fz; col[j + 2] = TB + (FOG[2] - TB) * fz;
-      refl[i] = 0;
+      refl[i] = 0; GID[i] = 0;
     }
   }
 }
@@ -1351,7 +1362,7 @@ function drawLower(k, d) {
       }
       const i = y * W + x, j = i * 3, fe = em ? fz * 0.6 : fz;    // lights cut through the haze further than the dark
       col[j] = r + (FOG[0] - r) * fe; col[j + 1] = g + (FOG[1] - g) * fe; col[j + 2] = b + (FOG[2] - b) * fe;
-      refl[i] = rf * (1 - fz) * wet;
+      refl[i] = rf * (1 - fz) * wet; GID[i] = 0;
     }
   }
 }
@@ -1375,7 +1386,7 @@ function drawBelow(k, n, deckW) {
       if (cz >= wz0 + SEGL || !projAt(k, cz - wz0)) continue;
       const c = dir > 0 ? [255, 40, 50] : [230, 235, 255], fz = fogAt(PZ), y = Math.round(PGL - 0.6 * PS);
       for (const o of [-0.7, 0.7]) { const xx = Math.round(PCX + (L + o) * PS); if (xx >= 0 && xx < W && y >= 0 && y < H) put(xx, y, ...mix(c, FOG, fz * 0.7)); }
-      if (PZ < 260) addLight(PCX + (L) * PS, y, Math.min(14, Math.max(2, 1.4 * PS)), c, 0.35 * (1 - fz));
+      if (PZ < 260) addLight(PCX + (L) * PS, y, Math.min(14 * PXS, Math.max(2 * PXS, 1.4 * PS)), c, 0.35 * (1 - fz));
     }
   }
 }
@@ -1413,12 +1424,12 @@ function drawSkywalk(k, n, o) {
         put(x, y, ...mix(lamp ? [255, 210, 150] : [22, 20, 30], FOG, fz)); refl[y * W + x] = 0;
       }
     }
-    if (PZ < 260) addLight(cx, (yB + yB2) / 2, Math.min(28, 6 * s), [255, 200, 140], 0.25 * (1 - fz));
+    if (PZ < 260) addLight(cx, (yB + yB2) / 2, Math.min(28 * PXS, 6 * s), [255, 200, 140], 0.25 * (1 - fz));
   }
   rect(cx - span * s, cx + span * s, yT, yB, [38, 36, 50], fz);
-  rect(cx - span * s, cx + span * s, yB - Math.max(1, 0.2 * s), yB, glowC, fz * 0.5);
-  rect(cx - span * s, cx + span * s, yT - Math.max(1, 0.9 * s), yT - Math.max(1, 0.9 * s) + 1, [150, 190, 210], fz);
-  if (PZ < 300) addLight(cx, yB, Math.min(30, 5 * s), glowC, 0.2 * (1 - fz));
+  rect(cx - span * s, cx + span * s, yB - Math.max(1 * PXS, 0.2 * s), yB, glowC, fz * 0.5);
+  rect(cx - span * s, cx + span * s, yT - Math.max(1 * PXS, 0.9 * s), yT - Math.max(1 * PXS, 0.9 * s) + 1, [150, 190, 210], fz);
+  if (PZ < 300) addLight(cx, yB, Math.min(30 * PXS, 5 * s), glowC, 0.2 * (1 - fz));
 }
 
 // ---- tunnel ----
@@ -1459,11 +1470,11 @@ function drawTunnel(k, n, lift, vac) {
       }
     }
   }
-  if (vac) { if (n % 7 === 0 && k < 90 && projAt(k, 0)) addLight(PCX, PGY - TH_ * PS * 0.5, Math.min(30, Math.max(4, 5 * PS)), [80, 210, 255], 0.35 * (1 - fogAt(PZ))); }
+  if (vac) { if (n % 7 === 0 && k < 90 && projAt(k, 0)) addLight(PCX, PGY - TH_ * PS * 0.5, Math.min(30 * PXS, Math.max(4 * PXS, 5 * PS)), [80, 210, 255], 0.35 * (1 - fogAt(PZ))); }
   else if (n % 2 === 0 && k < 70 && projAt(k, 0)) {
     const lc = lift ? (liftUp ? [90, 255, 170] : [255, 170, 80]) : [255, 170, 90];
-    addLight(PCX, PGY - TH_ * PS + 1, Math.min(14, Math.max(3, 1.6 * PS)), lc, 0.28 * (1 - fogAt(PZ)));
-    addLight(PCX, PGY, Math.max(3, 3.5 * PS), lc, 0.12 * (1 - fogAt(PZ)));
+    addLight(PCX, PGY - TH_ * PS + 1, Math.min(14 * PXS, Math.max(3 * PXS, 1.6 * PS)), lc, 0.28 * (1 - fogAt(PZ)));
+    addLight(PCX, PGY, Math.max(3 * PXS, 3.5 * PS), lc, 0.12 * (1 - fogAt(PZ)));
   }
 }
 function drawPortal(k, label, lc) {
@@ -1496,8 +1507,8 @@ function drawPortal(k, label, lc) {
       refl[y * W + x] = 0;
     }
   }
-  addLight(PCX, PGY - 10.2 * s, Math.max(4, 10 * s), label ? lc : [0, 230, 255], 0.32 * (1 - fz));
-  addLight(PCX, PGY - TH_ * s, Math.max(4, 6 * s), rimC, 0.3 * (1 - fz));
+  addLight(PCX, PGY - 10.2 * s, Math.max(4 * PXS, 10 * s), label ? lc : [0, 230, 255], 0.32 * (1 - fz));
+  addLight(PCX, PGY - TH_ * s, Math.max(4 * PXS, 6 * s), rimC, 0.3 * (1 - fz));
 }
 
 // ---- monorail ----
@@ -1516,14 +1527,14 @@ function trainTex(wz, v) {
 function drawMonorail(k, n) {
   quadWall(k, MLAT, 11.5, 12.6, beamTex);
   if (n % 6 === 0 && projAt(k, 0)) {
-    const x = PCX + MLAT * PS, w = Math.max(1, 0.7 * PS);
+    const x = PCX + MLAT * PS, w = Math.max(1 * PXS, 0.7 * PS);
     rect(x - w / 2, x + w / 2, PGY - 11.5 * PS, PGY, [30, 26, 40], fogAt(PZ));
   }
   const tr = rel(train.z);
   const z0 = Z[k], z1 = Z[k + 1];
   if (tr < z1 && tr + 60 > z0) {
     quadWall(k, MLAT, 12.6, 15.6, trainTex, tr, tr + 60);
-    if (projAt(k, 0)) addLight(PCX + MLAT * PS, PGY - 14.3 * PS, Math.max(3, 3 * PS), [255, 200, 140], 0.3 * (1 - fogAt(PZ)));
+    if (projAt(k, 0)) addLight(PCX + MLAT * PS, PGY - 14.3 * PS, Math.max(3 * PXS, 3 * PS), [255, 200, 140], 0.3 * (1 - fogAt(PZ)));
   }
 }
 
@@ -1542,8 +1553,8 @@ function drawLanterns(k, n) {
     const c = WARM[(n + i) % 4], r = 0.32 * s;
     if (r < 0.8) { if (x >= 0 && x < W && y >= 0 && y < H) putc(Math.round(x), Math.round(y), c); continue; }
     blob(x, y, r * 1.1, r, c, 1, fz * 0.6);
-    rect(x - r * 0.5, x + r * 0.5, y - r - Math.max(1, 0.08 * s), y - r + 1, [40, 20, 20], fz);
-    if (i % 2 === 0 && PZ < 160) addLight(x, y, Math.max(3, 1.6 * s), c, 0.4 * (1 - fz));
+    rect(x - r * 0.5, x + r * 0.5, y - r - Math.max(1 * PXS, 0.08 * s), y - r + 1, [40, 20, 20], fz);
+    if (i % 2 === 0 && PZ < 160) addLight(x, y, Math.max(3 * PXS, 1.6 * s), c, 0.4 * (1 - fz));
   }
 }
 function drawStall(k, sg, n) {
@@ -1560,7 +1571,7 @@ function drawStall(k, sg, n) {
     for (let y = Math.max(0, Math.ceil(ya)); y <= Math.min(H - 1, Math.ceil(yb) - 1); y++)
       put(x, y, c[0] + (FOG[0] - c[0]) * fz, c[1] + (FOG[1] - c[1]) * fz, c[2] + (FOG[2] - c[2]) * fz);
   }
-  addLight(cx, PGY - 1.6 * s, Math.max(3, 2.2 * s), [255, 170, 90], 0.45 * (1 - fz));
+  addLight(cx, PGY - 1.6 * s, Math.max(3 * PXS, 2.2 * s), [255, 170, 90], 0.45 * (1 - fz));
   drawSteam(k, sg * (RW + SW * 0.55), 2.9, n, 0.7);
 }
 
@@ -1612,7 +1623,7 @@ function drawPed(p, k, dz) {
         refl[y * W + xx] = 0;
       }
     }
-    addLight(x, uy, Math.max(2, 1.1 * s), p.umb, 0.3 * (1 - fz));
+    addLight(x, uy, Math.max(2 * PXS, 1.1 * s), p.umb, 0.3 * (1 - fz));
   }
 }
 
@@ -1643,9 +1654,9 @@ function drawSkybridge(k, n) {
     for (const sg of [-1, 1]) {
       const xc = PCX + sg * (RW + SW + 1.5) * s, hw = 1.6 * s;
       rect(xc - hw, xc + hw, PGY - 78 * s, PGY + 30 * s, [34, 32, 46], fz);
-      rect(xc - hw, xc - hw + Math.max(1, 0.3 * s), PGY - 78 * s, PGY, cc, fz * 0.7);
-      rect(xc + hw - Math.max(1, 0.3 * s), xc + hw, PGY - 78 * s, PGY, cc, fz * 0.7);
-      if ((T * 1.2 + l) % 2 < 1) addLight(xc, PGY - 79 * s, Math.max(3, 3 * s), [255, 40, 40], 0.7 * (1 - fz));
+      rect(xc - hw, xc - hw + Math.max(1 * PXS, 0.3 * s), PGY - 78 * s, PGY, cc, fz * 0.7);
+      rect(xc + hw - Math.max(1 * PXS, 0.3 * s), xc + hw, PGY - 78 * s, PGY, cc, fz * 0.7);
+      if ((T * 1.2 + l) % 2 < 1) addLight(xc, PGY - 79 * s, Math.max(3 * PXS, 3 * s), [255, 40, 40], 0.7 * (1 - fz));
       rect(xc - 0.5 * s, xc + 0.5 * s, PGY - 80 * s, PGY - 78 * s, [255, 60, 60], fz * 0.5);
     }
     if (ELEV[n] < LH[2] - 1) for (const bh of [44, 72]) rect(PCX - (RW + SW + 3) * s, PCX + (RW + SW + 3) * s, PGY - (bh + 2.5) * s, PGY - bh * s, [30, 28, 42], fz);
@@ -1654,8 +1665,8 @@ function drawSkybridge(k, n) {
     const sg = hash(n, 1, 61) < 0.5 ? -1 : 1, lat = sg * (40 + hash(n, 2, 62) * 140) + Math.sin(T * 0.1 + n) * 10;
     if (projAt(k, 0)) {
       const x = PCX + lat * PS, y = PGY + 25 * PS * 0.05, c = CITIES[z[3]].neon[(n >> 1) % 6];
-      rect(x - 3 * PS, x + 3 * PS, y - Math.max(1, 0.8 * PS), y, [20, 18, 30], fogAt(PZ));
-      if (x >= 0 && x < W) { putc(Math.round(x), Math.round(y - Math.max(2, PS)), c); addLight(x, y - PS, Math.max(2, 2 * PS), c, 0.4); }
+      rect(x - 3 * PS, x + 3 * PS, y - Math.max(1 * PXS, 0.8 * PS), y, [20, 18, 30], fogAt(PZ));
+      if (x >= 0 && x < W) { putc(Math.round(x), Math.round(y - Math.max(2 * PXS, PS)), c); addLight(x, y - PS, Math.max(2 * PXS, 2 * PS), c, 0.4); }
     }
   }
 }
@@ -1676,7 +1687,7 @@ function drawGantry(k, nm, c) {
       if (gj >= 0 && gj < 5 && g[gj * 3 + (gi & 3)] === '1') put(x, y, ...mix(c, FOG, fz));
     }
   }
-  addLight(PCX, (ya + yb) / 2, Math.max(4, 5 * s), c, 0.3 * (1 - fz));
+  addLight(PCX, (ya + yb) / 2, Math.max(4 * PXS, 5 * s), c, 0.3 * (1 - fz));
 }
 
 // ---- docklands: container stacks and gantry cranes ----
@@ -1689,21 +1700,21 @@ function drawContainers(k, sg, n) {
     for (let b = 0; b < hgt; b++) {
       const c = BOX[(hash(n, j * 7 + b, 52) * 6) | 0], ya = PGL - (b + 1) * 2.6 * s, yb = PGL - b * 2.6 * s;
       rect(x0, x1, ya, yb, c, fz);
-      rect(x0, x1, ya, ya + Math.max(1, 0.15 * s), mix(c, [255, 255, 255], 0.25), fz);
-      if (s > 2) for (let r = 1; r < 6; r++) { const xr = x0 + (x1 - x0) * r / 6; rect(xr, xr + Math.max(1, 0.06 * s), ya, yb, mix(c, [0, 0, 0], 0.35), fz); }
+      rect(x0, x1, ya, ya + Math.max(1 * PXS, 0.15 * s), mix(c, [255, 255, 255], 0.25), fz);
+      if (s > 2) for (let r = 1; r < 6; r++) { const xr = x0 + (x1 - x0) * r / 6; rect(xr, xr + Math.max(1 * PXS, 0.06 * s), ya, yb, mix(c, [0, 0, 0], 0.35), fz); }
     }
   }
 }
 function drawCrane(k, sg, n) {
   if (!projAt(k, 0)) return;
-  const s = PS, fz = fogAt(PZ), yc = [200, 120, 30], w = Math.max(1, 0.6 * s);
+  const s = PS, fz = fogAt(PZ), yc = [200, 120, 30], w = Math.max(1 * PXS, 0.6 * s);
   const la = sg * (RW + SW + 9), lb_ = sg * (RW + SW + 21);
   for (const l of [la, lb_]) rect(PCX + l * s - w, PCX + l * s + w, PGL - 40 * s, PGL, yc, fz);
   const tip = -sg * 4;
   rect(Math.min(PCX + tip * s, PCX + lb_ * s), Math.max(PCX + tip * s, PCX + lb_ * s), PGL - 41.5 * s, PGL - 40 * s, yc, fz);
   rect(PCX + la * s - 2 * s, PCX + la * s + 2 * s, PGL - 44 * s, PGL - 41.5 * s, [40, 36, 50], fz);
   lineS(PCX + (tip + sg * 6) * s, PGL - 40 * s, PCX + (tip + sg * 6) * s, PGL - 30 * s, [30, 30, 40], fz);
-  if ((T * 1.5 + n) % 2 < 1) addLight(PCX + tip * s, PGL - 41 * s, Math.max(3, 2 * s), [255, 40, 40], 0.7 * (1 - fz));
+  if ((T * 1.5 + n) % 2 < 1) addLight(PCX + tip * s, PGL - 41 * s, Math.max(3 * PXS, 2 * s), [255, 40, 40], 0.7 * (1 - fz));
 }
 
 // ---- holo gardens: glowing trees on the sidewalks ----
@@ -1725,7 +1736,7 @@ function drawTree(k, sg, n, pal) {
       put(xx, y, cc[0] + (FOG[0] - cc[0]) * fz, cc[1] + (FOG[1] - cc[1]) * fz, cc[2] + (FOG[2] - cc[2]) * fz);
       refl[y * W + xx] = 0;
     }
-  addLight(cx, cy, Math.max(3, 2.6 * s), c, 0.4 * (1 - fz));
+  addLight(cx, cy, Math.max(3 * PXS, 2.6 * s), c, 0.4 * (1 - fz));
 }
 
 // ---- shrine street: vermilion gates over the road ----
@@ -1738,12 +1749,12 @@ function drawTorii(k, n) {
   for (let l = -w; l < w; l += Math.max(0.05, 0.6 / s)) {
     const lift = Math.pow(Math.abs(l) / w, 4) * 0.7;
     const x = PCX + l * s, yb = PGY - (7.6 + lift) * s;
-    rect(x, x + Math.max(1, 0.6), yb - 0.45 * s, yb, red, fz);
-    rect(x, x + Math.max(1, 0.6), yb - 0.75 * s, yb - 0.45 * s, blk, fz);
+    rect(x, x + Math.max(PXS, 0.6), yb - 0.45 * s, yb, red, fz);
+    rect(x, x + Math.max(PXS, 0.6), yb - 0.75 * s, yb - 0.45 * s, blk, fz);
   }
   const lx = PCX, ly = PGY - 5.2 * s;
   blob(lx, ly, 0.35 * s, 0.5 * s, [255, 200, 120], 1, fz * 0.5);
-  if (PZ < 200) addLight(lx, ly, Math.max(3, 2 * s), [255, 160, 80], 0.45 * (1 - fz));
+  if (PZ < 200) addLight(lx, ly, Math.max(3 * PXS, 2 * s), [255, 160, 80], 0.45 * (1 - fz));
 }
 
 // ---- stacktown: laundry strung across the street ----
@@ -1776,7 +1787,7 @@ function drawCones(k, n) {
       const c = t > 0.45 && t < 0.62 ? [240, 240, 240] : [255, 110, 20];
       for (let xx = Math.max(0, Math.ceil(x - half)); xx <= Math.min(W - 1, Math.ceil(x + half) - 1); xx++) put(xx, y, ...mix(c, FOG, fz));
     }
-    if ((T * 3 + n) % 2 < 1) addLight(x, PGY - h, Math.max(2, 0.8 * s), [255, 140, 30], 0.5 * (1 - fz));
+    if ((T * 3 + n) % 2 < 1) addLight(x, PGY - h, Math.max(2 * PXS, 0.8 * s), [255, 140, 30], 0.5 * (1 - fz));
   }
 }
 
@@ -1839,11 +1850,11 @@ function drawOverpass(k, n) {
   const s = PS, fz = fogAt(PZ), y0 = PGY - 12.6 * s, y1 = PGY - 10.6 * s;
   for (const sg of [-1, 1]) rect(PCX + sg * (RW + SW + 2) * s - 0.9 * s, PCX + sg * (RW + SW + 2) * s + 0.9 * s, y1, PGY + 20 * s, [36, 34, 46], fz);
   rect(PCX - 120 * s, PCX + 120 * s, y0, y1, [30, 28, 40], fz);
-  rect(PCX - 120 * s, PCX + 120 * s, y1 - Math.max(1, 0.25 * s), y1, [255, 46, 170], fz * 0.6);
+  rect(PCX - 120 * s, PCX + 120 * s, y1 - Math.max(1 * PXS, 0.25 * s), y1, [255, 46, 170], fz * 0.6);
   for (let i = 0; i < 14; i++) {                    // traffic up on the overpass
     const dir = i % 2 ? 1 : -1, lx = ((T * 22 * dir + i * 23 + n) % 240 + 240) % 240 - 120;
-    const c = dir > 0 ? [255, 50, 60] : [230, 240, 255], x = PCX + lx * s, y = y0 - Math.max(1, 0.4 * s);
-    if (x >= 0 && x < W && y >= 0 && y < H) { putc(Math.round(x), Math.round(y), c); if (PZ < 220) addLight(x, y, Math.max(2, 1.2 * s), c, 0.35); }
+    const c = dir > 0 ? [255, 50, 60] : [230, 240, 255], x = PCX + lx * s, y = y0 - Math.max(1 * PXS, 0.4 * s);
+    if (x >= 0 && x < W && y >= 0 && y < H) { putc(Math.round(x), Math.round(y), c); if (PZ < 220) addLight(x, y, Math.max(2 * PXS, 1.2 * s), c, 0.35); }
   }
 }
 function racerTex(wz, v) {
@@ -1866,7 +1877,7 @@ function drawBoat(k, n) {
   rect(x - 0.05 * s, x + 0.05 * s + 0.5, y - 1.8 * s, y - 0.5 * s, [30, 24, 20], fz);
   const c = CITIES[zoneAt(n)[3]].neon[n % 6];
   blob(x, y - 1.9 * s, 0.25 * s + 0.5, 0.3 * s + 0.5, c, 1, fz * 0.5);
-  if (PZ < 200) addLight(x, y - 1.9 * s, Math.max(3, 2 * s), c, 0.45 * (1 - fz));
+  if (PZ < 200) addLight(x, y - 1.9 * s, Math.max(3 * PXS, 2 * s), c, 0.45 * (1 - fz));
 }
 
 // ---- the stadium seen from the highway ----
@@ -1877,7 +1888,7 @@ function drawStadium(k) {
     const u = (x - cx) / rx, arc = Math.sqrt(Math.max(0, 1 - u * u)), yt = top + (1 - arc) * 8 * s;
     for (let y = Math.max(0, Math.ceil(yt)); y <= Math.min(H - 1, base); y++) {
       const tier = ((y - yt) / s) % 4 < 0.4;
-      const c = y - yt < Math.max(1, 0.6 * s) ? [255, 255, 255] : tier ? [255, 200, 120] : [30, 26, 40];
+      const c = y - yt < Math.max(1 * PXS, 0.6 * s) ? [255, 255, 255] : tier ? [255, 200, 120] : [30, 26, 40];
       put(x, y, ...mix(c, FOG, fz)); refl[y * W + x] = 0;
     }
   }
@@ -1888,7 +1899,7 @@ function drawStadium(k) {
       for (let w = -1 - d * 0.03; w <= 1 + d * 0.03; w++) addc(Math.round(x + w), y, [220, 230, 255], 0.06 * (1 - d / top));
     }
   }
-  addLight(cx, top, Math.min(30, 30 * s), [255, 220, 160], 0.3 * (1 - fz));
+  addLight(cx, top, Math.min(30 * PXS, 30 * s), [255, 220, 160], 0.3 * (1 - fz));
 }
 
 // ---- data canyon: green lasers from the rooftops ----
@@ -1912,14 +1923,14 @@ function drawFlyer(f, k, dz) {
   rect(x - w * 0.3, x + w * 0.3, y - h * 1.7, y - h, mix(f.body, [0, 0, 0], 0.35), fz);          // canopy
   rect(x - w * 0.24, x + w * 0.24, y - h * 1.55, y - h * 1.1, f.dir < 0 ? [50, 70, 100] : [140, 210, 255], fz * 0.7);
   rect(x - w / 2, x + w / 2, y - h, y, f.body, fz);                                                // hull
-  rect(x - w / 2, x + w / 2, y - h, y - h + Math.max(1, 0.1 * s), mix(f.body, [255, 255, 255], 0.3), fz);
-  rect(x - w / 2, x + w / 2, y - Math.max(1, 0.12 * s), y, f.glow, fz * 0.4);                    // underglow strip
+  rect(x - w / 2, x + w / 2, y - h, y - h + Math.max(1 * PXS, 0.1 * s), mix(f.body, [255, 255, 255], 0.3), fz);
+  rect(x - w / 2, x + w / 2, y - Math.max(1 * PXS, 0.12 * s), y, f.glow, fz * 0.4);                    // underglow strip
   for (const sx of [-0.4, 0.4]) {
     const lx = x + sx * w;
     rect(lx - 0.18 * s, lx + 0.18 * s, y - h * 0.75, y - h * 0.35, lc, fz * 0.3);
-    if (PZ < 260) addLight(lx, y - h * 0.55, clamp(w * 0.4, 2, 16), lc, (f.dir < 0 ? 0.7 : 0.45) * (1 - fz));
+    if (PZ < 260) addLight(lx, y - h * 0.55, clamp(w * 0.4, 2 * PXS, 16 * PXS), lc, (f.dir < 0 ? 0.7 : 0.45) * (1 - fz));
   }
-  addLight(x, y + 0.4 * s, clamp(w * 0.9, 3, 28), f.glow, 0.35 * (1 - fz));                     // thrusters wash
+  addLight(x, y + 0.4 * s, clamp(w * 0.9, 3 * PXS, 28 * PXS), f.glow, 0.35 * (1 - fz));                     // thrusters wash
 }
 function drawGates(k, n) {
   if (!projAt(k, 0) || PZ > 400) return;
@@ -1931,7 +1942,7 @@ function drawGates(k, n) {
       const a = i / steps * 2 * Math.PI, on = ((i / steps * 8 - T * 2 * sg) % 1 + 1) % 1 < 0.55;
       addc(Math.round(cx + Math.cos(a) * r), Math.round(cy + Math.sin(a) * r), c, (on ? 1 : 0.3) * (1 - fz));
     }
-    if (PZ < 280) addLight(cx, cy - r, clamp(2 * s, 3, 20), c, 0.25 * (1 - fz));
+    if (PZ < 280) addLight(cx, cy - r, clamp(2 * s, 3 * PXS, 20 * PXS), c, 0.25 * (1 - fz));
   }
 }
 
@@ -1940,9 +1951,9 @@ function drawStack(k, sg, n) {
   if (!projAt(k, 0)) return;
   const s = PS, fz = fogAt(PZ), x = PCX + sg * (RW + SW + 6) * s, hgt = 70 + hash(n, 4, 14) * 50, w = 1.6 * s, top = PGL - hgt * s;
   rect(x - w, x + w, top, PGL, [44, 30, 28], fz);
-  for (const b of [0.25, 0.6]) rect(x - w, x + w, PGL - hgt * b * s - Math.max(1, 0.5 * s), PGL - hgt * b * s, [90, 50, 30], fz);
-  rect(x - w * 1.15, x + w * 1.15, top, top + Math.max(1, 1.2 * s), [255, 110, 30], fz * 0.4);
-  addLight(x, top, clamp(4 * s, 3, 28), [255, 120, 40], 0.5 * (1 - fz));
+  for (const b of [0.25, 0.6]) rect(x - w, x + w, PGL - hgt * b * s - Math.max(1 * PXS, 0.5 * s), PGL - hgt * b * s, [90, 50, 30], fz);
+  rect(x - w * 1.15, x + w * 1.15, top, top + Math.max(1 * PXS, 1.2 * s), [255, 110, 30], fz * 0.4);
+  addLight(x, top, clamp(4 * s, 3 * PXS, 28 * PXS), [255, 120, 40], 0.5 * (1 - fz));
   for (let i = 0; i < 5; i++) {
     const ph = (T * 0.25 + i / 5 + hash(n, i, 15)) % 1, r = (1.5 + ph * 5) * s;
     if (r < 0.8) continue;
@@ -1962,7 +1973,7 @@ function drawFall(k, n, sg) {                       // pours off the roof edge o
   if (n % 45 === 1 && projAt(k, 0)) {
     const s = PS, fz = fogAt(PZ), x = PCX + lat * s;
     for (let i = 0; i < 4; i++) { const ph = (T * 0.5 + i / 4) % 1, r = (1.5 + ph * 3) * s; blob(x + Math.sin(i * 2 + T) * s, PGL - (0.5 + ph * 3) * s, r, r * 0.7, [200, 230, 240], 0.3 * (1 - ph), fz); }
-    if (PZ < 320) addLight(x, PGL - 2 * s, clamp(5 * s, 3, 30), [160, 220, 255], 0.3 * (1 - fz));
+    if (PZ < 320) addLight(x, PGL - 2 * s, clamp(5 * s, 3 * PXS, 30 * PXS), [160, 220, 255], 0.3 * (1 - fz));
   }
 }
 
@@ -1984,7 +1995,7 @@ function drawWheel(k, n) {
     const a = rot + i / 12 * 2 * Math.PI, gx = cx + Math.cos(a) * R, gy = cy + Math.sin(a) * R;
     rect(gx - 0.9 * s, gx + 0.9 * s, gy + 0.2 * s, gy + 1.6 * s, NEON[i % 6], fz * 0.5);
   }
-  addLight(cx, cy, clamp(R * 0.5, 4, 30), [255, 200, 120], 0.25 * (1 - fz));
+  addLight(cx, cy, clamp(R * 0.5, 4 * PXS, 30 * PXS), [255, 200, 120], 0.25 * (1 - fz));
 }
 const coH = n => 20 + 12 * Math.sin(n * 0.09) + 6 * Math.sin(n * 0.23 + 1);
 function drawCoaster(k, n, zz) {
@@ -1997,7 +2008,7 @@ function drawCoaster(k, n, zz) {
   if (n >= pos && n < pos + 4 && projAt(k, 0)) {
     const x = PCX + lat * PS, y = PGL - coH(n) * PS, c = NEON[n % 6];
     rect(x - 0.9 * PS, x + 0.9 * PS, y - 1.4 * PS, y, c, fz * 0.5);
-    if (PZ < 300) addLight(x, y - 0.7 * PS, clamp(2 * PS, 3, 18), c, 0.4 * (1 - fz));
+    if (PZ < 300) addLight(x, y - 0.7 * PS, clamp(2 * PS, 3 * PXS, 18 * PXS), c, 0.4 * (1 - fz));
   }
 }
 
@@ -2012,12 +2023,12 @@ function drawDome(B, wx, sg) {
     }
   }
   lineS(cx, base - R * 1.15, cx, base - R * 1.6, [220, 190, 90], fz);
-  if (PZ < 300) addLight(cx, base - R * 1.6, Math.max(2, 1.2 * s), [255, 210, 120], 0.4 * (1 - fz));
+  if (PZ < 300) addLight(cx, base - R * 1.6, Math.max(2 * PXS, 1.2 * s), [255, 210, 120], 0.4 * (1 - fz));
 }
 function drawCoil(B, wx, sg) {
   const s = PS, fz = fogAt(PZ), cx = PCX + (wx + sg * 5) * s, base = PGL - B.h * s, ht = 9 * s;
   rect(cx - 0.6 * s, cx + 0.6 * s, base - ht, base, [50, 54, 70], fz);
-  for (let i = 1; i < 6; i++) rect(cx - 0.9 * s, cx + 0.9 * s, base - ht * i / 6 - Math.max(1, 0.15 * s), base - ht * i / 6, [160, 120, 60], fz);
+  for (let i = 1; i < 6; i++) rect(cx - 0.9 * s, cx + 0.9 * s, base - ht * i / 6 - Math.max(1 * PXS, 0.15 * s), base - ht * i / 6, [160, 120, 60], fz);
   const ty = base - ht - 0.8 * s, tick = Math.floor(T * 14);
   blob(cx, ty, 1.6 * s + 0.5, 0.7 * s + 0.5, [120, 130, 150], 1, fz);
   for (let a = 0; a < 3; a++) {                       // arcs crackling off the torus, wilder when lightning strikes
@@ -2029,7 +2040,7 @@ function drawCoil(B, wx, sg) {
       x = nx; y = ny;
     }
   }
-  addLight(cx, ty, clamp(4 * s, 3, 26), [150, 190, 255], (0.25 + 0.35 * flash) * (1 - fz));
+  addLight(cx, ty, clamp(4 * s, 3 * PXS, 26 * PXS), [150, 190, 255], (0.25 + 0.35 * flash) * (1 - fz));
 }
 
 // ---- connectors ----
@@ -2058,7 +2069,7 @@ function drawFerry(k, n, zz) {
       rect(x - w, x + w, top, top + 3 * s, [20, 20, 26], fz);
       rect(x - w, x + w, top + 5 * s, top + 6.5 * s, [235, 235, 240], fz);
       for (let i = 0; i < 4; i++) { const ph = (T * 0.2 + i / 4) % 1, r = (2 + ph * 6) * s; if (r >= 0.8) blob(x + sg * ph * 8 * s, top - ph * 10 * s, r, r * 0.8, [90, 90, 100], 0.3 * (1 - ph), fz); }
-      if ((T * 1.2 + l) % 2 < 1) addLight(x, top - 1, clamp(2 * s, 3, 16), [255, 40, 40], 0.6 * (1 - fz));
+      if ((T * 1.2 + l) % 2 < 1) addLight(x, top - 1, clamp(2 * s, 3 * PXS, 16 * PXS), [255, 40, 40], 0.6 * (1 - fz));
     }
   }
   if (l % 15 === 7 && projAt(k, 0)) {               // lifeboats and deck lights along the rail
@@ -2066,7 +2077,7 @@ function drawFerry(k, n, zz) {
     for (const sg of [-1, 1]) {
       const x = PCX + sg * (RW + SW + 0.6) * s;
       rect(x - 0.8 * s, x + 0.8 * s, PGY - 3.6 * s, PGY - 2.6 * s, [255, 130, 30], fz);
-      if (PZ < 220) addLight(x, PGY - 2.2 * s, clamp(2 * s, 3, 18), [255, 220, 160], 0.35 * (1 - fz));
+      if (PZ < 220) addLight(x, PGY - 2.2 * s, clamp(2 * s, 3 * PXS, 18 * PXS), [255, 220, 160], 0.35 * (1 - fz));
     }
   }
 }
@@ -2075,7 +2086,7 @@ function drawVolcano(k, n) {
   if (n % 9 === 0) { drawLamp(k, n, -1); drawLamp(k, n, 1); }
   if (!projAt(k, 0)) return;
   const s = PS, fz = fogAt(PZ);
-  if (n % 4 === 2 && PZ < 400) { const sg = n % 8 === 2 ? -1 : 1; addLight(PCX + sg * (RW + SW + 16) * s, PGY, clamp(8 * s, 4, 30), [255, 90, 20], 0.35 * (1 - fz)); }
+  if (n % 4 === 2 && PZ < 400) { const sg = n % 8 === 2 ? -1 : 1; addLight(PCX + sg * (RW + SW + 16) * s, PGY, clamp(8 * s, 4 * PXS, 30 * PXS), [255, 90, 20], 0.35 * (1 - fz)); }
   if (n % 13 === 0) {                                // jagged rock spires lit from the lava below
     const sg = hash(n, 1, 91) < 0.5 ? -1 : 1, x = PCX + sg * (RW + SW + 8 + hash(n, 2, 92) * 40) * s, hh = 8 + hash(n, 3, 93) * 30, w = (2 + hash(n, 4, 94) * 3) * s;
     for (let y = Math.max(0, Math.ceil(PGY - hh * s)); y <= Math.min(H - 1, Math.ceil(PGY) - 1); y++) {
@@ -2092,12 +2103,12 @@ function drawClouds(k, n) {
   const s = PS, fz = fogAt(PZ), sg = hash(n, 1, 95) < 0.5 ? -1 : 1, x = PCX + sg * (RW + SW + 12 + hash(n, 2, 96) * 60) * s;
   const w = (5 + hash(n, 3, 97) * 6) * s, top = PGY - (4 + hash(n, 4, 98) * 26) * s, base = PGY + 2 * s, c = CITIES[zoneAt(n)[3]].neon[n % 6];
   rect(x - w, x + w, top, base, [24, 26, 44], fz);
-  const st = Math.max(2, Math.round(1.2 * s));
+  const st = Math.max(2 * PXS, Math.round(1.2 * s));
   if (s > 0.8) for (let y = Math.max(0, Math.ceil(top + st)); y < Math.min(H, base); y += st)
     for (let xx = Math.max(0, Math.ceil(x - w + 1)); xx < Math.min(W, x + w - 1); xx += st)
       if (hash(Math.round((xx - x) / st), Math.round((y - top) / st), n) < 0.35) put(xx, y, ...mix(WIN[(n + xx) % 6], FOG, fz));
-  rect(x - w, x + w, top, top + Math.max(1, 0.4 * s), c, fz * 0.5);
-  if ((T + n) % 1.5 < 0.5) addLight(x, top - 1, clamp(2 * s, 3, 16), [255, 40, 40], 0.6 * (1 - fz));
+  rect(x - w, x + w, top, top + Math.max(1 * PXS, 0.4 * s), c, fz * 0.5);
+  if ((T + n) % 1.5 < 0.5) addLight(x, top - 1, clamp(2 * s, 3 * PXS, 16 * PXS), [255, 40, 40], 0.6 * (1 - fz));
   blob(x, base, w * 1.3, 1.5 * s + 0.5, [180, 190, 220], 0.6, fz);
 }
 function drawPontoon(k, n) {
@@ -2111,7 +2122,7 @@ function drawPontoon(k, n) {
 function drawSalt(k, n) {
   if (n % 10 !== 0 || !projAt(k, 0)) return;         // a lonely line of telegraph poles
   const s = PS, fz = fogAt(PZ), x = PCX + (RW + SW + 2) * s;
-  rect(x - Math.max(0.5, 0.15 * s), x + Math.max(0.5, 0.15 * s), PGY - 9 * s, PGY, [50, 40, 36], fz);
+  rect(x - Math.max(0.5 * PXS, 0.15 * s), x + Math.max(0.5 * PXS, 0.15 * s), PGY - 9 * s, PGY, [50, 40, 36], fz);
   rect(x - 1.4 * s, x + 1.4 * s, PGY - 8.4 * s, PGY - 8.1 * s, [50, 40, 36], fz);
 }
 
@@ -2132,11 +2143,11 @@ function stTrainTex(wz, v) {
 function drawSkytrain(k, n) {
   stEL = EL[k];
   quadWall(k, ST_LAT, ST_H - 1.2 - EL[k], ST_H - EL[k], stBeamTex);
-  if (n % 10 === 0 && projAt(k, 0)) { const x = PCX + ST_LAT * PS, w = Math.max(1, 0.9 * PS); rect(x - w, x + w, PGL - (ST_H - 1.2) * PS, PGL, [34, 32, 44], fogAt(PZ)); }
+  if (n % 10 === 0 && projAt(k, 0)) { const x = PCX + ST_LAT * PS, w = Math.max(1 * PXS, 0.9 * PS); rect(x - w, x + w, PGL - (ST_H - 1.2) * PS, PGL, [34, 32, 44], fogAt(PZ)); }
   const d = ((skyT.z - camZ + LEN / 2) % LEN + LEN) % LEN - LEN / 2;
   if (d < Z[k + 1] && d + ST_LEN > Z[k]) {
     quadWall(k, ST_LAT, ST_H - EL[k], ST_H + 3.2 - EL[k], stTrainTex, d, d + ST_LEN);
-    if (projAt(k, 0)) addLight(PCX + ST_LAT * PS, PGL - (ST_H + 1.8) * PS, clamp(3 * PS, 3, 24), [200, 230, 255], 0.3 * (1 - fogAt(PZ)));
+    if (projAt(k, 0)) addLight(PCX + ST_LAT * PS, PGL - (ST_H + 1.8) * PS, clamp(3 * PS, 3 * PXS, 24 * PXS), [200, 230, 255], 0.3 * (1 - fogAt(PZ)));
   }
 }
 
@@ -2144,7 +2155,7 @@ function drawSkytrain(k, n) {
 function drawSignal(i, k, dz) {
   if (!projAt(k, dz) || PZ > 380) return;
   const s = PS, fz = fogAt(PZ), st = lightState(i), pole = [30, 30, 40], L = RW + SW * 0.4;
-  const lamp = (x, y, on, c) => { blob(x, y, Math.max(0.6, 0.16 * s), Math.max(0.6, 0.16 * s), on ? c : mix(c, [0, 0, 0], 0.82), 1, on ? fz * 0.3 : fz); if (on && PZ < 300) addLight(x, y, Math.max(3, 1.3 * s), c, 0.6 * (1 - fz * 0.7)); };
+  const lamp = (x, y, on, c) => { blob(x, y, Math.max(0.6 * PXS, 0.16 * s), Math.max(0.6 * PXS, 0.16 * s), on ? c : mix(c, [0, 0, 0], 0.82), 1, on ? fz * 0.3 : fz); if (on && PZ < 300) addLight(x, y, Math.max(3 * PXS, 1.3 * s), c, 0.6 * (1 - fz * 0.7)); };
   // right: pole and mast arm over our lanes
   const xp = PCX + L * s, xh = PCX + 3 * s;
   rect(xp - 0.12 * s - 0.5, xp + 0.12 * s + 0.5, PGY - 6.2 * s, PGY, pole, fz);
@@ -2165,7 +2176,7 @@ function drawSignal(i, k, dz) {
     const walk = st === 2, c = walk ? [120, 255, 200] : [255, 80, 40], x = xp - 0.4 * s, y = PGY - 2.8 * s;
     rect(x - 0.22 * s, x + 0.22 * s, y - 0.3 * s, y + 0.3 * s, [12, 12, 16], fz);
     blob(x, y, 0.1 * s, 0.18 * s, c, 1, fz * 0.3);
-    if (PZ < 120) addLight(x, y, Math.max(2, 0.6 * s), c, 0.3);
+    if (PZ < 120) addLight(x, y, Math.max(2 * PXS, 0.6 * s), c, 0.3);
   }
 }
 function drawCrosser(c, k, dz) {
@@ -2197,7 +2208,7 @@ function drawKoi(k, n) {
     }
   }
   addc(Math.round(cx + dir * 0.4 * Lm * s), Math.round(cy - 0.3 * s), [255, 255, 255], a * 1.5);
-  addLight(cx, cy, Math.max(4, 7 * s), [180, 120, 255], 0.2 * (1 - fz));
+  addLight(cx, cy, Math.max(4 * PXS, 7 * s), [180, 120, 255], 0.2 * (1 - fz));
 }
 
 
@@ -2538,7 +2549,21 @@ function drawWall(k, side, n) {
   const u0 = (n - B.start) * SEGL;
   if (Math.abs(span) > 1e-4) {
     const x0 = Math.max(0, Math.ceil(Math.min(xa, xb))), x1 = Math.min(W - 1, Math.ceil(Math.max(xa, xb)) - 1);
-    for (let x = x0; x <= x1; x++) {
+    const dq = canDefer(B) && x0 <= x1 ? NQ++ : -1;
+    if (dq >= 0) {                                    // the texture is filled in on the graphics chip: note the quad, mark the pixels
+      const o = dq * 16; QD[o] = xa; QD[o + 1] = span; QD[o + 2] = iN; QD[o + 3] = iF; QD[o + 4] = u0; QD[o + 5] = Z[k]; QD[o + 6] = ybA; QD[o + 7] = ybB;
+      QD[o + 8] = ytA; QD[o + 9] = ytB; QD[o + 10] = bi; QD[o + 11] = F; QD[o + 12] = 0;
+      const gq = (dq + 1) * 4096;
+      for (let x = x0; x <= x1; x++) {
+        const t = clamp((x + 0.5 - xa) / span, 0, 1), z = 1 / (iN + (iF - iN) * t);
+        const yt = ytA + (ytB - ytA) * t, yb = ybA + (ybB - ybA) * t, fz = fogAt(z), g = gq + Math.round((1 - fz) * 4095);
+        const fr = FOG[0] * fz, fg = FOG[1] * fz, fb_ = FOG[2] * fz;
+        for (let y = Math.max(0, Math.ceil(yt)), y1 = Math.min(H - 1, Math.ceil(yb) - 1), i = y * W + x; y <= y1; y++, i += W) {
+          const j = i * 3; col[j] = fr; col[j + 1] = fg; col[j + 2] = fb_; refl[i] = 0; GID[i] = g;
+        }
+      }
+    }
+    else for (let x = x0; x <= x1; x++) {
       const t = clamp((x + 0.5 - xa) / span, 0, 1), iz = iN + (iF - iN) * t, z = 1 / iz;
       const u = u0 + (z - Z[k]), yt = ytA + (ytB - ytA) * t, yb = ybA + (ybB - ybA) * t, hp = yb - yt, fz = fogAt(z);
       for (let y = Math.max(0, Math.ceil(yt)); y <= Math.min(H - 1, Math.ceil(yb) - 1); y++) {
@@ -2546,7 +2571,7 @@ function drawWall(k, side, n) {
         if (TR < 0) continue;
         const i = y * W + x, j = i * 3;
         col[j] = TR + (FOG[0] - TR) * fz; col[j + 1] = TG + (FOG[1] - TG) * fz; col[j + 2] = TB + (FOG[2] - TB) * fz;
-        refl[i] = 0;
+        refl[i] = 0; GID[i] = 0;
       }
     }
   }
@@ -2555,14 +2580,23 @@ function drawWall(k, side, n) {
     const s = S[k], xw = CX[k] + wx * s, xo = CX[k] + (wx + sg * 80) * s, fz = fogAt(Z[k]);
     const ytop = GYL[k] - B.h * s, ybot = GYL[k];
     const x0 = Math.max(0, Math.ceil(Math.min(xw, xo))), x1 = Math.min(W - 1, Math.ceil(Math.max(xw, xo)) - 1);
-    for (let x = x0; x <= x1; x++) {
+    const dq = canDefer(B) && x0 <= x1 ? NQ++ : -1;
+    if (dq >= 0) {
+      const o = dq * 16; QD[o] = xw; QD[o + 1] = s; QD[o + 2] = ybot; QD[o + 3] = bi; QD[o + 12] = 1;
+      const g = (dq + 1) * 4096 + Math.round((1 - fz) * 4095), fr = FOG[0] * fz, fg = FOG[1] * fz, fb_ = FOG[2] * fz;
+      for (let x = x0; x <= x1; x++)
+        for (let y = Math.max(0, Math.ceil(ytop)), y1 = Math.min(H - 1, Math.ceil(ybot) - 1), i = y * W + x; y <= y1; y++, i += W) {
+          const j = i * 3; col[j] = fr; col[j + 1] = fg; col[j + 2] = fb_; refl[i] = 0; GID[i] = g;
+        }
+    }
+    else for (let x = x0; x <= x1; x++) {
       const u = Math.abs(x + 0.5 - xw) / s;
       for (let y = Math.max(0, Math.ceil(ytop)); y <= Math.min(H - 1, Math.ceil(ybot) - 1); y++) {
         wallTex(B, u, (ybot - y - 0.5) / s, true, 1 / s);
         if (TR < 0) continue;
         const i = y * W + x, j = i * 3, r = TR * 0.7, g = TG * 0.7, b = TB * 0.7;
         col[j] = r + (FOG[0] - r) * fz; col[j + 1] = g + (FOG[1] - g) * fz; col[j + 2] = b + (FOG[2] - b) * fz;
-        refl[i] = 0;
+        refl[i] = 0; GID[i] = 0;
       }
     }
   }
@@ -2573,9 +2607,9 @@ function drawWall(k, side, n) {
       const fz = fogAt(PZ), rx = PCX + (wx + sg * 13) * PS, ry = PGL - B.h * PS;
       if (B.roofKind === 2) for (let i = 0; i < 8; i++) {             // landing lights chasing round the pad
         const a = i / 8 * 2 * Math.PI, on = ((i - Math.floor(T * 6)) % 8 + 8) % 8 < 2;
-        if (on && projAt(k, 7 * Math.sin(a))) addLight(PCX + (wx + sg * (13 + 7 * Math.cos(a))) * PS, PGL - B.h * PS, clamp(1.2 * PS, 2, 10), [255, 220, 120], 0.6 * (1 - fz));
+        if (on && projAt(k, 7 * Math.sin(a))) addLight(PCX + (wx + sg * (13 + 7 * Math.cos(a))) * PS, PGL - B.h * PS, clamp(1.2 * PS, 2 * PXS, 10 * PXS), [255, 220, 120], 0.6 * (1 - fz));
       }
-      else addLight(rx, ry, clamp(8 * PS, 4, 30), B.roofKind === 3 ? [255, 190, 110] : B.lobby, 0.3 * (1 - fz));
+      else addLight(rx, ry, clamp(8 * PS, 4 * PXS, 30 * PXS), B.roofKind === 3 ? [255, 190, 110] : B.lobby, 0.3 * (1 - fz));
     }
   }
   // antenna masts with aviation lights on the tall towers
@@ -2584,19 +2618,19 @@ function drawWall(k, side, n) {
   }
   else if (n === B.start + (B.len >> 1) && B.landmark && projAt(k, 0) && PZ < 700) {
     const s = PS, fz = fogAt(PZ), ax = PCX + (wx + sg * 5) * s, top = PGL - B.h * s, mh = Math.max(0, Math.min(10 + hash(B.id, 1, 5) * 22, LH[2] - 3 - B.h)) * s;
-    rect(ax - Math.max(0.5, 0.15 * s), ax + Math.max(0.5, 0.15 * s), top - mh, top, [40, 38, 52], fz);
-    if (s > 1.5) rect(ax - 0.6 * s, ax + 0.6 * s, top - mh * 0.55, top - mh * 0.55 + Math.max(1, 0.15 * s), [40, 38, 52], fz);
+    rect(ax - Math.max(0.5 * PXS, 0.15 * s), ax + Math.max(0.5 * PXS, 0.15 * s), top - mh, top, [40, 38, 52], fz);
+    if (s > 1.5) rect(ax - 0.6 * s, ax + 0.6 * s, top - mh * 0.55, top - mh * 0.55 + Math.max(1 * PXS, 0.15 * s), [40, 38, 52], fz);
     if ((T * 1.2 + B.id * 0.37) % 1.5 < 0.5) {
       const xx = Math.round(ax), yy = Math.round(top - mh);
       if (xx >= 0 && xx < W && yy >= 0 && yy < H) putc(xx, yy, [255, 50, 50]);
-      addLight(ax, top - mh, clamp(1.5 * s, 3, 14), [255, 40, 40], 0.6 * (1 - fz));
+      addLight(ax, top - mh, clamp(1.5 * s, 3 * PXS, 14 * PXS), [255, 40, 40], 0.6 * (1 - fz));
     }
   }
   // blade signs and billboard glow
   for (const sn of B.signs) if (sn.u >= u0 && sn.u < u0 + SEGL) drawSign(k, sn.u - u0, wx, -sg, sn);
   if (B.style === 7) for (let uc = 5; uc < B.len * SEGL; uc += 10) {
     if (uc >= u0 && uc < u0 + SEGL && projAt(k, uc - u0) && PZ < 200)
-      addLight(PCX + wx * PS, PGL - (B.h / 2 + 1) * PS, Math.min(26, 5 * PS), B.shop[Math.floor(uc / 10) % 3], 0.25 * (1 - fogAt(PZ)));
+      addLight(PCX + wx * PS, PGL - (B.h / 2 + 1) * PS, Math.min(26 * PXS, 5 * PS), B.shop[Math.floor(uc / 10) % 3], 0.25 * (1 - fogAt(PZ)));
   }
   for (const b of B.bbs) {
     const uc = (b.u0 + b.u1) / 2;
@@ -2642,29 +2676,29 @@ function drawSign(k, dz, wx, inward, sn) {
       refl[y * W + x] = 0;
     }
   }
-  addLight((xa + xb) / 2, (yt + yb) / 2, Math.max(3, 2.2 * s), sn.c, 0.36 * flick * (1 - fz));
+  addLight((xa + xb) / 2, (yt + yb) / 2, Math.max(3 * PXS, 2.2 * s), sn.c, 0.36 * flick * (1 - fz));
 }
 
 function rect(xa, xb, ya, yb, c, fz) {
   const r = c[0] + (FOG[0] - c[0]) * fz, g = c[1] + (FOG[1] - c[1]) * fz, b = c[2] + (FOG[2] - c[2]) * fz;
   for (let x = Math.max(0, Math.ceil(Math.min(xa, xb))); x <= Math.min(W - 1, Math.ceil(Math.max(xa, xb)) - 1); x++)
     for (let y = Math.max(0, Math.ceil(ya)); y <= Math.min(H - 1, Math.ceil(yb) - 1); y++) {
-      const i = y * W + x, j = i * 3; col[j] = r; col[j + 1] = g; col[j + 2] = b; refl[i] = 0;
+      const i = y * W + x, j = i * 3; col[j] = r; col[j + 1] = g; col[j + 2] = b; refl[i] = 0; GID[i] = 0;
     }
 }
 
 function drawLamp(k, n, sg) {
   if (!projAt(k, 0)) return;
-  const s = PS, fz = fogAt(PZ), lat = sg * (RW + 0.6), lat2 = sg * (RW - 2), w = Math.max(1, 0.18 * s);
+  const s = PS, fz = fogAt(PZ), lat = sg * (RW + 0.6), lat2 = sg * (RW - 2), w = Math.max(1 * PXS, 0.18 * s);
   const x = PCX + lat * s, x2 = PCX + lat2 * s, top = PGY - 7 * s;
   rect(x - w / 2, x + w / 2, top, PGY, [26, 22, 36], fz);
   rect(Math.min(x, x2), Math.max(x, x2), top - 0.2 * s - 1, top, [26, 22, 36], fz);
   const lc = district(n) === 4 ? [255, 150, 60] : n % 18 === 0 ? [255, 70, 200] : [120, 240, 255];
   const off = TH.dark > 0.5 && hash(n * 3 + sg, Math.floor(T * 5), 17) < 0.7;   // blackout: lamps sputter
-  rect(x2 - 0.5 * s, x2 + 0.5 * s, top, top + Math.max(1, 0.22 * s), off ? [30, 28, 34] : mix(lc, [255, 255, 255], 0.5), fz * 0.6);
+  rect(x2 - 0.5 * s, x2 + 0.5 * s, top, top + Math.max(1 * PXS, 0.22 * s), off ? [30, 28, 34] : mix(lc, [255, 255, 255], 0.5), fz * 0.6);
   if (PZ < 220 && !off) {
-    addLight(x2, top + 1, Math.min(14, Math.max(3, 1.8 * s)), lc, 0.55 * (1 - fz));
-    addLight(x2, PGY - 0.2 * s, Math.min(22, Math.max(3, 3 * s)), lc, 0.16 * (1 - fz));
+    addLight(x2, top + 1, Math.min(14 * PXS, Math.max(3 * PXS, 1.8 * s)), lc, 0.55 * (1 - fz));
+    addLight(x2, PGY - 0.2 * s, Math.min(22 * PXS, Math.max(3 * PXS, 3 * s)), lc, 0.16 * (1 - fz));
   }
 }
 
@@ -2676,7 +2710,7 @@ function drawBridge(k) {
     rect(xp - 0.5 * s, xp + 0.5 * s, yu, PGY, [24, 20, 36], fz);
   }
   rect(PCX - 70 * s, PCX + 70 * s, ytop, yu, [22, 18, 32], fz);
-  rect(PCX - 70 * s, PCX + 70 * s, ytop, ytop + Math.max(1, 0.3 * s), [255, 46, 170], fz * 0.5);
+  rect(PCX - 70 * s, PCX + 70 * s, ytop, ytop + Math.max(1 * PXS, 0.3 * s), [255, 46, 170], fz * 0.5);
   // lit lettering across the middle
   const xa = PCX - 8 * s, xb = PCX + 8 * s, ya = PGY - 10.2 * s, yb = PGY - 8.9 * s;
   for (let x = Math.max(0, Math.ceil(xa)); x <= Math.min(W - 1, Math.ceil(xb) - 1); x++) {
@@ -2686,8 +2720,8 @@ function drawBridge(k) {
       if (gi % 4 !== 3 && hash(gi >> 2, (gi & 3) + gj * 3, 777) < 0.55) put(x, y, ...mix([0, 230, 255], FOG, fz));
     }
   }
-  for (let l = -24; l <= 24; l += 4) addLight(PCX + l * s, yu + 1, Math.max(2, 1.4 * s), [255, 200, 120], 0.4 * (1 - fz));
-  addLight(PCX, (ya + yb) / 2, Math.max(4, 7 * s), [0, 230, 255], 0.35 * (1 - fz));
+  for (let l = -24; l <= 24; l += 4) addLight(PCX + l * s, yu + 1, Math.max(2 * PXS, 1.4 * s), [255, 200, 120], 0.4 * (1 - fz));
+  addLight(PCX, (ya + yb) / 2, Math.max(4 * PXS, 7 * s), [0, 230, 255], 0.35 * (1 - fz));
 }
 
 function drawCar(c, k, dz) {
@@ -2728,13 +2762,13 @@ function drawCar(c, k, dz) {
   if (PZ > 220) return;
   if (rear) {
     const bi = c.brk ? 0.95 : 0.5;
-    addLight(left + w * 0.14, ly, clamp(w * (c.brk ? 0.7 : 0.45), 2, 20), lc, bi * vis);
-    addLight(left + w * 0.86, ly, clamp(w * (c.brk ? 0.7 : 0.45), 2, 20), lc, bi * vis);
+    addLight(left + w * 0.14, ly, clamp(w * (c.brk ? 0.7 : 0.45), 2 * PXS, 20 * PXS), lc, bi * vis);
+    addLight(left + w * 0.86, ly, clamp(w * (c.brk ? 0.7 : 0.45), 2 * PXS, 20 * PXS), lc, bi * vis);
   } else {
-    addLight(left + w * 0.14, ly, clamp(w * 0.9, 3, 30), lc, 0.85 * vis);
-    addLight(left + w * 0.86, ly, clamp(w * 0.9, 3, 30), lc, 0.85 * vis);
+    addLight(left + w * 0.14, ly, clamp(w * 0.9, 3 * PXS, 30 * PXS), lc, 0.85 * vis);
+    addLight(left + w * 0.86, ly, clamp(w * 0.9, 3 * PXS, 30 * PXS), lc, 0.85 * vis);
   }
-  if (c.neon) addLight(xc, yb, clamp(w * 0.75, 2, 24), c.under, 0.4 * vis);
+  if (c.neon) addLight(xc, yb, clamp(w * 0.75, 2 * PXS, 24 * PXS), c.under, 0.4 * vis);
 }
 
 // tiny 3x5 font
@@ -3105,14 +3139,14 @@ function drawCycle(k, dz, bxw, hy) {
       const i = yy * W + xx;
       if (zp >= ZB[i]) continue;
       if (ZB[i] === 1e9) touched.push(i);
-      ZB[i] = zp; col[i * 3] = r; col[i * 3 + 1] = g; col[i * 3 + 2] = b; refl[i] = 0;
+      ZB[i] = zp; col[i * 3] = r; col[i * 3 + 1] = g; col[i * 3 + 2] = b; refl[i] = 0; GID[i] = 0;
     }
   }
   for (const i of touched) ZB[i] = 1e9;
   const pr = (x, y, z) => { const sp = F / (PZ0 + z); return [W / 2 + (xr0 + x * cl + y * sl) * sp, hy + (yr0 - (-x * sl + y * cl)) * sp, sp]; };
   for (const zc of [-0.98, 1.0]) for (let i = 0; i < 10; i++) {          // a soft halo along each glowing ring
     const a = i / 10 * 2 * Math.PI, [gx, gy, sp] = pr(-0.13, 0.5 + 0.45 * Math.cos(a), zc + 0.45 * Math.sin(a));
-    addLight(gx, gy, clamp(0.16 * sp, 2, 8), [0, 220, 255], 0.22 * (1 - fz * 0.5));
+    addLight(gx, gy, clamp(0.16 * sp, 2 * PXS, 8 * PXS), [0, 220, 255], 0.22 * (1 - fz * 0.5));
   }
 }
 
@@ -3242,7 +3276,7 @@ function render() {
   camZ = realZ;
 }
 function renderScene(realZ, realPx) {
-  useScene();
+  useSky();
   F = F0 * (1 - 0.14 * smooth(45, 85, speed));      // the view widens as you go faster
   vib = (Math.random() - 0.5) * 2 * smooth(62, 83, speed);   // and the bars hum at the top end
   lb.fill(0); refl.fill(0);
@@ -3252,11 +3286,29 @@ function renderScene(realZ, realPx) {
   // the higher you ride, the more the camera tilts down to show the layers below
   const raise = (hill[b0] - BASE[b0]) + ((hill[b1] - BASE[b1]) - (hill[b0] - BASE[b0])) * frac;
   crownK = smooth(LH[1] + 15, LH[2], raise);
-  const sh = shake * 3, hy = HOR - OH * CAM.pitch + OH * (0.14 * smooth(0, 35, raise) - 0.16 * crownK) + (Math.random() - 0.5) * sh;   // the crown tips the view down over the roofs
+  const sh = shake * 3; let hy = HOR - OH * CAM.pitch + OH * (0.14 * smooth(0, 35, raise) - 0.16 * crownK) + (Math.random() - 0.5) * sh;   // the crown tips the view down over the roofs
   starK = smooth(10, LH[2], raise);
   horizY = hy;
   const camX = (CAM.fixed ? CAM.fixed.x : realPx) + CAM.lat + (Math.random() - 0.5) * shake * 0.4;
   blendTheme(base);
+
+  // the sky on the art grid, then spread over the finer city buffer
+  const lbS = lb; if (RS > 1) { lb = lb1; lb.fill(0); }
+  drawSky(hy);
+  const F1 = F;
+  if (RS > 1) {
+    lb = lbS;
+    const r = RS, w1 = SWD, w2 = SW2;
+    for (let y = 0; y < SHD; y++) for (let x = 0; x < w1; x++) {
+      const a = (y * w1 + x) * 3, cr = colS1[a], cg = colS1[a + 1], cb = colS1[a + 2], lr = lb1[a], lg = lb1[a + 1], lbb = lb1[a + 2];
+      for (let dy = 0; dy < r; dy++) for (let dx = 0, o = ((y * r + dy) * w2 + x * r) * 3; dx < r; dx++, o += 3) {
+        colS[o] = cr; colS[o + 1] = cg; colS[o + 2] = cb; lb[o] = lr; lb[o + 1] = lg; lb[o + 2] = lbb;
+      }
+    }
+  }
+  useScene();
+  hy = hy * RS; F = F1 * RS;
+  GID.fill(0); NQ = 0; DEFER = !!(gl && GPU.ok && GPU.rtt && !forceCPU);
 
   let x = 0, dx = -curve[b0] * frac;
   for (let k = 0; k <= DRAW; k++) {
@@ -3269,8 +3321,6 @@ function renderScene(realZ, realPx) {
 
     x += dx; dx += curve[n];
   }
-
-  drawSky(hy);
 
   // traffic sorted into segments
   const buckets = new Map();
@@ -3389,6 +3439,7 @@ function renderScene(realZ, realPx) {
   }
 
   if (lightOn && !outside()) headlight(hy);
+  F = F1;
   if (gl && GPU.ok && !forceCPU) { gpuFinish(hy); return; }
 
   // glow, then wet-road reflections of everything above the horizon
@@ -3441,6 +3492,356 @@ function renderScene(realZ, realPx) {
   if (!forceCPU) present8();
 }
 
+
+// ---------- the building faces on the graphics chip: wallTex and billboard, formula for formula ----------
+// drawWall leaves each building pixel as "which wall quad, and how much of the texture shows" (fog and anything
+// translucent drawn over it later), and this pass fills in the texture at the city's full resolution
+const WALL_GLSL = `
+uniform highp sampler2D uBld, uQuad, uGid;
+uniform float uT, uFlash2, uT4m6;
+uniform ivec2 uFont[10];
+const vec3 WIN_[6] = vec3[6](vec3(255, 200, 120), vec3(255, 170, 90), vec3(120, 220, 255), vec3(255, 120, 200), vec3(200, 190, 255), vec3(255, 236, 190));
+const vec3 COOL_[4] = vec3[4](vec3(180, 210, 255), vec3(140, 200, 255), vec3(210, 230, 255), vec3(120, 180, 240));
+const vec3 STK_[6] = vec3[6](vec3(110, 50, 30), vec3(40, 90, 90), vec3(40, 70, 130), vec3(90, 60, 40), vec3(70, 70, 80), vec3(50, 80, 40));
+const float LH1 = ${LH[1]}.0, LH2 = ${LH[2]}.0;
+float jm(float a, float b) { return a - b * trunc(a / b); }                   // JavaScript's %, sign of the dividend
+float hsh(int x, int y, int s) {
+  uint h = uint(x) * 374761393u + uint(y) * 668265263u + uint(s) * 1442695041u;
+  h = (h ^ (h >> 13u)) * 1274126177u;
+  h ^= h >> 16u;
+  return float(h >> 8u) / 16777216.0;           // the top 24 bits, so it stays below 1 exactly as in JavaScript
+}
+float vns(float x, float y, int s) {
+  float fx0 = floor(x), fy0 = floor(y); int ix = int(fx0), iy = int(fy0); float fx = x - fx0, fy = y - fy0;
+  float a = hsh(ix, iy, s), b = hsh(ix + 1, iy, s), c = hsh(ix, iy + 1, s), d = hsh(ix + 1, iy + 1, s);
+  float ux = fx * fx * (3.0 - 2.0 * fx), uy = fy * fy * (3.0 - 2.0 * fy);
+  return a + (b - a) * ux + (c - a) * uy + (a - b - c + d) * ux * uy;
+}
+// one building: 18 texels per row (see bldPack)
+int bI; int bStyle, bSeed, bId, bDark, bNbb; float bH, bWinP; bool bHasCrown; vec3 bBase, bCrown, bLobby, bAvg, bShop0, bShop1, bShop2;
+vec4 bt(int i) { return texelFetch(uBld, ivec2(i, bI), 0); }
+void loadB(int bi) {
+  bI = bi; vec4 t0 = bt(0), t1 = bt(1);
+  bStyle = int(t0.x); bH = t0.y; bSeed = int(t0.z); bId = int(t0.w);
+  bWinP = t1.x; bDark = int(t1.y); bHasCrown = t1.z > 0.5; bNbb = int(t1.w);
+  bBase = bt(2).rgb; bCrown = bt(3).rgb; bLobby = bt(4).rgb; bAvg = bt(5).rgb; bShop0 = bt(6).rgb; bShop1 = bt(7).rgb; bShop2 = bt(8).rgb;
+}
+vec3 shop(int i) { return i == 0 ? bShop0 : i == 1 ? bShop1 : bShop2; }
+// billboard b: texels 10+4b .. 13+4b = (u0,u1,v0,v1), (kind, seed, seed mod 2pi, seed mod 4), c1, c2
+vec3 billboard(int b, float uu, float vv) {
+  if (uu < 0.04 || uu > 0.96 || vv < 0.07 || vv > 0.93) return vec3(34, 30, 44);
+  vec4 k = bt(11 + 4 * b); vec3 c1 = bt(12 + 4 * b).rgb, c2 = bt(13 + 4 * b).rgb;
+  int kind = int(k.x), seed = int(k.y); float sp = k.z, s4 = k.w;
+  float qu = floor(uu * 24.0) / 24.0, qv = floor(vv * 12.0) / 12.0;
+  vec3 c;
+  if (kind == 0) {
+    float t = jm(qv * 2.0 + qu * 0.5 + uT * 0.4, 1.0);
+    c = mix(c1, c2, t < 0.5 ? t * 2.0 : 2.0 - t * 2.0);
+  } else if (kind == 1) {
+    int gx = int(floor((uu - 0.1) / 0.8 * 7.0)), gy = int(floor((vv - 0.15) / 0.7 * 5.0));
+    bool on = gx >= 0 && gx < 7 && gy >= 0 && gy < 5 && hsh(gx % 7 < 4 ? gx : 6 - gx, gy, seed) < 0.55;
+    c = on ? c1 : mix(c2, vec3(0), 0.78);
+    if (hsh(int(floor(uT * 4.0)), seed, 2) < 0.08) c = mix(c, vec3(255), 0.5);
+  } else if (kind == 3) {
+    float hgt = 0.5 + 0.45 * sin(uT * 5.0 + floor(uu * 16.0) * 0.9 + sp);
+    c = (1.0 - vv) < hgt ? mix(c1, c2, 1.0 - vv) : mix(c2, vec3(0), 0.8);
+  } else if (kind == 4) {
+    float ex = abs(qu - 0.5) - 0.18, ey = qv - 0.4;
+    bool eyes = ex * ex * 9.0 + ey * ey * 30.0 < 0.4 && jm(uT * 0.7 + s4, 4.0) > 0.2;
+    c = eyes || (abs(qv - 0.72) < 0.05 && abs(qu - 0.5) < 0.22) ? c1 : mix(c2, vec3(0), 0.65);
+  } else {
+    float d = length(vec2((qu - 0.5) * 2.2, (qv - 0.5) * 1.6)), r = 0.45 + sin(uT * 3.0 + sp) * 0.12;
+    c = d < r * 0.45 ? vec3(10, 10, 20) : d < r ? c1 : mix(c2, vec3(0), 0.7);
+  }
+  float scan = (int(floor(vv * 24.0)) & 1) == 1 ? 0.82 : 1.0;
+  return c * scan;
+}
+bool fontBit(int digit, int i) { ivec2 f = uFont[digit]; return i < 8 ? ((f.x >> i) & 1) == 1 : ((f.y >> (i - 8)) & 1) == 1; }
+vec3 wallTex(float u, float v, bool front, float mpp) {
+  if (bHasCrown && v > bH - 0.6 && bStyle != 2) return bCrown;
+  if (bStyle != 11) for (int q = 1; q < 3; q++) {
+    float lv = v - (q == 1 ? LH1 : LH2);
+    if (lv > -0.7 && lv < 3.4 && bH > (q == 1 ? LH1 : LH2) + 5.0) {
+      if (lv < -0.25) return bLobby * (bDark == 1 ? 0.3 : 1.0);
+      if (lv > 3.0 || jm(u, 3.0) < 0.18) return vec3(34, 30, 44);
+      float k = (0.5 + 0.25 * lv / 3.0) * (bDark == 1 ? 0.25 : 1.0);
+      if (mpp > 0.9) return vec3(230, 190, 150) * k;
+      float cf = floor(u / 1.3); int cell = int(cf); float fu = u / 1.3 - cf;
+      if (mpp < 0.35 && lv < 1.8 && fu > 0.4 && fu < 0.65 && hsh(cell, q, bSeed) < 0.2 && (lv < 1.45 || fu > 0.45 && fu < 0.6)) return vec3(16, 12, 22);
+      return vec3(255, 205, 160) * k;
+    }
+  }
+  if (!front) for (int b = 0; b < 2; b++) {
+    if (b >= bNbb) break;
+    vec4 r = bt(10 + 4 * b);
+    if (u >= r.x && u < r.y && v >= r.z && v < r.w) return billboard(b, (u - r.x) / (r.y - r.x), 1.0 - (v - r.z) / (r.w - r.z));
+  }
+  vec3 bc = bBase;
+  if (bStyle == 2) {
+    float bf = floor(u / 1.8); int bayN = int(bf); float fu = u / 1.8 - bf;
+    if (bayN % 4 == 0 && fu < 0.12 && v > 5.0) {
+      float run = jm(jm(v * 0.35 - uT4m6 + float(bayN) * 0.37 + float(bSeed % 6), 6.0) + 6.0, 6.0);
+      return bCrown * (run < 1.2 ? 1.0 : 0.28);
+    }
+    if (mpp > 1.2) return bAvg;
+    if (v < 5.0) {
+      bool m = jm(u, 3.0) < 0.15 || v > 4.6;
+      if (m) return bc * 0.7;
+      return vec3(200, 190, 170) * (0.3 + 0.15 * (v / 5.0));
+    }
+    float ff = floor(v / 3.6); int fl = int(ff); float fv = v / 3.6 - ff;
+    if (fv > 0.12 && fv < 0.92 && fu > 0.06 && fu < 0.94) {
+      if (hsh(bayN, fl, bSeed) < bWinP) {
+        vec3 c = COOL_[int(hsh(bayN, fl, bSeed + 1) * 4.0)]; float k = 0.45 + 0.4 * hsh(bayN, fl, bSeed + 2);
+        return c * k;
+      }
+      return vec3(18.0 + fv * 22.0, 26.0 + fv * 22.0, 46.0 + fv * 30.0);
+    }
+    return bc * 1.3;
+  }
+  if (bStyle == 4 && v < 16.0) {
+    if (bHasCrown && v > bH - 2.2 && v < bH - 1.4) return bCrown;
+    float cf = floor(u / 9.0); int cell = int(cf); float cu = u - cf * 9.0;
+    if (v < 5.5 && cu > 1.5 && cu < 7.5) {
+      if (hsh(cell, bId, 9) < 0.35) return vec3(255, 170, 90) * (0.45 + 0.2 * (v / 5.5));
+      bool sl = jm(v, 0.5) < 0.08; return bc * (sl ? 0.6 : 1.1);
+    }
+    float rib = mpp < 0.3 && jm(u, 0.7) < 0.15 ? 0.75 : 1.0;
+    return bc * rib;
+  }
+  if (bStyle == 6 && v >= 3.8) {
+    float ff = floor(v / 3.2); int fl = int(ff); float fv = v / 3.2 - ff;
+    if (fv < 0.2 && mpp < 0.9) {
+      float hh = hsh(int(floor(u * 2.5)), fl, bSeed);
+      vec3 c = hh < 0.35 ? vec3(50, 200, 120) : hh < 0.5 ? vec3(200, 80, 230) : hh < 0.62 ? vec3(60, 220, 230) : vec3(70, 64, 80);
+      return c * (hh < 0.62 ? 0.8 : 1.0);
+    }
+  }
+  if (bStyle == 7 && v >= 3.8) {
+    float cf = floor(u / 10.0); int cell = int(cf); float cu = u - cf * 10.0, top = min(bH - 2.5, 32.0);
+    if (cu > 0.6 && cu < 9.4 && v > 5.0 && v < top) {
+      vec3 c1 = shop(cell % 3), c2 = shop((cell + 1) % 3);
+      if (mpp > 1.0) return c1 * 0.45;
+      float uu = (cu - 0.6) / 8.8, vv = 1.0 - (v - 5.0) / (top - 5.0); int kind = int(hsh(cell, bId, 7) * 4.0);
+      vec3 c = vec3(8, 8, 14);
+      if (kind == 0) {
+        int num = 99 - (int(floor(uT * 2.0 + float(cell * 7))) % 100), gx = int(floor(uu * 9.0)) - 1, gy = int(floor(vv * 7.0)) - 1;
+        if (gx >= 0 && gx < 7 && gx != 3 && gy >= 0 && gy < 5) {
+          int dg = gx < 3 ? num / 10 : num % 10;
+          if (fontBit(dg, gy * 3 + (gx < 3 ? gx : gx - 4))) c = c1;
+        }
+      } else if (kind == 1) {
+        float bar = floor(uu * 12.0), hgt = 0.5 + 0.5 * sin(uT * 4.0 + bar * 1.3 + float(cell));
+        if ((1.0 - vv) < hgt * 0.9 && jm(uu * 12.0, 1.0) < 0.8) c = mix(c1, c2, 1.0 - vv);
+      } else if (kind == 2) { float t = jm(jm(uu * 3.0 + vv * 2.0 - uT * 0.8, 1.0) + 1.0, 1.0); c = mix(c1, c2, t < 0.5 ? t * 2.0 : 2.0 - t * 2.0); }
+      else { float dd = length(vec2((uu - 0.5) * 2.0, (vv - 0.5) * 1.6)), r = 0.4 + sin(uT * 3.0 + float(cell)) * 0.12; c = dd < r * 0.4 ? vec3(255) : dd < r ? c1 : mix(c2, vec3(0), 0.75); }
+      float scan = (int(floor(vv * 30.0)) & 1) == 1 ? 0.8 : 1.0;
+      return c * scan;
+    }
+    if (v < top + 0.8 && (cu <= 0.6 || cu >= 9.4 || v >= top)) return vec3(26, 24, 34);
+  }
+  if (bStyle == 9) {
+    if (mpp > 0.8) return bAvg;
+    float ff = floor(v / 2.6); int fl = int(ff); float fv = v / 2.6 - ff, uo = u + hsh(fl, 1, bSeed) * 2.4, cf = floor(uo / 2.4); int cell = int(cf); float fu = uo / 2.4 - cf;
+    if (fu < 0.06 || fv < 0.07) return vec3(14, 11, 12);
+    float hh = hsh(cell, fl, bSeed);
+    if (hh < 0.08) return vec3(6, 5, 8);
+    if (fu > 0.32 && fu < 0.68 && fv > 0.3 && fv < 0.72) {
+      if (hsh(cell, fl, bSeed + 3) < bWinP) return WIN_[int(hh * 6.0)] * 0.8;
+      return vec3(16, 14, 22);
+    }
+    if (fv > 0.76 && fu > 0.08 && fu < 0.3 && hh > 0.7) return vec3(110, 110, 116);
+    return STK_[int(hsh(cell, fl, bSeed + 1) * 6.0)] * (0.45 + 0.35 * hh);
+  }
+  if (bStyle == 10) {
+    float scanV = jm(uT * 4.0 + float(bSeed % 50), bH);
+    if (abs(v - scanV) < max(0.15, mpp * 0.6)) return vec3(120, 255, 140);
+    if (mpp < 0.45) {
+      float cxf = floor(u / 0.5), cyf = floor(v / 0.5); int cx_ = int(cxf), cy_ = int(cyf); float hh = hsh(cx_, cy_, bSeed);
+      float fu = u / 0.5 - cxf, fv = v / 0.5 - cyf;
+      if (hh < 0.06 && fu > 0.3 && fu < 0.7 && fv > 0.35 && fv < 0.65) {
+        bool on = hsh(cx_, cy_, int(floor(uT * (2.0 + hh * 30.0)))) < 0.6;
+        vec3 c = hh < 0.035 ? vec3(60, 255, 120) : vec3(70, 160, 255);
+        return on ? c : c * 0.15;
+      }
+    }
+    bool pnl = mpp < 0.6 && jm(u, 3.0) < 0.08;
+    return pnl ? vec3(24, 28, 34) : vec3(10, 12, 16);
+  }
+  if (bStyle == 12) {
+    if (v > bH - 1.2) { bool e = v > bH - 0.3; return e ? vec3(70, 52, 50) : vec3(28, 22, 26); }
+    if (v < 3.8) {
+      if (v > 2.0 && v < 2.8 && jm(u, 4.0) > 0.5 && jm(u, 4.0) < 3.5) { vec3 c = hsh(int(floor(u / 4.0)), 1, bSeed) < 0.5 ? vec3(170, 30, 30) : vec3(30, 40, 110); float sl = jm(u, 0.8) < 0.08 ? 0.6 : 1.0; return c * sl; }
+      if (v > 0.2 && v < 2.0) { bool lat = jm(u, 0.5) < 0.06 || jm(v, 0.6) < 0.06; return lat ? vec3(60, 40, 30) : vec3(200, 160, 110); }
+    }
+    if (mpp < 0.8) {
+      float ff = floor(v / 3.0); int fl = int(ff); float fv = v / 3.0 - ff, bf = floor(u / 2.4); int bayN = int(bf); float fu = u / 2.4 - bf;
+      if (fu > 0.2 && fu < 0.8 && fv > 0.3 && fv < 0.75) {
+        if (jm(fu * 2.4, 0.4) < 0.05 || jm(fv * 3.0, 0.4) < 0.05) return vec3(50, 34, 26);
+        bool lit = hsh(bayN, fl, bSeed) < 0.6; return lit ? vec3(230, 170, 110) : vec3(60, 44, 34);
+      }
+      float pk = jm(v, 0.5) < 0.05 ? 0.7 : 1.0; return bc * pk;
+    }
+    return vec3(bc.r * 1.2, bc.g * 1.1, bc.b);
+  }
+  if (bStyle == 15) {
+    if (v > bH - 0.8) return vec3(bc.r * 1.35, bc.g * 1.3, bc.b * 1.2);
+    float band = vns(u * 0.03, v * 0.35, bSeed % 997) * 0.7 + vns(u * 0.2, v * 1.2, 7) * 0.3;
+    if (mpp < 0.8) {
+      float ff = floor(v / 4.0); int fl = int(ff); float fv = v / 4.0 - ff, bf = floor(u / 5.0); int bayN = int(bf); float fu = u / 5.0 - bf;
+      if (fu > 0.3 && fu < 0.6 && fv > 0.35 && fv < 0.7 && hsh(bayN, fl, bSeed) < 0.12) { vec3 c = WIN_[int(hsh(bayN, fl, 2) * 6.0)]; return vec3(c.r * 0.8, c.g * 0.75, c.b * 0.6); }
+    }
+    return bc * (0.65 + band * 0.7);
+  }
+  if (bStyle == ${D.FORGE}) {
+    if (v < 3.8) {
+      float cf = floor(u / 6.0); int cell = int(cf); float cu = u - cf * 6.0;
+      if (cu > 1.0 && cu < 5.0 && v < 3.0 && hsh(cell, bId, 13) < 0.6) return vec3(255, 120, 40) * (0.6 + 0.4 * sin(uT * 5.0 + float(cell)));
+    } else {
+      if (mpp > 1.0) return bAvg;
+      float ff = floor(v / 5.0); int fl = int(ff); float fv = v / 5.0 - ff; int bay = int(floor(u / 3.0));
+      if (fv > 0.45 && fv < 0.6 && hsh(bay, fl, bSeed) < bWinP) return vec3(255, 110, 30) * (0.7 + 0.3 * sin(uT * 7.0 + float(bay) * 1.7 + float(fl)));
+      if (jm(u, 7.0) < 0.6 && mpp < 0.8) return vec3(62, 40, 34);
+    }
+    float seam = mpp < 0.6 && jm(v, 2.5) < 0.12 ? 0.6 : 1.0;
+    return bc * seam;
+  }
+  if (bStyle == ${D.TERRACE}) {
+    float ff = floor(v / 5.0); int fl = int(ff); float fv = v / 5.0 - ff;
+    if (fl > 0 && fv < 0.18) {
+      if (mpp > 0.9) return vec3(40, 90, 50);
+      int row = int(floor(u * 2.5)) & 1; float sh = 0.8 + 0.2 * sin(u * 0.7 + uT * 1.2 + float(fl));
+      return (row == 1 ? vec3(70, 150, 70) : vec3(30, 90, 80)) * sh;
+    }
+    if (fl > 0 && fv < 0.22) return vec3(20, 24, 20);
+    if (mpp < 0.8 && v > 3.8) {
+      float bf = floor(u / 3.0); int bay = int(bf); float fu = u / 3.0 - bf;
+      if (fu > 0.25 && fu < 0.75 && fv > 0.35 && fv < 0.8) {
+        if (hsh(bay, fl, bSeed) < bWinP) { vec3 c = WIN_[int(hsh(bay, fl, 4) * 6.0)]; return vec3(c.r * 0.8, c.g * 0.8, c.b * 0.7); }
+        return vec3(14, 18, 16);
+      }
+    }
+    if (v >= 3.8 || mpp >= 0.8) {
+      float st = mpp < 0.5 && (jm(u + float(fl & 1) * 0.6, 1.2) < 0.06 || jm(v, 1.0) < 0.05) ? 0.7 : 1.0;
+      return bc * st;
+    }
+  }
+  if (bStyle == ${D.REEF}) {
+    if (mpp > 1.1) return bAvg;
+    float kelp = jm(jm(u - sin(v * 0.25 + uT * 0.8 + u * 0.1) * 0.9, 3.5) + 3.5, 3.5);
+    if (kelp < 0.35 && hsh(int(floor(u / 3.5)), 1, bSeed) < 0.5) return vec3(30.0, 120.0 + 40.0 * sin(v * 0.5), 60.0);
+    float ff = floor(v / 4.0); int fl = int(ff); float fv = v / 4.0 - ff, bf = floor(u / 3.2); int bay = int(bf); float fu = u / 3.2 - bf, dx = fu - 0.5, dy = fv - 0.55;
+    if (v > 3.0 && dx * dx + dy * dy < 0.06) {
+      if (hsh(bay, fl, bSeed) < bWinP) return vec3(60, 230, 220) * (0.6 + 0.3 * sin(uT * 1.5 + float(bay) + float(fl)));
+      return vec3(6, 20, 30);
+    }
+    float sp = hsh(int(floor(u * 1.5)), int(floor(v * 1.5)), bSeed + 9);
+    if (sp < 0.03 && mpp < 0.5) {
+      vec3 c = sp < 0.015 ? vec3(255, 120, 220) : vec3(120, 255, 240);
+      return c * (0.5 + 0.5 * sin(uT * 2.0 + sp * 300.0));
+    }
+    return bc * (0.7 + 0.6 * (mpp < 0.5 ? vns(u * 0.2, v * 0.2, bSeed % 991) : 0.5));
+  }
+  if (bStyle == ${D.FAIR}) {
+    if (v < 7.0) {
+      if (v > 6.2) { bool on = jm(jm(u * 2.0 - uT * 6.0, 2.0) + 2.0, 2.0) < 1.0; return on ? vec3(255, 220, 140) : vec3(90, 70, 40); }
+      vec3 c = (int(floor(u / 1.2)) & 1) == 1 ? bShop0 : vec3(235, 225, 210);
+      float k = v < 3.0 && jm(u, 6.0) > 1.0 && jm(u, 6.0) < 5.0 ? 1.1 : 0.75;
+      return c * k;
+    }
+    if (mpp > 1.0) return bAvg;
+    float ff = floor(v / 4.0); int fl = int(ff); float fv = v / 4.0 - ff, bf = floor(u / 3.0); int bay = int(bf); float fu = u / 3.0 - bf;
+    if (fv < 0.08 || fu < 0.06) {
+      bool on = ((int(floor((u + v) * 2.0)) - int(floor(uT * 8.0))) % 4 + 4) % 4 == 0;
+      return on ? vec3(255, 230, 150) : vec3(70, 50, 40);
+    }
+    if (hsh(bay, fl, bSeed) < bWinP) return shop(int(hsh(bay, fl, 3) * 3.0)) * 0.7;
+    return bc;
+  }
+  if (bStyle == ${D.RUIN}) {
+    float vn = vns(u * 0.18, v * 0.06, bSeed % 997) + hsh(int(floor(u * 0.9)), int(floor(v * 0.4)), 5) * 0.25;
+    float grow = 0.8 - 0.4 * max(0.0, 1.0 - v / 20.0) - 0.25 * max(0.0, (v - bH + 15.0) / 15.0);
+    if (vn > grow) {
+      bool leaf = mpp < 0.5 && hsh(int(floor(u * 3.0)), int(floor(v * 3.0)), bSeed) < 0.3;
+      return leaf ? vec3(70, 130, 50) : vec3(26, 60, 28);
+    }
+    if (mpp < 0.6 && v > 3.8) {
+      float ff = floor(v / 3.2), bf = floor(u / 2.6); int fl = int(ff), bay = int(bf); float fv = v / 3.2 - ff, fu = u / 2.6 - bf;
+      if (hsh(bay, fl, bSeed + 21) < 0.3 && fv > 0.28 && fv < 0.82 && fu > 0.15 && fu < 0.85) return vec3(4, 4, 6);
+    }
+  }
+  if (bStyle == ${D.BAZAAR}) {
+    if (v < 4.2) {
+      float cf = floor(u / 3.2); int cell = int(cf); float cu = u / 3.2 - cf, top = min(3.6, 3.0 + (0.5 - abs(cu - 0.5)) * 1.6);
+      if (cu > 0.12 && cu < 0.88 && v < top) return shop(cell % 3) * (0.4 + 0.25 * v / 3.6);
+      return bc * 0.85;
+    }
+    if (jm(v, 4.0) < 0.3) return vec3(40, 170, 170);
+    if (mpp > 0.9) return bAvg;
+    float ff = floor(v / 4.0); int fl = int(ff); float fv = v / 4.0 - ff, bf = floor(u / 3.0); int bay = int(bf); float fu = u / 3.0 - bf;
+    if (fu > 0.2 && fu < 0.8 && fv > 0.2 && fv < 0.85) {
+      if (hsh(bay, fl, bSeed) < bWinP) {
+        bool lat = mpp < 0.35 && (jm(fu * 9.0 + fv * 9.0, 1.0) < 0.25 || jm(jm(fu * 9.0 - fv * 9.0, 1.0) + 1.0, 1.0) < 0.25);
+        return vec3(255, 180, 90) * (lat ? 0.25 : 0.75);
+      }
+      return bc * 0.4;
+    }
+    return bc;
+  }
+  if (mpp > 0.75 && v >= 3.8) return bAvg;
+  if (v < 3.8) {
+    float cf = floor(u / 6.0); int cell = int(cf); float cu = u - cf * 6.0;
+    if (v > 3.0 && v < 3.6) {
+      vec3 c = shop(int(hsh(cell, bId, 3) * 3.0));
+      if (cu > 0.4 && cu < 5.6 && hsh(int(floor(cu * 2.2)), cell, bId) < 0.6 && !(bDark == 1 && hsh(cell, bId, 11) < 0.75)) return c;
+      return vec3(16, 10, 22);
+    }
+    if (cu > 0.5 && cu < 5.5 && v > 0.15 && v < 2.8) {
+      float k = (0.35 + 0.25 * (v / 2.8)) * (bDark == 1 ? (hsh(cell, bId, int(floor(uT * 6.0))) < 0.08 ? 0.8 : 0.12) : 1.0);
+      return shop(cell % 3) * k;
+    }
+    return bc * 0.8;
+  }
+  float ff = floor(v / 3.2); int fl = int(ff); float fv = v / 3.2 - ff, bf = floor(u / 2.6); int bayN = int(bf); float fu = u / 2.6 - bf;
+  if (fv > 0.28 && fv < 0.82 && fu > 0.15 && fu < 0.85) {
+    if (hsh(bayN, fl, bSeed) < bWinP) {
+      vec3 c = WIN_[int(hsh(bayN, fl, bSeed + 1) * 6.0)]; float k = 0.5 + 0.5 * hsh(bayN, fl, bSeed + 2);
+      return c * k;
+    }
+    return vec3(14.0 + fv * 14.0, 14.0 + fv * 8.0, 28.0 + fv * 18.0);
+  }
+  float p = fu < 0.08 || fu > 0.92 ? 1.35 : 1.0;
+  return bc * p;
+}
+// a wall quad (4 texels): side face (xa, span, iN, iF), (u0, Zk, ybA, ybB), (ytA, ytB, building, F), (0, ...)
+// or the corner face (xw, s, ybot, building), -, -, (1, ...)
+vec3 wallAt(int q, ivec2 p) {
+  vec4 a = texelFetch(uQuad, ivec2(0, q), 0), d = texelFetch(uQuad, ivec2(3, q), 0);
+  float x = float(p.x) + 0.5, y = float(p.y);
+  if (d.x < 0.5) {
+    vec4 b = texelFetch(uQuad, ivec2(1, q), 0), c = texelFetch(uQuad, ivec2(2, q), 0);
+    loadB(int(c.z));
+    float t = clamp((x - a.x) / a.y, 0.0, 1.0), diz = (a.w - a.z) * t, iz = a.z + diz, z = 1.0 / iz;
+    float u = b.x - diz / (iz * a.z), yt = c.x + (c.y - c.x) * t, yb = b.z + (b.w - b.z) * t, hp = yb - yt;
+    return wallTex(u, (yb - y - 0.5) / hp * bH, false, z / c.w);
+  }
+  loadB(int(a.w));
+  float s = a.y, u = abs(x - a.x) / s;
+  return wallTex(u, (a.z - y - 0.5) / s, true, 1.0 / s) * 0.7;
+}
+`;
+const GPU_FSR = `#version 300 es
+precision highp float; precision highp int; precision highp sampler2D;
+uniform sampler2D uScene;
+out vec4 outC;
+${WALL_GLSL}
+void main() {
+  ivec2 p = ivec2(gl_FragCoord.xy);
+  vec3 a = texelFetch(uScene, p, 0).rgb;
+  int g = int(texelFetch(uGid, p, 0).r);
+  if (g > 0) a += wallAt(g / 4096 - 1, p) * (float(g % 4096) / 4095.0);
+  outC = vec4(a, 1.0);
+}`;
 // ---------- the graphics-chip finish: glow, wet-road reflections, lean and output in one shader ----------
 let forceCPU = false;
 const GPU = { ok: false };
@@ -3449,7 +3850,7 @@ void main() { vec2 p = vec2(float((gl_VertexID << 1) & 2), float(gl_VertexID & 2
 // the same formulas as the JavaScript loops they replace (renderScene's CPU path)
 const GPU_FS = `#version 300 es
 precision highp float; precision highp int; precision highp sampler2D;
-uniform sampler2D uScene, uGlow, uRefl, uOvA, uOvM; uniform float uKD;
+uniform sampler2D uScene, uGlow, uRefl, uOvA, uOvM; uniform float uKD; uniform float uRS;
 uniform vec3 uK; uniform float uGlowK; uniform int uHr; uniform int uRain;
 uniform vec2 uRot; uniform vec4 uGeom; uniform ivec2 uScn; uniform ivec2 uOut; uniform vec3 uFlash;
 out vec4 outC;
@@ -3460,8 +3861,8 @@ void main() {
   vec2 f = vec2(gl_FragCoord.x, float(uOut.y) * uKD - gl_FragCoord.y) / uKD;
   ivec2 op = clamp(ivec2(floor(f)), ivec2(0), uOut - 1);
   float dx = f.x - uGeom.x, dy = f.y - uGeom.y;
-  int sx = clamp(int(floor(uRot.x * dx - uRot.y * dy + uGeom.z)), 0, uScn.x - 1);
-  int sy = clamp(int(floor(uRot.y * dx + uRot.x * dy + uGeom.w)), 0, uScn.y - 1);
+  int sx = clamp(int(floor((uRot.x * dx - uRot.y * dy + uGeom.z) * uRS)), 0, uScn.x - 1);
+  int sy = clamp(int(floor((uRot.y * dx + uRot.x * dy + uGeom.w) * uRS)), 0, uScn.y - 1);
   ivec2 sp = ivec2(sx, sy);
   vec3 c = comb(sp);
   if (uRain == 1 && sy >= uHr + 1) {
@@ -3489,11 +3890,19 @@ function gpuInit() {
     const sh = (type, src) => { const o = gl.createShader(type); gl.shaderSource(o, src); gl.compileShader(o); if (!gl.getShaderParameter(o, gl.COMPILE_STATUS)) throw new Error(gl.getShaderInfoLog(o)); return o; };
     const prog = fs => { const p = gl.createProgram(); gl.attachShader(p, sh(gl.VERTEX_SHADER, GPU_VS)); gl.attachShader(p, sh(gl.FRAGMENT_SHADER, fs)); gl.linkProgram(p); if (!gl.getProgramParameter(p, gl.LINK_STATUS)) throw new Error(gl.getProgramInfoLog(p)); return p; };
     GPU.p = prog(GPU_FS); GPU.p8 = prog(GPU_FS8);
+    // building faces filled in on the chip: needs float render targets; without them the walls stay in JavaScript
+    try {
+      if (!gl.getExtension('EXT_color_buffer_float')) throw new Error('no float targets');
+      GPU.pr = prog(GPU_FSR);
+      GPU.ur = {}; for (const n of ['uScene', 'uBld', 'uQuad', 'uGid', 'uT', 'uFlash2', 'uT4m6', 'uFont']) GPU.ur[n] = gl.getUniformLocation(GPU.pr, n);
+      GPU.fbo = gl.createFramebuffer();
+      GPU.rtt = blocks.length <= gl.getParameter(gl.MAX_TEXTURE_SIZE);
+    } catch (e) { GPU.rtt = false; GPU.rttErr = String(e); }
     GPU.u = {};
-    for (const n of ['uScene', 'uGlow', 'uRefl', 'uOvA', 'uOvM', 'uKD', 'uK', 'uGlowK', 'uHr', 'uRain', 'uRot', 'uGeom', 'uScn', 'uOut', 'uFlash']) GPU.u[n] = gl.getUniformLocation(GPU.p, n);
+    for (const n of ['uScene', 'uGlow', 'uRefl', 'uOvA', 'uOvM', 'uKD', 'uRS', 'uK', 'uGlowK', 'uHr', 'uRain', 'uRot', 'uGeom', 'uScn', 'uOut', 'uFlash']) GPU.u[n] = gl.getUniformLocation(GPU.p, n);
     GPU.u8 = { uImg: gl.getUniformLocation(GPU.p8, 'uImg'), uOut: gl.getUniformLocation(GPU.p8, 'uOut'), uKD: gl.getUniformLocation(GPU.p8, 'uKD') };
     GPU.tex = {};
-    for (const n of ['scene', 'glow', 'refl', 'ovA', 'ovM', 'img']) {
+    for (const n of ['scene', 'glow', 'refl', 'ovA', 'ovM', 'img', 'res', 'gid', 'quad', 'bld']) {
       const t = gl.createTexture(); gl.bindTexture(gl.TEXTURE_2D, t);
       gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST); gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
       gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE); gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
@@ -3502,18 +3911,40 @@ function gpuInit() {
     GPU.vao = gl.createVertexArray();
     gl.pixelStorei(gl.UNPACK_ALIGNMENT, 1);
     GPU.size = '';
+    if (GPU.rtt) {                                    // the buildings never change: 18 texels each (bldPack)
+      const nb = blocks.length, d = new Float32Array(nb * 18 * 4);
+      for (const B of blocks) {
+        const o = B.id * 72, put4 = (t, a, b, c, e) => { d[o + t * 4] = a; d[o + t * 4 + 1] = b; d[o + t * 4 + 2] = c; d[o + t * 4 + 3] = e; };
+        const c3 = (t, c) => put4(t, c ? c[0] : 0, c ? c[1] : 0, c ? c[2] : 0, 0);
+        put4(0, B.style, B.h, B.seed, B.id); put4(1, B.winP, B.dark, B.crown ? 1 : 0, Math.min(2, B.bbs.length));
+        c3(2, B.base); c3(3, B.crown); c3(4, B.lobby); c3(5, B.avg); c3(6, B.shop[0]); c3(7, B.shop[1]); c3(8, B.shop[2]);
+        B.bbs.slice(0, 2).forEach((b, i) => {
+          put4(10 + 4 * i, b.u0, b.u1, b.v0, b.v1); put4(11 + 4 * i, b.kind, b.seed, b.seed % (2 * Math.PI), b.seed % 4); c3(12 + 4 * i, b.c1); c3(13 + 4 * i, b.c2);
+        });
+      }
+      gl.bindTexture(gl.TEXTURE_2D, GPU.tex.bld); gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA32F, 18, nb, 0, gl.RGBA, gl.FLOAT, d);
+      gl.bindTexture(gl.TEXTURE_2D, GPU.tex.quad); gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA32F, 4, 4096, 0, gl.RGBA, gl.FLOAT, null);
+      GPU.font = new Int32Array(20);
+      for (let dg = 0; dg < 10; dg++) { const g = FONT[String(dg)]; for (let i = 0; i < 15; i++) if (g[i] === '1') GPU.font[dg * 2 + (i < 8 ? 0 : 1)] |= 1 << (i < 8 ? i : i - 8); }
+    }
     GPU.ok = true;
   } catch (e) { GPU.ok = false; GPU.err = String(e); }
 }
 function gpuSize() {                                  // (re)allocate the textures whenever the screen size changes
-  const key = SWD + 'x' + SHD + '/' + OW + 'x' + OH;
+  const key = SW2 + 'x' + SH2 + '/' + OW + 'x' + OH;
   if (GPU.size === key) return;
   GPU.size = key;
   const alloc = (n, w, h, ifmt, fmt, type) => { gl.bindTexture(gl.TEXTURE_2D, GPU.tex[n]); gl.texImage2D(gl.TEXTURE_2D, 0, ifmt, w, h, 0, fmt, type, null); };
-  alloc('scene', SWD, SHD, gl.RGB32F, gl.RGB, gl.FLOAT); alloc('glow', SWD, SHD, gl.RGB32F, gl.RGB, gl.FLOAT);
-  alloc('refl', SWD, SHD, gl.R32F, gl.RED, gl.FLOAT);
+  alloc('scene', SW2, SH2, gl.RGB32F, gl.RGB, gl.FLOAT); alloc('glow', SW2, SH2, gl.RGB32F, gl.RGB, gl.FLOAT);
+  alloc('refl', SW2, SH2, gl.R32F, gl.RED, gl.FLOAT);
   alloc('ovA', OW, OH, gl.RGB32F, gl.RGB, gl.FLOAT); alloc('ovM', OW, OH, gl.RGB32F, gl.RGB, gl.FLOAT);
   alloc('img', OW, OH, gl.RGBA8, gl.RGBA, gl.UNSIGNED_BYTE);
+  if (GPU.rtt) {
+    alloc('gid', SW2, SH2, gl.R32F, gl.RED, gl.FLOAT); alloc('res', SW2, SH2, gl.RGBA32F, gl.RGBA, gl.FLOAT);
+    gl.bindFramebuffer(gl.FRAMEBUFFER, GPU.fbo); gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, GPU.tex.res, 0);
+    if (gl.checkFramebufferStatus(gl.FRAMEBUFFER) !== gl.FRAMEBUFFER_COMPLETE) GPU.rtt = false;
+    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+  }
   GPU.ovA = new Float32Array(OW * OH * 3); GPU.ovM = new Float32Array(OW * OH * 3);
 }
 function upload(n, w, h, fmt, type, data) { gl.bindTexture(gl.TEXTURE_2D, GPU.tex[n]); gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, w, h, fmt, type, data); }
@@ -3527,7 +3958,19 @@ function gpuFinish(hy) {
   const glowK = (1 + 0.35 * TH.night) * (1 - 0.25 * crownK), dimK = 1 - 0.38 * TH.night;
   const cr = dimK * (1 - 0.07 * crownK), cb = dimK * (1 + 0.08 * crownK);
   const rl = outside() ? 0 : roll;
-  upload('scene', SWD, SHD, gl.RGB, gl.FLOAT, colS); upload('glow', SWD, SHD, gl.RGB, gl.FLOAT, lb); upload('refl', SWD, SHD, gl.RED, gl.FLOAT, refl);
+  upload('scene', SW2, SH2, gl.RGB, gl.FLOAT, colS); upload('glow', SW2, SH2, gl.RGB, gl.FLOAT, lb); upload('refl', SW2, SH2, gl.RED, gl.FLOAT, refl);
+  let sceneTex = GPU.tex.scene;
+  if (DEFER && NQ > 0) {                               // fill in the building faces at the city's resolution
+    upload('gid', SW2, SH2, gl.RED, gl.FLOAT, GID);
+    gl.bindTexture(gl.TEXTURE_2D, GPU.tex.quad); gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, 4, NQ, gl.RGBA, gl.FLOAT, QD, 0);
+    gl.bindFramebuffer(gl.FRAMEBUFFER, GPU.fbo); gl.viewport(0, 0, SW2, SH2); gl.useProgram(GPU.pr); gl.bindVertexArray(GPU.vao);
+    const r = GPU.ur;
+    [['scene', 'uScene'], ['bld', 'uBld'], ['quad', 'uQuad'], ['gid', 'uGid']].forEach(([t, n], i) => { gl.activeTexture(gl.TEXTURE0 + i); gl.bindTexture(gl.TEXTURE_2D, GPU.tex[t]); gl.uniform1i(r[n], i); });
+    gl.uniform1f(r.uT, T); gl.uniform1f(r.uFlash2, flash); gl.uniform1f(r.uT4m6, (T * 4) % 6); gl.uniform2iv(r.uFont, GPU.font);
+    gl.drawArrays(gl.TRIANGLES, 0, 3);
+    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+    sceneTex = GPU.tex.res;
+  }
   // the overlays only ever paint over, add light or darken a pixel, so each pixel ends up as M * scene + A:
   // draw them once over 0 (gives A) and once over 1 (gives M + A)
   useOut();
@@ -3536,11 +3979,11 @@ function gpuFinish(hy) {
   upload('ovA', OW, OH, gl.RGB, gl.FLOAT, GPU.ovA); upload('ovM', OW, OH, gl.RGB, gl.FLOAT, GPU.ovM);
   const u = GPU.u, fl = crashFlash * 120;
   gl.viewport(0, 0, OW * KD, OH * KD); gl.useProgram(GPU.p); gl.bindVertexArray(GPU.vao);
-  [['scene', 'uScene'], ['glow', 'uGlow'], ['refl', 'uRefl'], ['ovA', 'uOvA'], ['ovM', 'uOvM']].forEach(([t, n], i) => { gl.activeTexture(gl.TEXTURE0 + i); gl.bindTexture(gl.TEXTURE_2D, GPU.tex[t]); gl.uniform1i(u[n], i); });
-  gl.uniform1f(u.uKD, KD);
+  [['scene', 'uScene'], ['glow', 'uGlow'], ['refl', 'uRefl'], ['ovA', 'uOvA'], ['ovM', 'uOvM']].forEach(([t, n], i) => { gl.activeTexture(gl.TEXTURE0 + i); gl.bindTexture(gl.TEXTURE_2D, t === 'scene' ? sceneTex : GPU.tex[t]); gl.uniform1i(u[n], i); });
+  gl.uniform1f(u.uKD, KD); gl.uniform1f(u.uRS, RS);
   gl.uniform3f(u.uK, cr, dimK, cb); gl.uniform1f(u.uGlowK, glowK); gl.uniform1i(u.uHr, Math.round(hy)); gl.uniform1i(u.uRain, rainOn ? 1 : 0);
   gl.uniform2f(u.uRot, Math.cos(rl), Math.sin(rl)); gl.uniform4f(u.uGeom, OW / 2, OH / 2, SWD / 2, SHD / 2);
-  gl.uniform2i(u.uScn, SWD, SHD); gl.uniform2i(u.uOut, OW, OH); gl.uniform3f(u.uFlash, fl, fl * 0.3, fl * 0.4);
+  gl.uniform2i(u.uScn, SW2, SH2); gl.uniform2i(u.uOut, OW, OH); gl.uniform3f(u.uFlash, fl, fl * 0.3, fl * 0.4);
   gl.drawArrays(gl.TRIANGLES, 0, 3);
 }
 function present8() {                                 // show a finished 8-bit frame (the CPU path and the side shot)
@@ -3594,6 +4037,7 @@ addEventListener('keydown', e => {
   else if (e.key === 'v' || e.key === 'V') cycleCruise();
   else if (e.key === 'l' || e.key === 'L') toggleLight();
   else if (e.key === 'c' || e.key === 'C') cycleShot();
+  else if (e.key === 'd' || e.key === 'D') toggleHD();
   else if (e.key === 'h' || e.key === 'H') document.body.classList.toggle('hints');
 });
 addEventListener('keyup', e => { if (KEYMAP[e.key]) keys[KEYMAP[e.key]] = false; });
@@ -3623,6 +4067,14 @@ const btnH = document.getElementById('bh');
 function toggleLight() { lightOn = !lightOn; btnH.classList.toggle('on', lightOn); zoneEl.textContent = 'HEADLIGHT ' + (lightOn ? 'ON' : 'OFF'); zoneEl.style.opacity = 1; zoneT = 2; }
 btnH.addEventListener('pointerdown', e => { e.preventDefault(); toggleLight(); });
 document.getElementById('bc').addEventListener('pointerdown', e => { e.preventDefault(); cycleShot(); });
+const btnD = document.getElementById('bd');
+function toggleHD() {                                 // the city at double detail, or on the art grid as before
+  if (!gl || !GPU.ok) return;
+  HDK = HDK > 1 ? 1 : 2; setup(); btnD.classList.toggle('on', HDK > 1);
+  zoneEl.textContent = 'DETAIL · ' + (HDK > 1 ? 'HD' : 'CLASSIC'); zoneEl.style.opacity = 1; zoneT = 2;
+}
+btnD.addEventListener('pointerdown', e => { e.preventDefault(); toggleHD(); });
+if (!gl || !GPU.ok) btnD.style.display = 'none';
 // keep the screen from dimming or sleeping while it plays (where the browser supports it); the lock drops
 // whenever the tab is hidden, so take it again on return, and on the first key or tap in case the first try was refused
 async function requestWake() { if (wakeLock || !navigator.wakeLock) return; try { wakeLock = await navigator.wakeLock.request('screen'); wakeLock.addEventListener('release', () => { wakeLock = null; }); } catch (e) { wakeLock = null; } }
