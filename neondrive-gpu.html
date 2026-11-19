@@ -29,6 +29,9 @@
   #bb { right: 104px; } #bg { right: 18px; border-color: rgba(0, 230, 255, 0.7); color: #a8f6ff; }
   #ba, #br2, #bs, #bv, #bh, #bc, #bd { right: 18px; top: 18px; bottom: auto; height: 44px; width: 74px; font-size: 13px; }
   #br2 { top: 72px; } #bs { top: 126px; } #bv { top: 180px; } #bh { top: 234px; } #bc { top: 288px; } #bd { top: 342px; }
+  #fps { display: none; }
+  body.showfps #fps { display: block; }
+  #fpsz { position: fixed; left: 0; top: 0; width: 64px; height: 64px; touch-action: none; -webkit-tap-highlight-color: transparent; }
   #fps { left: 12px; top: 12px; font-size: 11px; padding: 3px 7px; color: #9ff4ff; border-color: #1d4f5a; }
   #zone { left: 50%; top: 58px; transform: translateX(-50%); font-size: 16px; letter-spacing: 6px; color: #9ff4ff;
     border-color: #1d4f5a; transition: opacity 1.2s; opacity: 0; }
@@ -39,6 +42,7 @@
 <div id="hint" class="tag">&larr; &rarr; steer &nbsp;&middot;&nbsp; &uarr; gas &nbsp;&middot;&nbsp; &darr; brake &nbsp;&middot;&nbsp; A autopilot &nbsp;&middot;&nbsp; W weather &nbsp;&middot;&nbsp; S bike &nbsp;&middot;&nbsp; C camera &nbsp;&middot;&nbsp; V cruise &nbsp;&middot;&nbsp; L headlight &nbsp;&middot;&nbsp; D detail &nbsp;&middot;&nbsp; H hide this</div>
 <div id="zone" class="tag"></div>
 <div id="fps" class="tag"></div>
+<div id="fpsz"></div>
 <div id="pad">
   <div class="btn" id="bl">&#9664;</div><div class="btn" id="br">&#9654;</div>
   <div class="btn" id="bb">BRK</div><div class="btn" id="bg">GAS</div>
@@ -4026,6 +4030,8 @@ if (gl) {
 // a small frame-rate readout for comparing on the device (an HTML tag, outside the game image)
 const fpsEl = document.getElementById('fps');
 let fpsN = 0, fpsT = 0;
+// hidden unless asked for: tap the top-left corner (or F) to show or hide it
+document.getElementById('fpsz').addEventListener('pointerdown', e => { e.preventDefault(); document.body.classList.toggle('showfps'); });
 function fpsTick(rawDt) {
   fpsN++; fpsT += rawDt;
   if (fpsT >= 0.5) { fpsEl.textContent = (gl && GPU.ok ? 'GPU ' : 'CPU ') + Math.round(fpsN / fpsT) + ' FPS'; fpsN = 0; fpsT = 0; }
@@ -4059,6 +4065,7 @@ addEventListener('keydown', e => {
   else if (e.key === 'l' || e.key === 'L') toggleLight();
   else if (e.key === 'c' || e.key === 'C') cycleShot();
   else if (e.key === 'd' || e.key === 'D') toggleHD();
+  else if (e.key === 'f' || e.key === 'F') document.body.classList.toggle('showfps');
   else if (e.key === 'h' || e.key === 'H') document.body.classList.toggle('hints');
 });
 addEventListener('keyup', e => { if (KEYMAP[e.key]) keys[KEYMAP[e.key]] = false; });
