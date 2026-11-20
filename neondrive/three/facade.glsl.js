@@ -7,11 +7,11 @@ import { integerHash } from './shaders.js';
 const BUILDING_TEXELS = 18;
 const BUILDINGS_PER_ROW = 64;
 
-export function makeBuildingTexture() {
+export function makeBuildingTexture(buildings = blocks) {
   const width = BUILDINGS_PER_ROW * BUILDING_TEXELS;
-  const height = Math.ceil(blocks.length / BUILDINGS_PER_ROW);
+  const height = Math.ceil(buildings.length / BUILDINGS_PER_ROW);
   const data = new Float32Array(width * height * 4);
-  for (const building of blocks) {
+  for (const building of buildings) {
     const offset = building.id * BUILDING_TEXELS * 4;
     const put = (index, values) => data.set(values, offset + index * 4);
     const { style, h, seed, id, winP, dark, crown, bbs } = building;

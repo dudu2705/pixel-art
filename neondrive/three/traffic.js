@@ -64,6 +64,24 @@ function makeCarBody() {
   return geometry;
 }
 
+function drawGroundCar(body, glow, c, x, y, z, yaw) {
+  const len = 4, wid = 1.9, hgt = 1.35;
+  const tail = c.tail.map(Math.round);
+  const tailRGB = tail[0] * 65536 + tail[1] * 256 + tail[2];
+  push(body, [x, y, z], [wid, hgt, len], yaw, c.body, [0, 0, tailRGB]);
+  const rx = Math.cos(yaw), rz = -Math.sin(yaw);
+  const fx = Math.sin(yaw) * (len / 2 + 0.02), fz = Math.cos(yaw) * (len / 2 + 0.02);
+  for (const side of [-1, 1]) {
+    const lx = rx * side * wid * 0.36, lz = rz * side * wid * 0.36;
+    push(glow, [x + fx + lx, y + hgt * 0.42, z + fz + lz],
+      [0.01, 0.01, 0.01], yaw, [230, 240, 255], [0, 0.85, wid * 0.9, 60]);
+    push(glow, [x - fx + lx, y + hgt * 0.42, z - fz + lz],
+      [0.01, 0.01, 0.01], yaw, c.tail, [0, c.brk ? 0.95 : 0.5, wid * (c.brk ? 0.7 : 0.45), 40]);
+  }
+  if (c.neon) push(glow, [x, y + 0.06, z - fz], [0.01, 0.01, 0.01],
+    yaw, c.under, [0, 0.4, wid * 0.75, 48]);
+}
+
 export class Traffic {
   constructor(scene, mats) {
     this.body = pool(unitBox, 420, mats.metal);
@@ -75,6 +93,16 @@ export class Traffic {
     this.lamp = pool(unitSphere, 300, mats.emit);
     scene.add(this.car.mesh, this.body.mesh, this.glow.mesh, this.ped.mesh, this.umb.mesh, this.flyer.mesh, this.lamp.mesh);
     this.pools = [this.car, this.body, this.glow, this.ped, this.umb, this.flyer, this.lamp];
+  }
+
+  updateMap(vehicles) {
+    for (const vehicle of vehicles) {
+      const { x, y, z, th } = vehicle.pose;
+      const style = vehicle.style;
+      style.brk = vehicle.brake;
+      drawGroundCar(this.car, this.glow, style, x, y, z, th);
+    }
+    for (const pool of this.pools) flush(pool);
   }
 
   update(camZ, dt, time) {
@@ -91,21 +119,7 @@ export class Traffic {
       frameAt(c.z, f);
       const x = f.x + f.rx * c.x, z = f.z + f.rz * c.x;
       const yaw = f.th + (c.dir < 0 ? Math.PI : 0);
-      const len = 4, wid = 1.9, hgt = 1.35;
-      const tail = c.tail.map(Math.round);
-      const tailRGB = tail[0] * 65536 + tail[1] * 256 + tail[2];
-      push(this.car, [x, f.y, z], [wid, hgt, len], yaw, c.body, [c.z, 0, tailRGB]);
-      const rx = Math.cos(yaw), rz = -Math.sin(yaw);
-      const fx = Math.sin(yaw) * (len / 2 + 0.02), fz = Math.cos(yaw) * (len / 2 + 0.02);
-      for (const side of [-1, 1]) {
-        const lx = rx * side * wid * 0.36, lz = rz * side * wid * 0.36;
-        push(this.glow, [x + fx + lx, f.y + hgt * 0.42, z + fz + lz],
-          [0.01, 0.01, 0.01], yaw, [230, 240, 255], [0, 0.85, wid * 0.9, 60]);
-        push(this.glow, [x - fx + lx, f.y + hgt * 0.42, z - fz + lz],
-          [0.01, 0.01, 0.01], yaw, c.tail, [0, c.brk ? 0.95 : 0.5, wid * (c.brk ? 0.7 : 0.45), 40]);
-      }
-      if (c.neon) push(this.glow, [x, f.y + 0.06, z - fz], [0.01, 0.01, 0.01],
-        yaw, c.under, [0, 0.4, wid * 0.75, 48]);
+      drawGroundCar(this.car, this.glow, c, x, f.y, z, yaw);
     }
 
     // ---------- people on the pavements ----------

@@ -30,8 +30,11 @@ const lerp = (a, b, t) => a + (b - a) * t;
 const damp = (a, b, l, dt) => lerp(a, b, 1 - Math.exp(-l * dt));
 
 export class Rig {
-  constructor(camera, dom) {
+  constructor(camera, dom, sampling = {}) {
     this.cam = camera;
+    this.frameAt = sampling.frameAt ?? frameAt;
+    this.enclosed = sampling.enclosed ?? enclosed;
+    this.period = sampling.period ?? LEN;
     this.mode = 0;
     this.shot = { ...FOLLOW[0], lat: 0 };
     this.shotChanged = true;
@@ -98,7 +101,7 @@ export class Rig {
   }
 
   update(bike, dt) {
-    this.lastLat = bike.lat;
+    this.lastLat = bike.laneOffset ?? bike.lat;
     this.cam.up.set(0, 1, 0);
     if (this.mode === FLY) {                        // FLY: detached, WASD + mouse
       const sp = (this.keys.ShiftLeft ? 160 : 45) * dt;
@@ -121,7 +124,7 @@ export class Rig {
       return;
     }
 
-    const underRoof = enclosed(bike.dist);
+    const underRoof = this.enclosed(bike.dist);
     const target = this.mode === 2 && underRoof ? LOW_DRONE : FOLLOW[this.mode];
     const lat = this.mode === 4 ? this.alongside * 2.2 : 0;
     const amount = this.shotChanged ? 1 : 1 - Math.pow(0.94, dt * 60);
@@ -131,17 +134,22 @@ export class Rig {
 
     let dist = bike.dist - this.shot.back;
     let side = bike.lat + this.shot.lat;
+    let fixed = null;
     if (this.mode === 3) {
-      const passed = this.trackside && (bike.dist - this.trackside.dist + LEN) % LEN;
-      if (!this.trackside || (passed > 55 && passed < LEN / 2)) {
-        this.trackside = { dist: (bike.dist + 25) % LEN, lat: bike.lat > 3.5 ? -2.2 : 9.2 };
+      const gap = this.trackside ? bike.dist - this.trackside.dist : 0;
+      const passed = this.period ? (gap + this.period) % this.period : gap;
+      if (!this.trackside || (passed > 55 && (!this.period || passed < this.period / 2))) {
+        const forward = bike.dist + 25;
+        const anchor = this.period ? forward % this.period : forward;
+        this.trackside = { dist: anchor, pose: this.frameAt(anchor, {}), lat: this.lastLat > 3.5 ? -2.2 : 9.2 };
       }
       dist = this.trackside.dist;
       side = this.trackside.lat;
+      fixed = this.trackside.pose;
     }
 
-    const f = frameAt(dist, {});
-    const covered = underRoof || enclosed(dist);
+    const f = fixed ?? this.frameAt(dist, {});
+    const covered = underRoof || this.enclosed(dist);
     const height = covered ? Math.min(1.4 + this.shot.up, BORE_H - 1.9) : 1.4 + this.shot.up;
     if (covered) side = clamp(side, -(BORE_W - 1.4), BORE_W - 1.4);
     this.cam.position.set(f.x + f.rx * side, f.y + height, f.z + f.rz * side);
@@ -155,7 +163,7 @@ export class Rig {
   }
 
   updateOrbit(bike, dt) {
-    const f = frameAt(bike.dist, {});
+    const f = this.frameAt(bike.dist, {});
     this.yaw = damp(this.yaw, this.tYaw, 10, dt);
     this.pitch = damp(this.pitch, this.tPitch, 10, dt);
     this.dist = damp(this.dist, this.tDist, 8, dt);
@@ -163,7 +171,7 @@ export class Rig {
     const bx = f.x + f.rx * bike.lat, bz = f.z + f.rz * bike.lat;
     let x = -Math.sin(a) * this.dist * cp, z = -Math.cos(a) * this.dist * cp;
     let up = 1.6 + Math.sin(this.pitch) * this.dist;
-    if (enclosed(bike.dist)) {
+    if (this.enclosed(bike.dist)) {
       const side = x * f.rx + z * f.rz;
       const limit = BORE_W - 1.4;
       const correction = clamp(bike.lat + side, -limit, limit) - bike.lat - side;

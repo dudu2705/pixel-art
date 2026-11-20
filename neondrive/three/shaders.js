@@ -40,6 +40,7 @@ export const roadFrag = /* glsl */`
   uniform vec3 uFog;
   uniform float uFogNear, uFogFar;
   uniform float uRW, uTime;
+  uniform float uMapMode, uMapLength;
   uniform sampler2D uSectors;
   uniform sampler2D uSceneDepth;
   uniform bool uMaskPass;
@@ -140,17 +141,55 @@ vec3 ground(float lx, float w, float z, float pxw, float fz, int d, bool deckOnl
   rfo = rf == 0.85 ? (uWet > 0.0 ? rf : 0.0) : rf * (1.0 - fz) * uWet * (1.0 - smo(45.0, 170.0, z)); opo = op;
   return mix(c / 255.0, uFog, fz);
 }
+vec3 mapGround(float lx, float w, float pxw, out float reflectivity) {
+  float a = abs(lx), width = max(0.09, pxw * 0.55);
+  float endDist = min(w, uMapLength - w);
+  reflectivity = 0.5;
+  if (uMapMode < 2.5) {
+    if (a < uRW) {
+      if (endDist > 8.0 && endDist < 10.5 && uMapLength > 45.0 && mod(a + 0.45, 1.0) < 0.55) {
+        reflectivity = 0.15;
+        return vec3(215, 215, 225);
+      }
+      if (uMapMode < 1.5 && endDist > 7.0 && abs(a - 0.2) < width) {
+        reflectivity = 0.2;
+        return vec3(235, 165, 40);
+      }
+      bool divider = uMapMode < 1.5 ? a > 1.0 && abs(a - round(a / 3.5) * 3.5) < width : a < width;
+      if (endDist > 8.0 && (divider && mod(w, 10.0) < 4.5 || abs(a - (uRW - 0.3)) < width)) {
+        reflectivity = 0.2;
+        return vec3(200, 200, 215);
+      }
+    } else {
+      if (a < uRW + 0.3) { reflectivity = 0.3; return vec3(0, 225, 255); }
+      reflectivity = 0.25;
+      bool tile = pxw < 0.5 && (mod(w, 1.6) < 0.12 || mod(a - uRW, 1.6) < 0.10);
+      return tile ? vec3(30, 26, 42) : vec3(46, 40, 60);
+    }
+  }
+  float mottled = pxw < 0.35 ? hsh(int(floor(lx * 3.0)), int(floor(w * 3.0)), 9) * 9.0 : 4.5;
+  return vec3(24, 22, 34) + mottled;
+}
   void main() {
     float roadZ = vUv.y * ${SEGL}.0;
     int d = sector(int(floor(vUv.y))).x;
     bool deck = uGlass > 0.5;
     float deckWidth = d == ${D.HIGHWAY} ? uRW + ${SW} : uRW + 1.5;
-    if (deck && abs(vLat) >= deckWidth) discard;
+    if (uMapMode < 0.5 && deck && abs(vLat) >= deckWidth) discard;
     float pixelWidth = fwidth(vLat);
     float distanceAhead = max(0.0, -(viewMatrix * vec4(vWorld, 1.0)).z);
     float fog = smoothstep(uFogNear, uFogFar, distanceAhead) * 0.97;
     float wet, alpha;
-    vec3 col = ground(vLat, roadZ, distanceAhead, pixelWidth, fog, d, deck, wet, alpha);
+    vec3 col;
+    if (uMapMode > 0.5) {
+      float materialWet;
+      vec3 base = mapGround(vLat, roadZ, pixelWidth, materialWet);
+      col = mix(base / 255.0, uFog, fog);
+      wet = materialWet * (1.0 - fog) * uWet * (1.0 - smoothstep(45.0, 170.0, distanceAhead));
+      alpha = deck ? 0.68 : 1.0;
+    } else {
+      col = ground(vLat, roadZ, distanceAhead, pixelWidth, fog, d, deck, wet, alpha);
+    }
     if (uMaskPass) {
       float depth = texelFetch(uSceneDepth, ivec2(gl_FragCoord.xy), 0).r;
       if (gl_FragCoord.z > depth + 0.000002) discard;

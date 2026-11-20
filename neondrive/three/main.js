@@ -3,6 +3,8 @@ import { SEGL, DRAW, NSEG, CITIES, ZONE_NAMES, LINK_NAMES, LH, TRANS_AT, ELEV, L
          zoneAt, district, setTime, D } from './world.js';
 import { frameAt } from './road.js';
 import { City, ROAD_LAYER } from './city.js';
+import { MapCity } from './map-city.js';
+import { MapDrive } from './map-drive.js';
 import { Traffic } from './traffic.js';
 import { Weather } from './weather.js';
 import { Sky } from './sky.js';
@@ -129,18 +131,21 @@ function renderSurfaces() {
 addEventListener('resize', resize);
 
 // ---------- world streaming ----------
-const city = new City(scene);
+const comparisonLoop = new URL(location.href).searchParams.has('loop');
+const mapDrive = comparisonLoop ? null : new MapDrive();
+const city = comparisonLoop ? new City(scene) : new MapCity(scene);
+const sampleFrame = mapDrive ? mapDrive.cameraFrame.bind(mapDrive) : frameAt;
 const cycle = makeLightCycle(city.uniforms);
 scene.add(cycle);
 const traffic = new Traffic(scene, city.mats);
 const weather = new Weather();
-const signals = new Signals(scene, city.mats);
-const rig = new Rig(camera, canvas);
+const signals = comparisonLoop ? new Signals(scene, city.mats) : null;
+const rig = new Rig(camera, canvas, mapDrive ? { frameAt: sampleFrame, enclosed: () => false, period: 0 } : undefined);
 
 // ---------- drive ----------
 // All of this lives in sim.js now; `bike` is just the view onto it.
-const bike = { dist: 0, lat: 1.75, speed: 42, roll: 0, auto: true };
-{
+const bike = { dist: 0, lat: 1.75, speed: 42, roll: 0 };
+if (comparisonLoop) {
   for (let t = 0; t < 200; t++) {
     const n = Math.floor(Math.random() * NSEG), d = district(n);
     if (!zoneAt(n)[4] && d !== D.TUNNEL && d !== D.RAMP && TRANS_AT[n] < 0 && ELEV[n] === LH[LAYER[n]]) {
@@ -162,7 +167,11 @@ function setDriveKey(key, down) {
 }
 
 function handleControl(key) {
-  if (key === 'a') { setAuto(!S.auto); banner2('AUTOPILOT · ' + (S.auto ? 'ON' : 'OFF')); }
+  if (key === 'a') {
+    setAuto(!S.auto);
+    if (mapDrive && !mapDrive.player.turn) mapDrive.player.exit = null;
+    banner2('AUTOPILOT · ' + (S.auto ? 'ON' : 'OFF'));
+  }
   else if (key === 'r' || key === 'w') { S.rainOn = !S.rainOn; banner2('WEATHER · ' + (S.rainOn ? 'ON' : 'OFF')); }
   else if (key === 'v') { setCruise(S.cruise + 1); banner2('CRUISE · ' + cruiseKmh() + ' KMH' + (S.auto ? '' : ' (AUTOPILOT)')); }
   else if (key === 'l') { lightOn = !lightOn; banner2('HEADLIGHT · ' + (lightOn ? 'ON' : 'OFF')); }
@@ -179,7 +188,9 @@ addEventListener('keydown', event => {
   if (driveKey) {
     setDriveKey(driveKey, true);
     event.preventDefault();
-  } else if (!event.repeat) handleControl(event.key.toLowerCase());
+  } else if (!event.repeat && !(rig.mode === MODES.length - 1 && /^[wasdqe]$/i.test(event.key))) {
+    handleControl(event.key.toLowerCase());
+  }
 });
 addEventListener('keyup', event => {
   if (KEYMAP[event.key]) setDriveKey(KEYMAP[event.key], false);
@@ -205,22 +216,26 @@ for (const button of document.querySelectorAll('[data-control]')) {
 function banner2(text) { S.zoneText = text; S.zoneT = 2.5; }
 
 function drive(dt) {
-  simUpdate(dt, simKeys);
-  bike.dist = S.z; bike.lat = S.px; bike.speed = S.speed; bike.roll = S.roll; bike.auto = S.auto;
+  if (mapDrive) mapDrive.update(dt, simKeys);
+  else simUpdate(dt, simKeys);
+  bike.dist = S.z;
+  bike.lat = mapDrive ? 0 : S.px;
+  bike.laneOffset = S.px;
+  bike.speed = S.speed;
+  bike.roll = S.roll;
 }
 
 // ---------- theme ----------
 let themeCity = -1;
 function theme() {
-  const z = zoneAt(Math.floor(S.z / SEGL) % NSEG);
-  // fog, sky and the hour all come from the simulation's blendTheme
-  city.setFog(S.FOG, 50 * S.fogK, DRAW * SEGL * (0.42 + 0.4 * S.fogK));
+  const z = comparisonLoop ? zoneAt(Math.floor(S.z / SEGL) % NSEG) : null;
+  const fogDistance = comparisonLoop ? DRAW * SEGL * (0.42 + 0.4 * S.fogK) : 620 * S.fogK;
+  city.setFog(S.FOG, 50 * S.fogK, fogDistance);
 
   city.uniforms.uWet.value = S.rainOn ? S.wet : 0;
   city.uniforms.uFlash.value = S.flash;
 
-  if (z[3] !== themeCity) { themeCity = z[3]; hud(); }
-  return z;
+  if (z && z[3] !== themeCity) { themeCity = z[3]; hud(); }
 }
 
 // ---------- HUD ----------
@@ -233,10 +248,11 @@ const weatherButton = document.querySelector('[data-control="w"]');
 const lightButton = document.querySelector('[data-control="l"]');
 rig.onMode = () => hud();
 function hud() {
-  const z = zoneAt(Math.floor(S.z / SEGL) % NSEG);
+  const z = comparisonLoop ? zoneAt(Math.floor(S.z / SEGL) % NSEG) : null;
   el.mode.textContent = MODES[rig.mode]
     + (S.auto ? '  ·  AUTO ' + cruiseKmh() : '  ·  MANUAL') + (S.rainOn ? '' : '  ·  DRY');
-  el.place.textContent = CITIES[z[3]].name + '  /  ' + (z[4] ? (LINK_NAMES[z[2]] || 'LINK') : ZONE_NAMES[z[2]]);
+  el.place.textContent = mapDrive ? 'VANTA BAY  /  ' + mapDrive.player.edge.road.name.toUpperCase()
+    : CITIES[z[3]].name + '  /  ' + (z[4] ? (LINK_NAMES[z[2]] || 'LINK') : ZONE_NAMES[z[2]]);
   autoButton.classList.toggle('on', S.auto);
   weatherButton.classList.toggle('on', S.rainOn);
   lightButton.classList.toggle('on', lightOn);
@@ -253,7 +269,7 @@ function frame(now) {
   theme();
   rig.update(bike, dt);
 
-  const f = frameAt(bike.dist, {});
+  const f = sampleFrame(bike.dist, {});
   const bx = f.x + f.rx * bike.lat, bz = f.z + f.rz * bike.lat;
   cycle.position.set(bx, f.y, bz);
   cycle.rotation.set(0, f.th, bike.roll);
@@ -286,8 +302,11 @@ function frame(now) {
     focal, f.elev, crown, [lightGrade / tint.x, lightGrade / tint.y, lightGrade / tint.z]);
 
   city.update(bike.dist, camera.position, T);
-  traffic.update(bike.dist, dt, T);
-  signals.update(bike.dist);
+  if (mapDrive) traffic.updateMap(mapDrive.traffic);
+  else {
+    traffic.update(bike.dist, dt, T);
+    signals.update(bike.dist);
+  }
   weather.update(dt, S, overlay, cockpit);
 
   renderer.setRenderTarget(rt);
@@ -322,7 +341,7 @@ hud();
 requestAnimationFrame(frame);
 
 // a handle for debugging and for driving the loop by hand from the console
-window.__nd = { renderer, scene, camera, city, traffic, weather, rig, bike, S, frame, THREE,
+window.__nd = { renderer, scene, camera, city, traffic, weather, rig, bike, S, frame, THREE, mapDrive,
                 step: (n = 1, dt = 1 / 60) => {   // advance a virtual clock, so dt is real
                   for (let i = 0; i < n; i++) { last = __clock; __clock += dt * 1000; frame(__clock); }
                 } };

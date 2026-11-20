@@ -105,8 +105,8 @@ function drawDome(overlay) {
 export function drawCockpit(overlay, state) {
   const { width: W, height: H } = overlay;
   const { T, speed, steer, waitLight, auto } = state;
-  const n = Math.floor(state.z / SEGL), elevation = ELEV[n];
-  const tr = TRANS[TRANS_AT[n]];
+  const n = Math.floor(state.z / SEGL), elevation = state.elevation ?? ELEV[n];
+  const tr = state.elevation === undefined ? TRANS[TRANS_AT[n]] : null;
   const level = elevation <= LH[1] ? elevation / LH[1] : 1 + (elevation - LH[1]) / (LH[2] - LH[1]);
   const I = {
     lv: Math.round(level), moving: tr && n >= tr.s && n < tr.e, up: tr && tr.to > tr.from,

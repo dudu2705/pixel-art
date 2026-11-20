@@ -31,20 +31,15 @@ shots are available alongside free flight for inspection. The district art sits 
 meshes. Side-by-side captures cover all 30 districts and connector types, plus desktop, portrait, and Retina
 ultrawide viewports. The geometry and animation can differ in small details between the two renderers.
 
-### First city map proposed for approval
+### First city map
 
-Use Vanta Bay as the first free-driving city. Lay out an east–west boulevard, a plaza loop, and four blocks
-connected by side streets. Put a tall holographic fountain at the center and leave a clear view across the
-plaza to the skyline. Add one graded ramp to a short sky-avenue deck at 35 metres, with a return connection.
+Vanta Bay is the first free-driving city and the default entry point. An east–west boulevard reaches
+Prism Plaza and its holographic fountain. Four blocks connect to the plaza by side streets. One graded
+ramp connects Sky Avenue to the deck at 35 metres, with a turnaround at the skyline outlook.
 
-1. Describe the streets as directed lane edges with curved centerlines and named junctions. Connect the
-   boulevard, plaza loop, side streets, and ramp in a single graph.
-2. Make the rider, traffic, and autopilot share that graph. Traffic follows lanes through junctions, autopilot
-   chooses legal routes, and the rider can take turns at junctions while steering manually.
-3. Stream road meshes and city blocks by map position. Reuse the visual shaders and district assets for the
-   plaza, skyline, and elevated deck.
-4. Verify that the rider can circle a block, traffic crosses a junction, and autopilot can route from the
-   boulevard to the deck. Compare the plaza and skyline shots with the visual baseline.
+The layout contains 20 road surfaces and 36 directed edges. The rider, traffic, and autopilot share lane
+positions and junction paths. The renderer streams roads, buildings, and street furniture by map area.
+The reference comparison loop remains available at `index.html?loop`.
 
 ## Why three.js, not the GPU version
 
@@ -52,7 +47,7 @@ plaza to the skyline. Add one graded ramp to a short sky-avenue deck at 35 metre
   square with a view in every direction, however it is faked.
 - This build renders real meshes and includes a free-fly camera. Weather, traffic, autopilot, the three levels,
   and the day-night cycle are already ported.
-- It still uses the old one-road generator (`world.js`). The plan is to replace that with a city map and keep the rest.
+- Vanta Bay uses a fixed graph. The original route generator remains available for visual comparisons.
 
 ## What a city map gives that a single road can't
 
@@ -91,4 +86,4 @@ plaza to the skyline. Add one graded ramp to a short sky-avenue deck at 35 metre
 4. Make that one city truly wow before scaling up.
 5. Then add more cities and the links between them.
 
-Status: visual port implemented and compared. The city map is pending approval.
+Status: visual port and the first Vanta Bay map implemented. More cities and links remain future work.

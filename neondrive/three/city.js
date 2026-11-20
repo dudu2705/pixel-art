@@ -32,7 +32,7 @@ function makeSectorTexture() {
 }
 
 export class City {
-  constructor(scene) {
+  constructor(scene, buildings) {
     this.scene = scene;
     this.live = new Map();                     // chunkIndex -> { group, dispose() }
     this.uniforms = {
@@ -53,7 +53,7 @@ export class City {
     };
     this.facadeMat = new THREE.ShaderMaterial({
       vertexShader: facadeVert, fragmentShader: facadeFrag,
-      uniforms: { ...this.uniforms, uBuildings: { value: makeBuildingTexture() } },
+      uniforms: { ...this.uniforms, uBuildings: { value: makeBuildingTexture(buildings) } },
       side: THREE.DoubleSide, glslVersion: THREE.GLSL3,
     });
     this.roadMat = new THREE.ShaderMaterial({
@@ -221,16 +221,19 @@ export class City {
       iWall.set([B.id, (a + b) * SEGL / 2, -sg], i * 3);
     });
 
+    return this.buildBuildingMesh({ iPos, iSize, iRot, iWall });
+  }
+
+  buildBuildingMesh(attributes) {
     const g = new THREE.InstancedBufferGeometry();
     g.index = this.box.index;
     g.attributes.position = this.box.attributes.position;
     g.attributes.normal = this.box.attributes.normal;
     g.attributes.uv = this.box.attributes.uv;
-    g.setAttribute('iPos', new THREE.InstancedBufferAttribute(iPos, 3));
-    g.setAttribute('iSize', new THREE.InstancedBufferAttribute(iSize, 3));
-    g.setAttribute('iRot', new THREE.InstancedBufferAttribute(iRot, 1));
-    g.setAttribute('iWall', new THREE.InstancedBufferAttribute(iWall, 3));
-    g.instanceCount = N;
+    for (const [name, values] of Object.entries(attributes)) {
+      g.setAttribute(name, new THREE.InstancedBufferAttribute(values, name === 'iRot' ? 1 : 3));
+    }
+    g.instanceCount = attributes.iRot.length;
     g.userData.sharedBase = true;
     const mesh = new THREE.Mesh(g, this.facadeMat);
     mesh.frustumCulled = false;

@@ -6,11 +6,21 @@ A real-3D build of Neon Drive using the vendored three.js r160 renderer.
 From the repository root, run `python3 -m http.server` and open
 `http://localhost:8000/neondrive/three/index.html`.
 
+The default game opens in **Vanta Bay**. Vanta Boulevard passes through Prism
+Plaza and its holographic fountain. Four surrounding blocks connect to the plaza,
+and a single ramp reaches the glass sky-avenue deck 35 metres above the city.
+Autopilot follows a route through the plaza, up to the deck, and back through
+the city. Traffic uses the same lane graph.
+
+Use `index.html?loop` to revisit the 30-district visual comparison route.
+
 ## Layout
 
 | File | Role |
 |---|---|
-| `world.js`, `road.js` | Generate the city data and give the renderer a world-space road frame at any distance |
+| `map.js`, `map-drive.js` | Define the fixed Vanta Bay lane graph and route the rider, traffic, and autopilot through it |
+| `map-city.js` | Stream Vanta Bay by map position and draw the boulevard, plaza, skyline, and sky deck |
+| `world.js`, `road.js` | Supply the reference palette and art data and generate the comparison loop |
 | `city.js` | Stream the road, buildings, and district art in 64-segment chunks |
 | `facade.glsl.js`, `shaders.js` | Paint the building walls, billboards, roofs, street surfaces, and glass decks |
 | `dressing.js`, `props.js`, `effects.js` | Place and shade district landmarks, structures, lights, and animated props |
@@ -28,6 +38,10 @@ From the repository root, run `python3 -m http.server` and open
 select those shots directly. Use `6` for orbit or `7` for free flight.
 Drag to look and use the wheel to zoom in orbit. Use `WASD` and `QE` to move
 in free flight. `F` shows diagnostics and `B` toggles glow for comparison.
+
+In Vanta Bay, steer to change lanes between junctions. As you approach a junction
+in manual mode, steer toward the turn you want. The banner names the selected
+street.
 
 The shorter side of the screen determines the art grid. Each art pixel spans
 a whole number of physical pixels and the city always renders at twice the
@@ -74,9 +88,10 @@ horizon, using the road mask, wetness, and brightness to weight the result.
 **Cockpit** — the light cycle’s handlebars, dome rim, smoked glass, floating
 ring, and projected readout on camera 1.
 
-## The game (sim.js)
+## The comparison loop
 
-Driving and weather use the reference game’s `update()` formulas.
+The comparison loop's driving and weather use the reference game's
+`update()` formulas. Vanta Bay uses the same weather and cruise presets.
 
 - **Steering physics** — lateral speed limit that scales with pace, the road's
   curvature pushing you outward, and the lean angle whose tangent is sideways
