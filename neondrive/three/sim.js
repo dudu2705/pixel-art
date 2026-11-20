@@ -273,29 +273,12 @@ export function update(dt, keys) {
 
   // ---------- theme, weather and the level system ----------
   const th = blendTheme(Math.floor(S.z / SEGL));
-  S.FOG = th.FOG; S.SKY = th.SKY; S.TWC = th.TWC;
-  S.neon = (th.t > 0.5 ? th.b : th.a).neon;
-  S.TH = th.TH; S.wx = th.wx; S.night = th.TH.night;
-
   // under a roof nothing falls, but the road outside stays wet
   const trw = TRANS_AT[n];
   const dw = district(n);
   const covered = dw === D.TUNNEL || dw === D.VAC || dw === D.TUBE
     || (trw >= 0 && n >= TRANS[trw].s && n < TRANS[trw].e);
-  S.covered = covered;
-  const Wsky = S.rainOn ? th.wx : 'off';
-  S.fall = covered ? 'none' : Wsky;
-  const wetT = { rain: 1, monsoon: 1, snow: 0.5, fog: 0.6, clear: 0.3, sand: 0.12, petals: 0.35,
-                 ash: 0.15, bubbles: 0.5, fireflies: 0.45, none: 0.4, off: 0.3 }[Wsky] ?? 0.3;
-  S.wet += (wetT - S.wet) * Math.min(1, dt * 0.6);
-  const fogT = S.rainOn && (th.wx === 'fog' || th.wx === 'sand') ? 0.42
-             : S.rainOn && th.wx === 'monsoon' ? 0.65 : 1;
-  S.fogK += (fogT - S.fogK) * Math.min(1, dt * 0.5);
-
-  // lightning in the stormy cities
-  const storm = (th.t > 0.5 ? th.b : th.a).storm || 0;
-  if (S.rainOn && !covered && (th.wx === 'rain' || th.wx === 'monsoon') && storm && Math.random() < dt / 9 * storm) S.flash = 1;
-  S.flash *= Math.exp(-dt * 4);
+  updateClimate(dt, th, covered);
 
   // the announcement board: each new zone, and each level you arrive on
   const zn = ZONES.indexOf(th.z);
@@ -318,4 +301,25 @@ export function update(dt, keys) {
   const gT = LAYERED[n] && ELEV[n] < 3 && zoneAt(n)[2] !== D.TUNNEL ? 1 : 0;
   S.gloom += (gT - S.gloom) * Math.min(1, dt * 0.5);
   S.zoneT -= dt;
+}
+
+export function updateClimate(dt, th, covered) {
+  S.FOG = th.FOG; S.SKY = th.SKY; S.TWC = th.TWC;
+  S.neon = (th.t > 0.5 ? th.b : th.a).neon;
+  S.TH = th.TH; S.wx = th.wx; S.night = th.TH.night;
+
+  S.covered = covered;
+  const Wsky = S.rainOn ? th.wx : 'off';
+  S.fall = covered ? 'none' : Wsky;
+  const wetT = { rain: 1, monsoon: 1, snow: 0.5, fog: 0.6, clear: 0.3, sand: 0.12, petals: 0.35,
+                 ash: 0.15, bubbles: 0.5, fireflies: 0.45, none: 0.4, off: 0.3 }[Wsky] ?? 0.3;
+  S.wet += (wetT - S.wet) * Math.min(1, dt * 0.6);
+  const fogT = S.rainOn && (th.wx === 'fog' || th.wx === 'sand') ? 0.42
+             : S.rainOn && th.wx === 'monsoon' ? 0.65 : 1;
+  S.fogK += (fogT - S.fogK) * Math.min(1, dt * 0.5);
+
+  // lightning in the stormy cities
+  const storm = (th.t > 0.5 ? th.b : th.a).storm || 0;
+  if (S.rainOn && !covered && (th.wx === 'rain' || th.wx === 'monsoon') && storm && Math.random() < dt / 9 * storm) S.flash = 1;
+  S.flash *= Math.exp(-dt * 4);
 }
