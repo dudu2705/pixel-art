@@ -1,5 +1,6 @@
 // The GPU light-cycle cockpit, rastered on the output art grid.
 import { SEGL, LH, ELEV, TRANS, TRANS_AT, hash, smooth } from './world.js';
+import { CYCLE_INK, CYCLE_GRIP, CYCLE_DASH } from './cycle-design.js';
 
 const LVC = [[255, 150, 60], [0, 235, 255], [255, 60, 190]];
 export const FONT = {
@@ -102,7 +103,7 @@ function drawDome(overlay) {
   }
 }
 
-export function drawCockpit(overlay, state) {
+export function drawReferenceCockpit(overlay, state) {
   const { width: W, height: H } = overlay;
   const { T, speed, steer, waitLight, auto } = state;
   const n = Math.floor(state.z / SEGL), elevation = state.elevation ?? ELEV[n];
@@ -146,6 +147,77 @@ export function drawCockpit(overlay, state) {
   const bx0 = lX - 13, bx1 = Math.round(hx + sw / 2 + 15), by0 = tY - 4, by1 = Math.round(hy + 11);
   for (let k = 0; k < 4; k++) for (const [x, y, dx, dy] of [[bx0, by0, 1, 0], [bx0, by0, 0, 1], [bx1, by0, -1, 0], [bx1, by0, 0, 1], [bx0, by1, 1, 0], [bx0, by1, 0, -1], [bx1, by1, -1, 0], [bx1, by1, 0, -1]])
     overlay.add(x + dx * k, y + dy * k, hc, 0.3 * a);
+}
+
+function panel(overlay, points, color) {
+  const min = Math.max(0, Math.ceil(Math.min(...points.map(p => p[1]))));
+  const max = Math.min(overlay.height - 1, Math.floor(Math.max(...points.map(p => p[1]))));
+  for (let y = min; y <= max; y++) {
+    const edges = [];
+    for (let i = 0, j = points.length - 1; i < points.length; j = i++) {
+      const a = points[j], b = points[i];
+      if ((a[1] > y) !== (b[1] > y)) edges.push(a[0] + (y - a[1]) * (b[0] - a[0]) / (b[1] - a[1]));
+    }
+    edges.sort((a, b) => a - b);
+    for (let i = 0; i < edges.length; i += 2)
+      for (let x = Math.ceil(edges[i]); x <= edges[i + 1]; x++) overlay.tint(x, y, color, 0);
+  }
+}
+
+export function drawCockpit(overlay, state) {
+  const { width: W, height: H } = overlay;
+  const sx = Math.min(W * 0.42, H * 0.62), sy = H * 0.28, top = H * 0.72, center = W / 2;
+  const P = (x, y) => [center + x * sx, top + y * sy];
+  const fill = (points, color) => panel(overlay, points.map(([x, y]) => P(x, y)), color);
+  const trace = (points, color, radius = 1) => {
+    for (let i = 1; i < points.length; i++) thick(overlay, ...P(...points[i - 1]), ...P(...points[i]), radius, color, color);
+  };
+  const { carbon, shell, bevel, grip, suit, armour, glass, cyan, channel, dim } = CYCLE_INK;
+  const dashSide = CYCLE_DASH.width / (CYCLE_GRIP[0] * 2) * 0.54;
+  const fork = Math.max(-1, Math.min(1, state.steer || 0)) * 0.055;
+
+  fill([[-0.53, 1.12], [-0.46, 0.61], [-0.31, 0.38], [-0.25, 0.19], [0.25, 0.19],
+    [0.31, 0.38], [0.46, 0.61], [0.53, 1.12]], carbon);
+  fill([[-0.28, 1.12], [-0.34, 0.62], [-0.17, 0.40], [0.17, 0.40], [0.34, 0.62], [0.28, 1.12]], shell);
+  for (const side of [-1, 1]) {
+    const mirror = points => points.map(([x, y]) => [x * side, y]);
+    fill(mirror([[0.26, 0.44], [0.44, 0.54], [0.52, 1.12], [0.37, 1.12], [0.32, 0.67]]), bevel);
+    trace(mirror([[0.44, 0.57], [0.35, 0.70], [0.40, 1.09]]), channel);
+    trace(mirror([[0.37, 0.78], [0.40, 0.96]]), cyan);
+
+    // The short enclosed grip and glove sit at the same contact point as the exterior model.
+    const move = (x, y) => [side * x + fork * (0.4 + x), y + side * fork * 0.95];
+    const shape = (vertices, color) => fill(vertices.map(([x, y]) => move(x, y)), color);
+    const seam = (vertices, color) => trace(vertices.map(([x, y]) => move(x, y)), color);
+    shape([[0.23, 0.52], [0.48, 0.40], [0.67, 0.14], [0.86, 0.13], [0.91, 0.29],
+      [0.76, 0.40], [0.59, 0.51], [0.45, 0.62], [0.26, 0.63]], carbon);
+    shape([[0.24, 0.53], [0.48, 0.44], [0.68, 0.17], [0.85, 0.17], [0.83, 0.30],
+      [0.65, 0.40], [0.47, 0.57]], shell);
+    seam([[0.32, 0.55], [0.49, 0.46], [0.68, 0.20]], channel);
+    shape([[0.68, 0.17], [0.85, 0.16], [0.91, 0.23], [0.90, 0.33], [0.77, 0.37], [0.66, 0.30]], grip);
+    shape([[0.73, 0.13], [0.84, 0.14], [0.91, 0.28], [0.92, 0.41], [1.02, 0.65],
+      [1.00, 0.87], [0.85, 0.68], [0.72, 0.40], [0.66, 0.27]], suit);
+    shape([[0.70, 0.20], [0.75, 0.15], [0.83, 0.17], [0.87, 0.26], [0.84, 0.33], [0.74, 0.31]], armour);
+    seam([[0.74, 0.20], [0.83, 0.22], [0.86, 0.31]], cyan);
+    seam([[0.85, 0.43], [0.95, 0.64], [0.98, 0.74]], channel);
+  }
+
+  fill([[-dashSide * 0.76, 0.08], [dashSide * 0.76, 0.08], [dashSide, 0.21], [dashSide * 0.86, 0.54],
+    [dashSide * 0.44, 0.63], [-dashSide * 0.44, 0.63], [-dashSide * 0.86, 0.54], [-dashSide, 0.21]], bevel);
+  fill([[-dashSide * 0.72, 0.12], [dashSide * 0.72, 0.12], [dashSide * 0.92, 0.23],
+    [dashSide * 0.78, 0.51], [dashSide * 0.42, 0.58], [-dashSide * 0.42, 0.58],
+    [-dashSide * 0.78, 0.51], [-dashSide * 0.92, 0.23]], glass);
+  trace([[-dashSide * 0.9, 0.24], [-dashSide * 0.68, 0.12], [dashSide * 0.68, 0.12], [dashSide * 0.9, 0.24]], cyan);
+  trace([[-0.085, 0.71], [-0.065, 0.80], [0.065, 0.80], [0.085, 0.71], [-0.085, 0.71]], channel);
+  trace([[-0.039, 0.86], [0.039, 0.86]], dim);
+
+  const speed = String(Math.round(state.speed * 3.6)), scale = sy >= 64 && sx >= 120 ? 2 : 1;
+  const text = (str, y, ink, sc = 1) =>
+    htext(overlay, str, Math.round(center - (str.length * 4 - 1) * sc / 2), Math.round(top + y * sy), ink, sc, 0.9);
+  const status = state.waitLight ? 'RED' : state.auto ? 'AUTO' : 'MANUAL';
+  const statusColor = state.waitLight ? [255, 70, 70] : state.auto ? [104, 255, 179] : [255, 189, 108];
+  text(speed, 0.22, cyan, scale);
+  text('L' + ((state.layer ?? 0) + 1) + ' ' + status, 0.41, statusColor);
 }
 
 
