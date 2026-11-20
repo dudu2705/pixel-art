@@ -1,4 +1,4 @@
-// signals.js — intersections: the cross street, its zebra, and the traffic
+// signals.js — intersection masts and traffic
 // lights. The generator already decided where these go (IX / XROAD); the light
 // cycle is the original's: 16s green, 3s amber, then red, and the ruin's
 // lights just blink amber.
@@ -10,21 +10,15 @@ import { Batch, unitBox } from './props.js';
 
 const LIGHT_COL = [[40, 230, 90], [255, 190, 40], [255, 50, 50], [40, 36, 44]];
 
-// the static half: cross road surface, zebra stripes, signal masts
+// Static signal masts. The road shader paints the cross streets and markings.
 export function buildSignals(n0, n1, mats) {
-  const road = new Batch(unitBox), metal = new Batch(unitBox);
+  const metal = new Batch(unitBox);
   const f = {};
   for (let n = n0; n < n1; n++) {
     if (!XROAD[n]) continue;
     frameAt(n * SEGL, f);
     const put = (lat, up, size, col, b) =>
       b.add([f.x + f.rx * lat, f.y + up, f.z + f.rz * lat], size, f.th, col, [n, 0]);
-    // the cross street running away on both sides
-    road.add([f.x, f.y - 0.04, f.z], [150, 0.06, SEGL * 1.05], f.th, [14, 14, 18], [n, 0]);
-    if (XROAD[n] && !XROAD[n - 1]) {                 // zebra at the near edge
-      for (let i = -3; i <= 3; i++)
-        put(i * 1.9, 0.03, [1.0, 0.04, SEGL * 0.9], [190, 195, 205], road);
-    }
     if (n === (IX.find(ix => ix === n) ?? -1)) {      // the mast itself
       for (const sg of [-1, 1]) {
         put(sg * (RW + 1.2), 0, [0.3, 6.4, 0.3], [34, 32, 44], metal);
@@ -33,11 +27,8 @@ export function buildSignals(n0, n1, mats) {
       }
     }
   }
-  const out = [];
-  for (const [b, m] of [[road, mats.metal], [metal, mats.metal]]) {
-    const mesh = b.build(m); if (mesh) out.push(mesh);
-  }
-  return out;
+  const mesh = metal.build(mats.metal);
+  return mesh ? [mesh] : [];
 }
 
 // the lamps themselves change every frame, so they live in their own pool

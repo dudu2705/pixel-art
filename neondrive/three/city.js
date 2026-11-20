@@ -3,9 +3,9 @@
 // a window of chunks around the camera and build/drop them as it moves.
 
 import * as THREE from './vendor/three.module.js';
-import { SEGL, NSEG, LEN, RW, SW, blocks, SIDE, ELEV, LAYERED, BASE, zoneAt, D } from './world.js';
+import { SEGL, NSEG, LEN, RW, SW, blocks, SIDE, ELEV, LAYERED, BASE, TRANS, TRANS_AT, XROAD, district, zoneAt, D } from './world.js';
 import { frameAt } from './road.js';
-import { roadVert, roadFrag, floorVert, floorFrag } from './shaders.js';
+import { roadVert, roadFrag, floorFrag } from './shaders.js';
 import { facadeVert, facadeFrag, makeBuildingTexture } from './facade.glsl.js';
 import { makeMaterials, markGlowing, buildProps } from './props.js';
 import { buildDressing } from './dressing.js';
@@ -16,7 +16,20 @@ export const CHUNK = 64;                       // segments per chunk
 export const NCHUNK = Math.ceil(NSEG / CHUNK);
 const AHEAD = 22, BEHIND = 6;                  // chunks kept live
 
-const NO_ROAD_EDGE = new Set([D.TUNNEL, D.TUBE, D.VAC]);
+const SOLID_DECK = new Set([D.TUNNEL, D.TUBE, D.VAC, D.BRIDGE, D.FERRY, D.VOLCANO, D.CLOUDS, D.PONTOON, D.SALT]);
+const GROUND_WIDTH = 120;
+
+function makeSectorTexture() {
+  const width = 256, height = Math.ceil(NSEG / width);
+  const data = new Uint8Array(width * height * 2);
+  for (let n = 0; n < NSEG; n++) {
+    data[n * 2] = district(n);
+    data[n * 2 + 1] = XROAD[n] ? 1 : 0;
+  }
+  const texture = new THREE.DataTexture(data, width, height, THREE.RGFormat);
+  texture.needsUpdate = true;
+  return texture;
+}
 
 export class City {
   constructor(scene) {
@@ -31,6 +44,7 @@ export class City {
       uFlash: { value: 0 },
       uRW: { value: RW },
       uSceneDepth: { value: null },
+      uSectors: { value: makeSectorTexture() },
       uMaskPass: { value: false },
       uWet: { value: 0 },
       uBike: { value: new THREE.Vector2() },
@@ -53,8 +67,8 @@ export class City {
       transparent: true, depthWrite: false, glslVersion: THREE.GLSL3,
     });
     this.floorMat = new THREE.ShaderMaterial({
-      vertexShader: floorVert, fragmentShader: floorFrag,
-      uniforms: this.uniforms, side: THREE.DoubleSide,
+      vertexShader: roadVert, fragmentShader: floorFrag,
+      uniforms: this.uniforms, side: THREE.DoubleSide, glslVersion: THREE.GLSL3,
     });
     this.box = new THREE.BoxGeometry(1, 1, 1).translate(0, 0.5, 0);   // origin at base
     this.mats = markGlowing(makeMaterials(this.uniforms));
@@ -70,19 +84,27 @@ export class City {
   // Elevated stretches are built as a separate, transparent mesh: on levels 2
   // and 3 the original's deck is clear glass you see the city through.
   buildRoad(ci, wantElev) {
-    const n0 = ci * CHUNK, n1 = Math.min(NSEG, n0 + CHUNK) + 1;
+    const n0 = ci * CHUNK, n1 = Math.min(NSEG, n0 + CHUNK);
     const KERB = 0.28;
     const lats = [[-(RW + SW), KERB], [-RW, KERB], [-RW, 0], [-RW * 0.5, 0], [0, 0],
                   [RW * 0.5, 0], [RW, 0], [RW, KERB], [RW + SW, KERB]];
-    const isElev = n => { const i = ((n % NSEG) + NSEG) % NSEG; return (LAYERED[i] ? ELEV[i] : 0) > 0.4; };
+    if (!wantElev) {
+      lats.unshift([-GROUND_WIDTH, -0.15]);
+      lats.push([GROUND_WIDTH, -0.15]);
+    }
+    const isElev = n => {
+      const i = n % NSEG, transition = TRANS[TRANS_AT[i]];
+      return LAYERED[i] && ELEV[i] > 0.4 && !SOLID_DECK.has(district(i))
+        && !(transition && i >= transition.s && i < transition.e);
+    };
     const pos = [], uv = [], lat = [], idx = [];
     const f = {};
     let row = 0, prevRow = -1;
-    for (let n = n0; n < n1; n++) {
-      const here = isElev(n) === wantElev;
-      const linkBack = here && prevRow >= 0;
-      if (!here) { prevRow = -1; continue; }
-      frameAt(n * SEGL, f);
+    for (let n = n0; n <= n1; n++) {
+      const linkBack = n > n0 && isElev(n - 1) === wantElev;
+      const linkAhead = n < n1 && isElev(n) === wantElev;
+      if (!linkBack && !linkAhead) continue;
+      frameAt(n === NSEG ? n * SEGL - 0.001 : n * SEGL, f);
       for (let li = 0; li < lats.length; li++) {
         const L = lats[li][0];
         pos.push(f.x + f.rx * L, f.y + 0.02 + lats[li][1], f.z + f.rz * L);
@@ -120,7 +142,7 @@ export class City {
       if ((LAYERED[i] ? ELEV[i] : 0) > 6) { any = true; break; }
     }
     if (!any) return null;
-    const f = {}, pos = [], idx = [];
+    const f = {}, pos = [], uv = [], lat = [], idx = [];
     const SPAN = 150;
     let row = 0;
     for (let n = n0; n <= n1; n += 4) {
@@ -129,6 +151,8 @@ export class City {
       const y = BASE[i] - 0.5;
       pos.push(f.x + f.rx * -SPAN, y, f.z + f.rz * -SPAN);
       pos.push(f.x + f.rx * SPAN, y, f.z + f.rz * SPAN);
+      uv.push(0, n, 1, n);
+      lat.push(-SPAN, SPAN);
       if (row > 0) {
         const a = (row - 1) * 2, b = a + 1, c = row * 2, d = c + 1;
         idx.push(a, c, b, b, c, d);
@@ -138,6 +162,8 @@ export class City {
     if (!idx.length) return null;
     const g = new THREE.BufferGeometry();
     g.setAttribute('position', new THREE.BufferAttribute(new Float32Array(pos), 3));
+    g.setAttribute('uv', new THREE.BufferAttribute(new Float32Array(uv), 2));
+    g.setAttribute('lat', new THREE.BufferAttribute(new Float32Array(lat), 1));
     g.setIndex(idx);
     g.computeBoundingSphere();
     const m = new THREE.Mesh(g, this.floorMat);

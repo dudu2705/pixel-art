@@ -95,8 +95,10 @@ export function buildDressing(n0, n1, mats) {
     // ---------- elevated deck: underside and rails ----------
     const deckW = d === D.HIGHWAY ? RW + SW : RW + 1.5;
     if (elev) {
-      strip(n, 0, -0.1, deckW * 2, 1.6, [26, 24, 36], B.metal);               // the deck slab
-      if (n % 12 === 0) put(0, -el, [2.6, el, 2.6], [34, 32, 44], B.metal);   // support column
+      for (const side of [-1, 1]) {
+        strip(n, side * deckW, 0, 0.18, 1.4, [26, 24, 36], B.metal);
+        if (n % 12 === 0) put(side * (deckW - 0.6), -el, [1.4, el, 1.4], [34, 32, 44], B.metal);
+      }
       // see-through barrier, so the city below stays visible from up here
       if (d !== D.HIGHWAY) for (const sg of [-1, 1]) {
         frameAt((n + 1) * SEGL, f2);
