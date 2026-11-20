@@ -194,6 +194,9 @@ export const GRID_CITIES = [
   { name: 'NEON LAGOON', p: 'nl', gate: 6400, x0: 6550, xm: 6700, x1: 6850, z0: -130, z1: 130,
     avenue: 'Lagoon Avenue', rows: ['Canal Row', 'Market Row'], cols: ['Stilt Street', 'Stack Street', 'Marina Street'],
     incoming: { id: 'ferry', district: D.FERRY, speed: 120, lanes: 2, height: 4 } },
+  { name: 'EMBER FOUNDRY', p: 'ef', gate: 7850, x0: 8000, xm: 8150, x1: 8300, z0: -130, z1: 130,
+    avenue: 'Furnace Avenue', rows: ['Slag Row', 'Container Row'], cols: ['Stack Street', 'Casting Street', 'Crane Street'],
+    incoming: { id: 'volcano-rim', district: D.VOLCANO, speed: 140, lanes: 2, height: 10, bend: 96 } },
 ];
 export const AURUM = GRID_CITIES[0];
 export const BRIDGE = { x0: 240, x1: AURUM.gate, top: 22, ramp: 350 };

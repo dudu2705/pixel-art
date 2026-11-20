@@ -266,7 +266,10 @@ the map in this order, one commit each. Whoever picks this up: tick the box, add
   ferry road climbs onto a 4 m vehicle deck with the reference's striped hull, lit ports, red funnels, smoke,
   and dark rippling water. The deck is a continuous route, matching the comparison loop's ferry crossing.
   Node out-and-back took 189 s with correct banners and clear weather, a 16.3 s longest rider stop, and zero crashes.
-- [ ] **16. Ember Foundry and the volcano rim.**
+- [x] **16. Ember Foundry and the volcano rim.** The road bends around a lava field with rock spires, ember
+  lights and low barriers. The link uses the reference's warm fog and ash. Furnace Avenue adds glowing
+  grates, smoking stacks and nearby dock and construction props. Node out-and-back took 183 s, with correct
+  banners and ash, a 13.5 s longest rider stop, and zero crashes.
 - [ ] **17. Aurora Pass and the cloud causeway.**
 - [ ] **18. Monsoon Terraces and the pontoon road.**
 - [ ] **19. Mirage Bazaar and the salt flats.**

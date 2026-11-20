@@ -4,8 +4,8 @@
 import * as THREE from './vendor/three.module.js';
 import { VANTA_BAY, frameOn, AURUM, BRIDGE } from './map.js';
 import { FONT } from './cockpit.js';
-import { CITIES, D, SW } from './world.js';
-import { Batch, unitBox, unitCyl, unitSphere, unitPlane, unitPlaneFlat } from './props.js';
+import { CITIES, D, SW, hash } from './world.js';
+import { Batch, unitBox, unitCone, unitCyl, unitSphere, unitPlane, unitPlaneFlat } from './props.js';
 
 export function buildSetPieces(mats, groundMat) {
   const out = [];
@@ -72,7 +72,31 @@ export function buildSetPieces(mats, groundMat) {
   }
   for (const tube of VANTA_BAY.roads.filter(road => road.tube)) out.push(...buildTube(tube, mats));
   for (const ferry of VANTA_BAY.roads.filter(road => road.link?.district === D.FERRY)) out.push(...buildFerry(ferry, mats));
+  for (const rim of VANTA_BAY.roads.filter(road => road.link?.district === D.VOLCANO)) out.push(...buildVolcano(rim, mats));
   return out;
+}
+
+function buildVolcano(road, mats) {
+  const rock = new Batch(unitCone), metal = new Batch(unitBox), glow = new Batch(unitBox);
+  const edge = road.halfWidth + SW;
+  for (let d = 12; d < road.path.length - 12; d += 4) {
+    const f = frameOn(road.path, d);
+    const put = (batch, lat, y, size, color, meta = [0, 0]) => batch.add(
+      [f.x + f.rx * lat, y, f.z + f.rz * lat], size, f.th, color, meta);
+    put(metal, 0, -0.2, [2 * edge + 0.5, f.y + 0.15, 4.25], [43, 27, 25]);
+    for (const side of [-1, 1]) {
+      put(metal, side * edge, f.y - 0.45, [0.3, 1.6, 4.25], [70, 68, 80]);
+      if (d % 20 === 12) put(glow, side * (edge - 0.1), f.y + 0.72, [0.24, 0.24, 0.42], [255, 124, 45], [d, 0.5, 1, 35]);
+    }
+    if (d % 52 === 12) {
+      const side = hash(d, 1, 91) < 0.5 ? -1 : 1, h = 8 + hash(d, 3, 93) * 30;
+      const lat = side * (edge + 8 + hash(d, 2, 92) * 40), w = 4 + hash(d, 4, 94) * 6;
+      put(rock, lat, -1, [w, h, w], [46, 26, 22]);
+      put(glow, lat, 0.3, [0.01, 0.01, 0.01], [255, 90, 20], [d, 0.35, 8, 60]);
+      put(rock, -side * (edge + 88), -2, [44 + w, h * 2.8, 44 + w], [34, 22, 24]);
+    }
+  }
+  return [rock.build(mats.metal), metal.build(mats.metal), glow.build(mats.emit)].filter(Boolean);
 }
 
 function buildFerry(road, mats) {

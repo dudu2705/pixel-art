@@ -4,7 +4,7 @@
 import { VANTA_BAY, frameOn, GRID_CITIES } from './map.js';
 import { SEGL, SW, D, CITIES, WARM, hash } from './world.js';
 import { FONT } from './cockpit.js';
-import { Batch, unitBox, unitPlane, unitSphere, unitCone } from './props.js';
+import { Batch, unitBox, unitPlane, unitSphere, unitCone, unitCyl } from './props.js';
 
 const LEAF = [[60, 255, 180], [200, 90, 255], [90, 200, 255], [255, 90, 200]];
 const CORAL = [[255, 110, 160], [120, 255, 220], [255, 170, 90], [200, 120, 255]];
@@ -23,6 +23,7 @@ const GRID_DISTRICTS = {
   'CORAL DEEP': { av: D.REEF, r0: D.CANALS, r2: D.GARDENS, c0: D.REEF, c1: D.GARDENS, c2: D.REEF },
   'BLACKOUT SECTOR': { av: D.STACK, r0: D.DOWNTOWN, r2: D.DATA, c0: D.STACK, c1: D.TUNNEL, c2: D.DATA },
   'NEON LAGOON': { av: D.CANALS, r0: D.CANALS, r2: D.MARKET, c0: D.CANALS, c1: D.STACK, c2: D.CANALS },
+  'EMBER FOUNDRY': { av: D.FORGE, r0: D.STACK, r2: D.DOCKS, c0: D.BUILD, c1: D.FORGE, c2: D.DOCKS },
 };
 for (const c of GRID_CITIES) {
   const g = GRID_DISTRICTS[c.name], p = c.p;
@@ -34,7 +35,8 @@ STREET_DISTRICT['mega-highway'] = D.HIGHWAY;
 
 export function buildMapDressing(mats) {
   const B = { metal: new Batch(unitBox), emit: new Batch(unitBox), cloth: new Batch(unitPlane),
-    lamp: new Batch(unitSphere), effect: new Batch(unitPlane), foliage: new Batch(unitPlane), cone: new Batch(unitCone) };
+    lamp: new Batch(unitSphere), effect: new Batch(unitPlane), foliage: new Batch(unitPlane), cone: new Batch(unitCone),
+    pole: new Batch(unitCyl) };
   for (const road of VANTA_BAY.roads) {
     const d = STREET_DISTRICT[road.id], city = CITIES.find(c => c.name === road.city) ?? (road.link && CITIES.find(c => c.name === road.link.b));
     if (d === undefined || road.level !== 0) continue;
@@ -116,6 +118,18 @@ export function buildMapDressing(mats) {
         put(lat, 0, [1.8, height, 3.6], [26, 28, 38], B.metal);
         put(lat - side * 0.92, height * 0.68, [0.05, 0.24, 2.8], city.neon[1], B.emit, [n, 0.38]);
       }
+      if (d === D.FORGE) {
+        if (i % 20 === 9) {
+          const side = hash(n, 3, 13) < 0.5 ? -1 : 1, h = 70 + hash(n, 4, 14) * 50;
+          const lat = side * (RW + SW + 6);
+          put(lat, 0, [3.2, h, 3.2], [44, 30, 28], B.pole);
+          put(lat, h - 1.2, [3.7, 1.2, 3.7], [255, 110, 30], B.emit, [n, 0.5, 4, 56]);
+          for (const fraction of [0.25, 0.6]) put(lat, h * fraction, [3.6, 0.5, 3.6], [90, 50, 30], B.pole);
+          steam(lat, h + 1, 12, 14, n, 0.25, [70, 50, 46]);
+        }
+        if (i % 3 === 0) for (let lane = -road.lanes; lane < road.lanes; lane++)
+          put((lane + 0.5) * 3.5, 0.062, [1.1, 0.06, 2.4], [255, 110, 30], B.emit, [n, 0.25]);
+      }
       // ---------- mega-highway: barriers along both edges, an overpass every 280 m ----------
       if (d === D.HIGHWAY) {
         for (const sg of [-1, 1]) put(sg * (RW + SW), 0, [0.3, 1.1, SEGL + 0.05], [56, 54, 70], B.metal);
@@ -159,7 +173,7 @@ export function buildMapDressing(mats) {
     put(0, 6.89, [0.01, 0.01, 0.01], city.neon[0], B.emit, [0, 0.3, 5, 60]);
   }
   const out = [];
-  for (const [b, m] of [[B.metal, mats.metal], [B.emit, mats.emit], [B.cloth, mats.cloth], [B.lamp, mats.emit], [B.effect, mats.effect], [B.foliage, mats.foliage], [B.cone, mats.emit]]) {
+  for (const [b, m] of [[B.metal, mats.metal], [B.emit, mats.emit], [B.cloth, mats.cloth], [B.lamp, mats.emit], [B.effect, mats.effect], [B.foliage, mats.foliage], [B.cone, mats.emit], [B.pole, mats.metal]]) {
     const mesh = b.build(m); if (mesh) out.push(mesh);
   }
   return out;
