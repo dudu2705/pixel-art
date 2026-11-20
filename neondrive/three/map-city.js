@@ -343,12 +343,13 @@ export class MapCity extends City {
     return this.cells.get(key);
   }
 
-  roadMaterial(road) {
-    const key = road?.id ?? 'junction';
+  roadMaterial(road, junction) {
+    const city = road?.city ?? junction.exits.find(edge => !edge.road.link)?.road.city;
+    const key = road?.id ?? 'junction:' + city;
     if (!this.materials.has(key)) {
       const base = road?.level >= 1 ? this.glassMat : this.roadMat;
       const material = base.clone();
-      const deck = deckCoverFor(road?.city);
+      const deck = deckCoverFor(city);
       material.uniforms = { ...base.uniforms,
         uRW: { value: road?.halfWidth ?? 7 },
         uMapMode: { value: road ? (road.oneWay ? 2 : 1) : 3 },
@@ -402,7 +403,9 @@ export class MapCity extends City {
       }
       g.setAttribute('lat', new THREE.BufferAttribute(lat, 1));
       g.setAttribute('uv', new THREE.BufferAttribute(uv, 2));
-      const mesh = new THREE.Mesh(g, this.roadMaterial());
+      // Fill the space between road ribbons with the city's asphalt. This is the
+      // ordinary intersection surface, with no turn marker or separate finish.
+      const mesh = new THREE.Mesh(g, this.roadMaterial(null, node));
       mesh.position.set(node.x, node.y + 0.058, node.z);
       mesh.layers.set(ROAD_LAYER);
       group.add(mesh);

@@ -196,7 +196,10 @@ vec3 mapGround(float lx, float w, float pxw, out float reflectivity) {
       return tile ? vec3(30, 26, 42) : vec3(46, 40, 60);
     }
   }
-  float mottled = pxw < 0.35 ? hsh(int(floor(lx * 3.0)), int(floor(w * 3.0)), 9) * 9.0 : 4.5;
+  // All intersecting ribbons and their fill use the same world-space asphalt.
+  vec2 cell = floor(vWorld.xz * 3.0);
+  float footprint = max(fwidth(vWorld.x), fwidth(vWorld.z));
+  float mottled = mix(hsh(int(cell.x), int(cell.y), 9) * 9.0, 4.5, smoothstep(0.23, 0.36, footprint));
   return vec3(24, 22, 34) + mottled;
 }
   void main() {

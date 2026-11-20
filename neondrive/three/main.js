@@ -151,6 +151,7 @@ const signals = comparisonLoop ? new Signals(scene, city.mats) : new MapSignals(
 if (!comparisonLoop) for (const mesh of [buildGates(city.mats), ...buildRail(city.mats), ...buildMapDressing(city.mats), ...buildSetPieces(city.mats, city.groundMat)]) if (mesh) scene.add(mesh);
 const mapFlyers = [], mapTrain = [];
 const rig = new Rig(camera, canvas, mapDrive ? {
+  smoothCockpit: true,
   frameAt: sampleFrame, enclosed: mapDrive.enclosed.bind(mapDrive), boreHalfWidth: RAMP_BORE_HALF_WIDTH,
   cabinBounds: mapDrive.cabinBounds.bind(mapDrive), period: 0,
 } : undefined);
@@ -307,7 +308,7 @@ function frame(now) {
   const [r, g, b] = S.SKY[1].map((value, i) => (value + S.SKY[2][i]) / 510);
   cycle.material.uniforms.uSky.value.setRGB(r, g, b);
   cycle.material.uniforms.uViewportHeight.value = rt.height;
-  const lean = cockpit ? bike.roll : 0;
+  const lean = rig.bank;
   quadMat.uniforms.uRotation.value.set(Math.cos(lean), Math.sin(lean));
 
   const crown = THREE.MathUtils.smoothstep(f.elev, LH[1] + 15, LH[2]);

@@ -483,7 +483,7 @@ export class MapDrive {
     const road = p.turn ? p.turn.edge.road : p.edge.road;
     const start = SURFACES.find(s => s.road === road);
     const found = this.locate(pose.x, pose.z, pose.y, start) ?? this.locate(pose.x, pose.z, pose.y, null);
-    this.free = { x: pose.x, z: pose.z, y: pose.y, th: pose.th, surface: found ? found.surface : start, wall: 0 };
+    this.free = { x: pose.x, z: pose.z, y: pose.y, th: pose.th, surface: found ? found.surface : start, wall: 0, assistYaw: 0 };
     if (p.turn) { this.owners.get(p.edge.to)?.delete(p); p.edge = p.turn.edge; p.s = p.edge.to === p.edge.from ? 0 : p.edge.from.trim; }
     p.turn = null; p.exit = null;
     this.project();
@@ -534,25 +534,29 @@ export class MapDrive {
     p.brake = p.speed < wasSpeed - 0.03;
     // steering: a turn rate capped by grip (about 0.9 g sideways), tight enough at walking pace for a U-turn
     const v = p.speed, cap = Math.min(1.5, 9 / Math.max(v, 1));
-    let yaw = -S.steer * cap;
-    if (Math.abs(S.steer) < 0.08 && f.surface.kind === 'road') {   // hands off: settle into the road's direction
+    let assist = 0;
+    if (f.surface.kind === 'road') {   // hands off: settle into the road's direction
       const o = {};
       if (onSurface(f.surface, f.x, f.z, o, f.y)) {
         const wrap = a => Math.atan2(Math.sin(a), Math.cos(a));
         const back = Math.abs(wrap(o.th - f.th)) > Math.PI / 2 && f.surface.road.edges.length > 1, dir = back ? -1 : 1;
         const along = back ? o.th + Math.PI : o.th;
         let d = wrap(along - f.th);
-        if (Math.abs(d) < 0.6) {
+        const alignment = 1 - smooth(0.35, 0.6, Math.abs(d));
+        if (alignment > 0) {
           // follow the bend: the road's own turn rate ahead, so long curves (the helix, the plaza ring) don't drift out
           const path = f.surface.road.path, ahead = frameOn(path, Math.max(0, Math.min(path.length, o.s + dir * 4)));
           const ff = wrap((back ? ahead.th + Math.PI : ahead.th) - along) / 4 * v;
           // and ease back from the edge: within 2.5 m of it, aim a little inward (lat is + to the road's right)
           const half = f.surface.half, lat = o.lat * dir, edge = Math.abs(lat) - (half - 2.5);
           if (edge > 0) d += clamp(Math.sign(lat) * edge * 0.12, -0.25, 0.25);
-          yaw += clamp(d * Math.min(2.5, v * 0.2) + ff, -cap, cap);
+          assist = alignment * clamp(d * Math.min(2.5, v * 0.2) + ff, -cap, cap);
         }
       }
     }
+    f.assistYaw += (assist - f.assistYaw) * -Math.expm1(-14 * dt);
+    const hand = smooth(0.04, 0.24, Math.abs(S.steer));
+    const yaw = clamp(-S.steer * cap + f.assistYaw * (1 - hand), -cap, cap);
     f.th += yaw * dt;
     // move, then find the ground; off the edge of everything is a wall you slide along
     const step = v * dt;

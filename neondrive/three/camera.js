@@ -29,6 +29,22 @@ const LOW_DRONE = { back: 9, up: 2.2, pitch: 0.06 };
 const lerp = (a, b, t) => a + (b - a) * t;
 const damp = (a, b, l, dt) => lerp(a, b, 1 - Math.exp(-l * dt));
 
+// Critically damped tracking preserves angular velocity as the target moves.
+function settle(axis, target, frequency, dt, reset) {
+  if (reset) {
+    axis.angle = target;
+    axis.velocity = 0;
+    return target;
+  }
+  const difference = axis.angle - target;
+  const error = Math.atan2(Math.sin(difference), Math.cos(difference));
+  const impulse = axis.velocity + frequency * error;
+  const decay = Math.exp(-frequency * dt);
+  axis.angle += (error + impulse * dt) * decay - error;
+  axis.velocity = (axis.velocity - frequency * impulse * dt) * decay;
+  return axis.angle;
+}
+
 export class Rig {
   constructor(camera, dom, sampling = {}) {
     this.cam = camera;
@@ -36,10 +52,14 @@ export class Rig {
     this.enclosed = sampling.enclosed ?? enclosed;
     this.boreHalfWidth = sampling.boreHalfWidth ?? BORE_W;
     this.cabinBounds = sampling.cabinBounds;
+    this.smoothCockpit = sampling.smoothCockpit;
     this.period = sampling.period ?? LEN;
     this.mode = 0;
     this.shot = { ...FOLLOW[0], lat: 0 };
     this.shotChanged = true;
+    this.cockpitYaw = { angle: 0, velocity: 0 };
+    this.cockpitBank = { angle: 0, velocity: 0 };
+    this.bank = 0;
     this.trackside = null;
     this.alongside = 1;
     this.lastLat = 3.5;
@@ -104,6 +124,7 @@ export class Rig {
 
   update(bike, dt) {
     this.lastLat = bike.laneOffset ?? bike.lat;
+    this.bank = 0;
     this.cam.up.set(0, 1, 0);
     if (this.mode === FLY) {                        // FLY: detached, WASD + mouse
       const sp = (this.keys.ShiftLeft ? 160 : 45) * dt;
@@ -129,7 +150,8 @@ export class Rig {
     const underRoof = this.enclosed(bike.dist);
     const target = this.mode === 2 && underRoof ? LOW_DRONE : FOLLOW[this.mode];
     const lat = this.mode === 4 ? this.alongside * 2.2 : 0;
-    const amount = this.shotChanged ? 1 : 1 - Math.pow(0.94, dt * 60);
+    const changed = this.shotChanged;
+    const amount = changed ? 1 : 1 - Math.pow(0.94, dt * 60);
     for (const key of ['back', 'up', 'pitch']) this.shot[key] = lerp(this.shot[key], target[key], amount);
     this.shot.lat = lerp(this.shot.lat, lat, amount);
     this.shotChanged = false;
@@ -161,7 +183,15 @@ export class Rig {
     const focal = Math.max(0.62 * this.cam.aspect, 0.8) * (1 - 0.14 * smooth(45, 85, bike.speed));
     const lift = 0.14 * smooth(0, LH[1], f.elev) - 0.16 * smooth(LH[1] + 15, LH[2], f.elev);
     const pitch = (0.05 + this.shot.pitch - lift) / focal;
-    this.look.set(this.cam.position.x + Math.sin(f.th), this.cam.position.y - pitch, this.cam.position.z + Math.cos(f.th));
+    let heading = f.th;
+    if (this.mode === 0) {
+      this.bank = bike.roll;
+      if (this.smoothCockpit) {
+        heading = settle(this.cockpitYaw, heading, 18, dt, changed);
+        this.bank = settle(this.cockpitBank, bike.roll, 16, dt, changed);
+      }
+    }
+    this.look.set(this.cam.position.x + Math.sin(heading), this.cam.position.y - pitch, this.cam.position.z + Math.cos(heading));
     this.cam.lookAt(this.look);
     this.setFov(THREE.MathUtils.radToDeg(2 * Math.atan(0.5 / focal)));
   }

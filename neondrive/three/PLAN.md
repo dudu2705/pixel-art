@@ -338,6 +338,15 @@ Done first, without a structural change:
   per segment. The lean uses a smoothed turn rate (sideways acceleration over gravity) plus the rider's own
   steering in manual mode, eased in. Exits are chosen early enough to brake to the turn speed at any cruise
   setting (at least `v² / 14 + 20` m out), so 300 km/h no longer reaches a junction with nowhere to slow down.
+- **Cockpit turn smoothing and intersection paving.** Manual steering blends the hands-off assist when the
+  rider releases the controls or crosses onto another road surface. The mapped cockpit damps heading and lean
+  while tracking the bike's position directly. Intersection fill and road ribbons share the same world-space
+  asphalt and overhead-deck shadow. Crosswalks and signals remain visible. The graph and drivable intersection
+  surfaces still support free steering and NPC routing. At 60 simulation updates per second, the largest
+  frame-to-frame change in cockpit yaw per frame fell by 67% in Vanta's west junction turn, 73% on a manual plaza
+  bend, and 41% in a manual spiral. Chrome rendered the eased plaza bank and the junction under Sky Avenues.
+  The rider crossed that junction on red in a manual test. Three 10-minute autopilot runs had zero crashes
+  and no rider waits over 20 s.
 
 ### Free steering (built)
 
