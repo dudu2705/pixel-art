@@ -113,6 +113,7 @@ export class MapDrive {
   }
 
   canEnter(current) {
+    if (current === this.player && !S.auto) return true;
     const owner = this.owners.get(current.edge.to);
     if (owner && owner !== current) return false;
     const lane = this.nextLane(current, current.exit);
@@ -129,7 +130,7 @@ export class MapDrive {
         turn.s += move;
         remaining -= move;
         if (turn.s < turn.path.length - 0.0001) break;
-        this.owners.delete(current.edge.to);
+        if (this.owners.get(current.edge.to) === current) this.owners.delete(current.edge.to);
         const trim = current.edge.to.trim;
         const previousRoad = current.edge.road;
         current.edge = turn.edge;
@@ -165,7 +166,7 @@ export class MapDrive {
         current.speed = 0;
         break;
       }
-      this.owners.set(current.edge.to, current);
+      if (!this.owners.has(current.edge.to)) this.owners.set(current.edge.to, current);
       const lane = this.nextLane(current, current.exit);
       current.turn = { path: turnPath(current.edge, current.lat, current.exit, laneOffset(current.exit, lane)),
         s: 0, speed: this.turnSpeed(current), edge: current.exit, lane };
@@ -201,7 +202,7 @@ export class MapDrive {
         }
       }
     }
-    if (!current.turn && remaining < 64) current.exit ??= this.selectExit(current, isPlayer);
+    if (!current.turn && remaining < Math.max(64, current.speed ** 2 / 14 + 20)) current.exit ??= this.selectExit(current, isPlayer);
 
     let limit = Math.min(current.edge.road.speed, isPlayer ? CRUISE[S.cruise] : current.limit);
     if (isPlayer && !S.auto) limit = current.edge.road.speed;
@@ -223,10 +224,14 @@ export class MapDrive {
     current.brake = current.speed < wasSpeed - 0.03;
     this.advance(current, current.speed * dt, isPlayer);
     if (isPlayer) {
+      // lean like a real bike: the angle whose tangent is sideways acceleration over gravity, from a smoothed turn
+      // rate (so path joints don't jitter it) plus the rider's own steering when changing lanes by hand
       const turnRate = Math.sin(oldHeading - current.pose.th) / Math.max(dt, 0.001);
-      const tilt = clamp(Math.atan(turnRate * current.speed * 0.95 / 9.8), -0.42, 0.42);
-      S.roll += (tilt - S.roll) * Math.min(1, dt * 5);
-      S.waitLight = current.speed < 1 && remaining < 4 && Boolean(current.exit) && !this.canEnter(current);
+      this.yawRate = (this.yawRate ?? 0) + (turnRate - (this.yawRate ?? 0)) * Math.min(1, dt * 6);
+      const handLean = S.auto || current.turn ? 0 : S.steer * Math.min(current.speed, 40) * 0.2;
+      const tilt = clamp(Math.atan((this.yawRate * current.speed + handLean) / 9.8), -0.42, 0.42);
+      S.roll += (tilt - S.roll) * Math.min(1, dt * 4);
+      S.waitLight = false;
     }
   }
 

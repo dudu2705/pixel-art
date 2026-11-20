@@ -122,6 +122,49 @@ Use these shots as the visual baseline when replacing scenery with connected geo
   weather shelter under real cover, and the last level and portal height on each intercity link as cities are
   added. Run the checks from the static server using the default map and `?loop`.
 
+## Driving feel
+
+Done first, without a structural change:
+
+- **Red lights.** Vanta Bay has no traffic signals, so the cockpit no longer shows `RED`. A manual rider ignores
+  junction reservations and blocked-exit holds and rides straight in; it still stops behind a real vehicle in its
+  lane. Traffic and autopilot keep reserving junctions, and a rider who takes a junction is never overwritten.
+- **Smooth curves and lean.** `frameOn` turns the heading continuously through path joints instead of jumping
+  per segment. The lean uses a smoothed turn rate (sideways acceleration over gravity) plus the rider's own
+  steering in manual mode, eased in. Exits are chosen early enough to brake to the turn speed at any cruise
+  setting (at least `v² / 14 + 20` m out), so 300 km/h no longer reaches a junction with nowhere to slow down.
+
+### Free steering (proposed, for review before any code)
+
+Today the manual rider is still a graph vehicle: arrows slide it sideways within its lanes, pick an exit in the
+last 34 m, and the graph drives the turn. Proposed instead:
+
+1. **The rider becomes a free body in the plane of the road surface.** State: position (x, z), heading, speed,
+   current surface. Arrows turn the heading (bicycle model: turn rate from steer × speed / wheelbase, capped by
+   grip so the bike can't pivot at 300 km/h). Gas and brake as today. Autopilot keeps driving the graph exactly
+   as now; switching to manual hands the graph pose over, switching back snaps to the nearest lane edge.
+2. **Surfaces, not lanes, decide where you can ride.** Every road, junction disc, plaza ring and ramp is a
+   drivable surface built from the geometry already used for its mesh: a centre path, a half-width (road plus
+   sidewalk), and a height along it. Each frame, find the surface under the rider: nearest point on the current
+   surface's path; if the rider is outside its half-width, check the surfaces meeting at its end junctions; the
+   rider's height comes from the surface it is on. Lookup uses a coarse grid of surfaces by map cell so it is
+   cheap at any city size.
+3. **Levels stay separate.** A surface belongs to one level (ramps span two). The rider only ever switches to a
+   surface that touches the current one at a junction or a ramp end, never to one that merely overlaps in plan
+   view, so the street under the Sky Avenue deck and the deck above it never swap.
+4. **Edges are walls.** Leaving the drivable width where there is no connecting surface is a barrier: deck edges,
+   bore walls, building fronts. Hitting one slides the rider along it, scrubs speed and shakes the view, as the
+   reference does at the kerb. Plaza, junction discs and wide boulevards allow U-turns; a one-way ramp can be
+   ridden backwards but traffic will be coming.
+5. **Traffic still works around you.** The rider gets a projected graph position (nearest edge, distance, lane)
+   each frame so traffic can queue behind it and avoid it, and so `S.z`, the zone banners, level announcements,
+   gloom and the ramp bores keep working from the same data they use now.
+6. **Collisions.** Against vehicles by distance in the plane at matching height (so cars on the street below
+   never hit you on the deck), the same rear-end and head-on rules as today.
+7. **Review in motion:** turn through every junction both ways by hand, a U-turn on the boulevard and in the
+   plaza, ride onto and off both ramps, scrape a deck edge and a bore wall, ride under the deck and confirm the
+   rider never jumps levels, then hand back to autopilot mid-street and mid-ramp.
+
 ## Why three.js, not the GPU version
 
 - The GPU version (`../neondrive-gpu.html`) draws one road with buildings on its two sides. It cannot show an open

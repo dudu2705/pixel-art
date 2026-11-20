@@ -50,7 +50,12 @@ export function frameOn(path, distance, out = {}) {
   out.x = s.start.x + s.dx * t;
   out.y = s.start.y + s.dy * t;
   out.z = s.start.z + s.dz * t;
-  out.th = Math.atan2(s.dx, s.dz);
+  // the heading turns continuously: halfway between neighbouring segments at each joint, the segment's own at its middle
+  const th = Math.atan2(s.dx, s.dz), n = t < 0.5 ? path.segments[lo - 1] : path.segments[lo + 1];
+  if (n) {
+    const nth = Math.atan2(n.dx, n.dz), w = 0.5 - Math.abs(t - 0.5);
+    out.th = th + Math.atan2(Math.sin(nth - th), Math.cos(nth - th)) * (0.5 - w);
+  } else out.th = th;
   out.rx = -Math.cos(out.th);
   out.rz = Math.sin(out.th);
   out.elev = out.y;
