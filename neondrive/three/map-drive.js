@@ -1,11 +1,19 @@
-import { VANTA_BAY, frameOn, frameInLane, laneOffset, legalTurns, routeTo, turnAngle, turnPath, LANE_WIDTH } from './map.js';
+import { VANTA_BAY, frameOn, frameInLane, laneOffset, legalTurns, routeTo, turnAngle, turnPath,
+  inBore, underSkyDeck, LANE_WIDTH } from './map.js';
 import { S, blendTheme, setAuto, updateClimate } from './sim.js';
 import { CITIES, CRUISE, SEGL, ZONES, cars, clamp, mulberry } from './world.js';
 
 const { nodes, edges } = VANTA_BAY;
 const cityIndex = CITIES.findIndex(city => city.name === 'VANTA BAY');
 const climateSegment = ZONES.find(zone => zone[3] === cityIndex && !zone[4])[0];
-const itinerary = ['plaza-west', 'plaza-east', 'sky-outlook', 'plaza-south', 'gateway'];
+const groundStops = ['plaza-east', 'street-north', 'street-south'];
+const skyStops = ['sky-north', 'sky-south', 'sky-north'];
+const itinerary = [
+  ...groundStops.map(id => ({ id, level: 0 })),
+  { id: 'sky-north', level: null },
+  ...skyStops.slice(1).map(id => ({ id, level: 1 })),
+  { id: 'street-south', level: null },
+];
 const rng = mulberry(2048);
 
 function vehicle(edge, s, lane, speed) {
@@ -20,16 +28,31 @@ function sample(vehicle, out = {}) {
 export class MapDrive {
   constructor() {
     this.player = vehicle(edges.find(edge => edge.from === nodes.gateway), 18, 1, 30);
-    this.itineraryIndex = 0;
+    this.player.itinerary = itinerary;
     this.intent = 0;
     this.owners = new Map();
     this.history = [];
-    this.traffic = edges.filter(edge => !edge.road.oneWay && edge.from !== nodes.gateway).filter((_, i) => i % 2 === 0)
+    const avenueIds = ['east-north', 'east-south', 'street-north-through', 'sky-deck'];
+    const localEdges = edges.filter(edge => edge.road.level === 0 && !edge.road.oneWay &&
+      !avenueIds.includes(edge.road.id) && edge.from !== nodes.gateway).filter((_, i) => i % 3 === 0);
+    const avenueEdges = edges.filter(edge => avenueIds.includes(edge.road.id));
+    this.traffic = [...localEdges, ...avenueEdges, ...edges.filter(edge => edge.road.bore)]
       .map((edge, i) => {
-        const npc = vehicle(edge, edge.path.length * (0.37 + rng() * 0.24),
+        const distance = clamp(edge.path.length * (0.4 + 0.22 * rng()), edge.from.trim + 2, edge.path.length - edge.to.trim - 2);
+        const npc = vehicle(edge, distance,
           Math.floor(rng() * edge.road.lanes), 8 + rng() * 7);
         npc.limit = 11 + rng() * 9;
-        npc.style = cars[i];
+        npc.style = { ...cars[i % cars.length] };
+        if (edge.road.bore) {
+          npc.itinerary = [{ id: 'sky-north' }, { id: 'sky-south', level: 1 },
+            { id: 'street-south' }, { id: 'street-north', level: 0 }];
+          npc.stopIndex = edge.to.level === 1 ? 0 : 2;
+        } else if (avenueEdges.includes(edge)) {
+          npc.itinerary = edge.road.level === 1
+            ? [{ id: 'sky-south', level: 1 }, { id: 'sky-north', level: 1 }]
+            : [{ id: 'street-south', level: 0 }, { id: 'street-north', level: 0 }];
+          npc.stopIndex = Number(edge.to.z > edge.from.z);
+        }
         return npc;
       });
     this.vehicles = [this.player, ...this.traffic];
@@ -42,16 +65,19 @@ export class MapDrive {
     S.zoneText = 'VANTA BAY · VANTA BOULEVARD';
     S.zoneT = 3.5;
     S.elevation = 0;
+    S.layer = 0;
   }
 
   autoExit(current) {
     const node = current.edge.to;
-    let target = nodes[itinerary[this.itineraryIndex]];
-    if (node === target) {
-      this.itineraryIndex = (this.itineraryIndex + 1) % itinerary.length;
-      target = nodes[itinerary[this.itineraryIndex]];
+    const stops = current.itinerary;
+    let index = current.stopIndex ?? 0;
+    while (node === nodes[stops[index].id] || (stops[index].level != null && stops[index].level !== node.level)) {
+      index = (index + 1) % stops.length;
     }
-    return routeTo(node, target, current.edge)[0] ?? legalTurns(current.edge)[0];
+    const { id, level } = stops[index];
+    current.stopIndex = index;
+    return routeTo(node, nodes[id], current.edge, level)[0] ?? legalTurns(current.edge)[0];
   }
 
   manualExit(current) {
@@ -65,6 +91,7 @@ export class MapDrive {
 
   selectExit(current, isPlayer) {
     if (isPlayer) return S.auto ? this.autoExit(current) : this.manualExit(current);
+    if (current.itinerary) return this.autoExit(current);
     const choices = legalTurns(current.edge);
     return choices[Math.floor(rng() * choices.length)];
   }
@@ -104,7 +131,7 @@ export class MapDrive {
         if (turn.s < turn.path.length - 0.0001) break;
         this.owners.delete(current.edge.to);
         const trim = current.edge.to.trim;
-        const previousName = current.edge.road.name;
+        const previousRoad = current.edge.road;
         current.edge = turn.edge;
         current.lane = turn.lane;
         current.lat = laneOffset(current.edge, turn.lane);
@@ -113,7 +140,12 @@ export class MapDrive {
         current.exit = null;
         if (isPlayer) {
           this.intent = 0;
-          if (previousName !== current.edge.road.name) {
+          const level = current.edge.road.level;
+          if (level !== null && level !== S.layer) {
+            S.zoneText = level > S.layer ? '▲ LEVEL 2 · SKY AVENUES' : '▼ LEVEL 1 · STREET';
+            S.zoneT = 3.5;
+            S.layer = level;
+          } else if (previousRoad.name !== current.edge.road.name && !(S.zoneT > 0 && S.zoneText.includes('LEVEL'))) {
             S.zoneText = current.edge.road.name.toUpperCase();
             S.zoneT = 2.5;
           }
@@ -121,10 +153,12 @@ export class MapDrive {
         continue;
       }
       const stop = current.edge.path.length - current.edge.to.trim;
-      const move = Math.min(remaining, Math.max(0, stop - current.s));
+      const room = Math.max(0, this.leadDistance(current) - 6);
+      const move = Math.min(remaining, Math.max(0, stop - current.s), room);
       current.s += move;
       remaining -= move;
       traveled += move;
+      if (room < 0.0001) current.speed = 0;
       if (current.s < stop - 0.0001) break;
       current.exit ??= this.selectExit(current, isPlayer);
       if (!this.canEnter(current)) {
@@ -134,7 +168,7 @@ export class MapDrive {
       this.owners.set(current.edge.to, current);
       const lane = this.nextLane(current, current.exit);
       current.turn = { path: turnPath(current.edge, current.lat, current.exit, laneOffset(current.exit, lane)),
-        s: 0, edge: current.exit, lane };
+        s: 0, speed: this.turnSpeed(current), edge: current.exit, lane };
     }
     current.traveled += traveled;
     sample(current, current.pose);
@@ -171,13 +205,12 @@ export class MapDrive {
 
     let limit = Math.min(current.edge.road.speed, isPlayer ? CRUISE[S.cruise] : current.limit);
     if (isPlayer && !S.auto) limit = current.edge.road.speed;
-    if (current.turn) limit = Math.min(limit, 12);
+    if (current.turn) limit = Math.min(limit, current.turn.speed);
     else {
       const lead = this.leadDistance(current);
       limit = Math.min(limit, Math.sqrt(15 * Math.max(0, lead - 6)));
       if (current.exit) {
-        const angle = Math.abs(turnAngle(current.edge, current.exit));
-        const turnSpeed = angle < 0.12 ? Math.min(limit, current.exit.road.speed) : angle < 0.8 ? 12 : 8.5;
+        const turnSpeed = this.turnSpeed(current);
         limit = Math.min(limit, Math.sqrt(turnSpeed ** 2 + 17 * Math.max(0, remaining)));
         if (!this.canEnter(current)) limit = Math.min(limit, Math.sqrt(16 * Math.max(0, remaining)));
       }
@@ -215,13 +248,25 @@ export class MapDrive {
     S.z = p.traveled;
     S.px = p.lat;
     S.speed = p.speed;
-    S.layer = p.pose.y >= 34 ? 1 : 0;
     S.elevation = p.pose.y;
-    updateClimate(dt, blendTheme(climateSegment), false);
+    const deck = underSkyDeck(p.pose), bore = this.enclosed(p.traveled);
+    S.gloom += (Number(deck || bore) - S.gloom) * Math.min(1, dt * 0.85);
+    updateClimate(dt, blendTheme(climateSegment), deck || bore);
     if (!this.history.length || p.traveled - this.history.at(-1).distance >= 0.65) {
       this.history.push({ distance: p.traveled, pose: { ...p.pose } });
     }
     while (this.history.length > 2 && p.traveled - this.history[1].distance > 108) this.history.shift();
+  }
+
+  turnSpeed(current) {
+    const angle = Math.abs(turnAngle(current.edge, current.exit));
+    const speed = Math.min(current.edge.road.speed, current.exit.road.speed);
+    return angle < 0.12 ? speed : current.edge.to.ramp ? Math.min(speed, 18) : angle < 0.8 ? 12 : 8.5;
+  }
+
+  enclosed(distance) {
+    const p = this.player;
+    return !p.turn && inBore(p.edge.road, p.s + distance - p.traveled);
   }
 
   cameraFrame(distance, out = {}) {

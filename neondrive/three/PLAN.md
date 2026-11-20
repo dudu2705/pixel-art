@@ -34,16 +34,16 @@ ultrawide viewports. The geometry and animation can differ in small details betw
 ### First city map
 
 Vanta Bay is the first free-driving city and the default entry point. An east–west boulevard reaches
-Prism Plaza and its holographic fountain. Four blocks connect to the plaza by side streets. One graded
-ramp connects Sky Avenue to the deck at 35 metres, with a turnaround at the skyline outlook.
+Prism Plaza and its holographic fountain. Four blocks connect to the plaza by side streets. The initial
+map had one ramp to a deck with a turnaround at the skyline outlook.
 
-The layout contains 20 road surfaces and 36 directed edges. The rider, traffic, and autopilot share lane
-positions and junction paths. The renderer streams roads, buildings, and street furniture by map area.
+The rider, traffic, and autopilot share lane positions and junction paths. The renderer streams roads,
+buildings, and street furniture by map area.
 The reference comparison loop remains available at `index.html?loop`.
 
 ## Stacked city levels
 
-Approved for the Street-to-Sky slice. Stop for review after the slice before building Crown or a lift.
+The Street-to-Sky slice is ready for review. Crown and the lift follow a later review.
 
 ### First slice
 
@@ -56,9 +56,15 @@ Approved for the Street-to-Sky slice. Stop for review after the slice before bui
 - Report measured fps, viewport, and hardware or renderer at the slice review. The full build targets 60 fps
   with all three levels visible. The slice can measure the view with two levels visible.
 
+The two spiral ramps are 572 m each, with a 6.82% peak grade. Manual driving, traffic, and autopilot
+completed both ramp merges in simulation. The guided route covered at least 2.3 km between level arrivals.
+Five-second Chrome samples at 1100 × 720, 1×, on Apple M1 with Metal averaged 60 fps from the street,
+59 fps from Sky Avenues with the street visible, and 60 fps in the bore. The 95th percentile frame time
+was at most 16.8 ms in those samples. The three-level target remains to be tested.
+
 ### What the comparison showed
 
-| Cue | GPU reference and three.js comparison loop | Playable Vanta Bay map |
+| Cue | GPU reference and three.js comparison loop | Vanta Bay before the slice |
 | --- | --- | --- |
 | Streets below | The GPU draws a lit lower street and moving headlights and taillights. The three.js loop reproduces the drop through the glass decks with a lower ribbon and animated light meshes. The lower activity follows the main route's scenery. | The elevated spur has rails, lamps, ground columns, and routed vehicles. It sits near the edge of the street grid, with little active street directly below it. There is no Crown road. |
 | Roads and bridges above | Overhead crossings and lit skywalks frame the street and Sky Avenues. The loop carries over these pieces and derives gloom from the route's layer flags. | The map has no sustained street run under a deck or network of tower-to-tower crossings. Mapped climate receives no cover information. |
@@ -80,8 +86,9 @@ Use these shots as the visual baseline when replacing scenery with connected geo
    3D paths between road meshes, rider, traffic, and autopilot.
 2. **Build side exits and merges.** Extend the first ramp into a side exit from a continuing street lane and
    a merge beside a continuing Sky Avenue lane. Add the equivalent connection between Sky Avenues and Crown,
-   with routes in both directions, allowing about 1 km of road for the 65 m climb. Keep stretches of the old deck in view from the ramp before the lit
-   chevron bore and after its exit. Reuse the loop's portal and bore art. Give ramp edges explicit endpoints,
+   with routes in both directions, allowing about 1 km of road for the 65 m climb. Keep stretches of the old
+   deck in view from the ramp before the lit chevron bore and after its exit. Reuse the loop's portal and bore
+   art. Give ramp edges explicit endpoints,
    paths and merge priority, and check grade, curvature and vertical clearance along the whole path. Add one
    drive-on tower lift once the ramp routes work. A lift edge connects fixed landing nodes and provides door,
    boarding and waiting state to the same router.
@@ -91,8 +98,9 @@ Use these shots as the visual baseline when replacing scenery with connected geo
    Sky Avenues and Crown entrances on the same full-height towers. Connect sidewalks and footbridges to those
    entrances. Use deck gaps and glass panels to keep lower streets and sidewalks legible from above.
 4. **Run each level and preserve the atmosphere.** Give each level its own routed traffic and pedestrian paths
-   with visible lights. Give Crown about one fifth of the car density of the busier levels. Share junction and merge rules between traffic and the rider, with occupancy tied to
-   graph paths and height so roads stacked above one another can operate independently. Drive gloom and weather
+   with visible lights. Give Crown about one fifth of the car density of the busier levels. Share junction and
+   merge rules between traffic and the rider, with occupancy tied to graph paths and height so roads stacked
+   above one another can operate independently. Drive gloom and weather
    shelter from actual overhead deck and bore coverage, with gradual changes at the edges. Keep the existing
    altitude-based starfield and city lighting. Announce a level once the rider reaches its through lanes or exits
    a lift, for example `▲ LEVEL 2 · SKY AVENUES`. Use the destination level from the graph for the announcement.
@@ -159,4 +167,4 @@ Use these shots as the visual baseline when replacing scenery with connected geo
 4. Build and verify the three-level network in Vanta Bay.
 5. Then add more cities and the links between them.
 
-The visual port and first Vanta Bay map are implemented. The Street-to-Sky slice is approved for implementation.
+The visual port, first Vanta Bay map, and Street-to-Sky slice are implemented. The slice is awaiting review.

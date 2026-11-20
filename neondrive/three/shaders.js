@@ -41,6 +41,10 @@ export const roadFrag = /* glsl */`
   uniform float uFogNear, uFogFar;
   uniform float uRW, uTime;
   uniform float uMapMode, uMapLength;
+  uniform vec4 uMapDeck;
+  uniform float uMapContinuous, uMapBikeHeight;
+  uniform vec3 uMapFork;
+  uniform vec3 uCam;
   uniform sampler2D uSectors;
   uniform sampler2D uSceneDepth;
   uniform bool uMaskPass;
@@ -143,25 +147,29 @@ vec3 ground(float lx, float w, float z, float pxw, float fz, int d, bool deckOnl
 }
 vec3 mapGround(float lx, float w, float pxw, out float reflectivity) {
   float a = abs(lx), width = max(0.09, pxw * 0.55);
-  float endDist = min(w, uMapLength - w);
+  float endDist = uMapContinuous > 0.5 ? 0.0 : min(w, uMapLength - w);
+  bool through = uMapContinuous > 0.5;
+  bool ramp = uMapFork.z > 0.5;
+  bool byFork = uMapFork.x > 0.5 && w < 28.0 || uMapFork.y > 0.5 && uMapLength - w < 28.0;
+  bool openEdge = byFork && (ramp || vWorld.x > uMapDeck.x);
   reflectivity = 0.5;
   if (uMapMode < 2.5) {
     if (a < uRW) {
-      if (endDist > 8.0 && endDist < 10.5 && uMapLength > 45.0 && mod(a + 0.45, 1.0) < 0.55) {
+      if (!byFork && endDist > 8.0 && endDist < 10.5 && uMapLength > 45.0 && mod(a + 0.45, 1.0) < 0.55) {
         reflectivity = 0.15;
         return vec3(215, 215, 225);
       }
-      if (uMapMode < 1.5 && endDist > 7.0 && abs(a - 0.2) < width) {
+      if (uMapMode < 1.5 && (through || endDist > 7.0) && abs(a - 0.2) < width) {
         reflectivity = 0.2;
         return vec3(235, 165, 40);
       }
-      bool divider = uMapMode < 1.5 ? a > 1.0 && abs(a - round(a / 3.5) * 3.5) < width : a < width;
-      if (endDist > 8.0 && (divider && mod(w, 10.0) < 4.5 || abs(a - (uRW - 0.3)) < width)) {
+      bool divider = !ramp && (uMapMode < 1.5 ? a > 1.0 && abs(a - round(a / 3.5) * 3.5) < width : a < width);
+      if ((through || endDist > 8.0) && (divider && mod(w, 10.0) < 4.5 || !openEdge && abs(a - (uRW - 0.3)) < width)) {
         reflectivity = 0.2;
         return vec3(200, 200, 215);
       }
     } else {
-      if (a < uRW + 0.3) { reflectivity = 0.3; return vec3(0, 225, 255); }
+      if (!ramp && !openEdge && a < uRW + 0.3) { reflectivity = 0.3; return vec3(0, 225, 255); }
       reflectivity = 0.25;
       bool tile = pxw < 0.5 && (mod(w, 1.6) < 0.12 || mod(a - uRW, 1.6) < 0.10);
       return tile ? vec3(30, 26, 42) : vec3(46, 40, 60);
@@ -184,9 +192,20 @@ vec3 mapGround(float lx, float w, float pxw, out float reflectivity) {
     if (uMapMode > 0.5) {
       float materialWet;
       vec3 base = mapGround(vLat, roadZ, pixelWidth, materialWet);
-      col = mix(base / 255.0, uFog, fog);
+      float shade = (1.0 - smoothstep(uMapDeck.y - 1.0, uMapDeck.y + 3.0, abs(vWorld.x - uMapDeck.x)))
+        * smoothstep(uMapDeck.z - 5.0, uMapDeck.z + 6.0, vWorld.z)
+        * (1.0 - smoothstep(uMapDeck.w - 6.0, uMapDeck.w + 5.0, vWorld.z))
+        * (1.0 - smoothstep(25.0, 33.0, vWorld.y));
+      col = mix(base / 255.0 * (1.0 - 0.32 * shade), uFog, fog);
       wet = materialWet * (1.0 - fog) * uWet * (1.0 - smoothstep(45.0, 170.0, distanceAhead));
-      alpha = deck ? 0.68 : 1.0;
+      alpha = deck && abs(vLat) < uRW - 0.48 && materialWet > 0.4 ? 0.34 : 1.0;
+      if (deck && uCam.y < vWorld.y - 0.2) {
+        bool trim = abs(abs(vLat) - (uRW - 0.12)) < max(pixelWidth * 0.52, 0.11);
+        vec3 underside = trim ? vec3(19, 103, 136) : vec3(24, 21, 34);
+        col = mix(underside / 255.0, uFog, fog);
+        alpha = abs(vLat) < uRW - 0.48 ? 0.75 : 1.0;
+        wet = 0.0;
+      }
     } else {
       col = ground(vLat, roadZ, distanceAhead, pixelWidth, fog, d, deck, wet, alpha);
     }
@@ -199,6 +218,7 @@ vec3 mapGround(float lx, float w, float pxw, out float reflectivity) {
       float across = dot(offset, vec2(uBikeForward.y, -uBikeForward.x)) / 2.8;
       float beam = (1.0 - smoothstep(9.0, 32.0, ahead)) * smoothstep(2.5, 6.0, ahead)
                    * max(0.0, 1.0 - across * across) * uHeadlight;
+      if (uMapMode > 0.5) beam *= 1.0 - smoothstep(2.0, 5.0, abs(vWorld.y - uMapBikeHeight));
       fragColor = vec4(wet, beam, 0.0, 1.0);
       return;
     }

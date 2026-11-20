@@ -1,7 +1,8 @@
 import * as THREE from './vendor/three.module.js';
 import { City, ROAD_LAYER } from './city.js';
-import { Batch, unitBox, unitCyl, unitSphere, unitPlane } from './props.js';
-import { VANTA_BAY, frameOn, PLAZA_RADIUS } from './map.js';
+import { Batch, unitBox, unitCyl, unitSphere, unitPlane, unitPlaneFlat } from './props.js';
+import { VANTA_BAY, frameOn, PLAZA_RADIUS, DECK_COVER, RAMP_BORE_HALF_WIDTH } from './map.js';
+import { FONT } from './cockpit.js';
 import { blocks, CITIES, zoneAt, D, SW, SEGL, mulberry, mix } from './world.js';
 
 const CELL = 96;
@@ -12,6 +13,11 @@ const palette = CITIES[district].neon;
 const styles = [D.DOWNTOWN, D.SPIRES, D.ARCADE, D.MARKET, D.STACK];
 const templates = styles.map(style => blocks.filter(b => b.style === style && zoneAt(b.start)[3] === district));
 const cellKey = (x, z) => Math.floor(x / CELL) + '/' + Math.floor(z / CELL);
+const BORE_HEIGHT = 6.5;
+const roadSamples = roads.flatMap(road => Array.from({ length: Math.ceil(road.path.length / 4) + 1 }, (_, i) => {
+  const distance = Math.min(i * 4, road.path.length);
+  return { ...frameOn(road.path, distance), road, distance };
+}));
 
 function makeBuildings() {
   const random = mulberry(41283);
@@ -20,6 +26,9 @@ function makeBuildings() {
     const collection = templates[style] ?? templates[0];
     const fallback = collection.length ? collection : blocks.filter(b => b.style === styles[style]);
     const source = fallback[Math.floor(random() * fallback.length)];
+    const clearance = Math.hypot(sx, sz) / 2;
+    if (roadSamples.some(f => (f.road.bore || f.road.id.startsWith('street-')) &&
+      Math.hypot(f.x - x, f.z - z) < clearance + f.road.halfWidth + SW + 2)) return;
     const ratio = sz / (source.len * SEGL);
     const bbs = source.bbs.filter(b => b.v1 < h).map(b => ({ ...b, u0: b.u0 * ratio, u1: b.u1 * ratio }));
     if (style === 2 && h > 27) bbs.push({ u0: 2, u1: Math.min(sz - 2, 21), v0: 13, v1: 24, kind: 4,
@@ -57,6 +66,11 @@ function makeBuildings() {
     lot(x, 211 + random() * 22, 17, 19, 75 + random() * 55, 1);
     lot(x - 23, -197 - random() * 22, 17, 19, 63 + random() * 75, 1);
   }
+  lot(210, 193, 33, 33, 76, 1);
+  lot(210, -193, 33, 33, 80, 1);
+  lot(164, 291, 25, 29, 69, 1);
+  lot(191, 319, 30, 27, 81, 1);
+  lot(164, -282, 24, 27, 73, 1);
   return models;
 }
 
@@ -85,15 +99,18 @@ const groundFragment = /* glsl */`
     gl_FragColor = vec4(mix(color / 255.0, uFog, fog), 1.0);
   }`;
 
-function roadGeometry(road, from, to) {
+function roadGeometry(road, from, to, lift = 0) {
   const position = [], uv = [], lat = [], index = [];
   const h = road.halfWidth, columns = [-h - SW, -h, 0, h, h + SW];
   const rows = Math.ceil((to - from) / 2.5);
   for (let i = 0; i <= rows; i++) {
     const dist = from + i / rows * (to - from);
     const f = frameOn(road.path, dist);
+    const shoulder = THREE.MathUtils.smoothstep(distanceToFork(road, dist), 28, 38);
     for (const x of columns) {
-      position.push(f.x + f.rx * x, f.y + 0.045, f.z + f.rz * x);
+      const east = f.rx * x > 0;
+      const offset = Math.sign(x) * (Math.min(Math.abs(x), h) + Math.max(0, Math.abs(x) - h) * (road.bore || east ? shoulder : 1));
+      position.push(f.x + f.rx * offset, f.y + 0.045 + lift, f.z + f.rz * offset);
       lat.push(x);
       uv.push(0, dist / SEGL);
     }
@@ -111,10 +128,80 @@ function roadGeometry(road, from, to) {
   return g;
 }
 
+function addBore(road, from, to, walls, ceiling, siding) {
+  const { mode } = road.bore, halfWidth = RAMP_BORE_HALF_WIDTH;
+  for (let d = from; d < to; d += SEGL) {
+    const end = Math.min(d + SEGL, to);
+    const a = frameOn(road.path, d), b = frameOn(road.path, end);
+    const slope = b.y - a.y, y = (a.y + b.y) * 0.5;
+    for (const lat of [-halfWidth, halfWidth]) {
+      const x0 = a.x + a.rx * lat, z0 = a.z + a.rz * lat;
+      const x1 = b.x + b.rx * lat, z1 = b.z + b.rz * lat;
+      walls.add([(x0 + x1) / 2, y + BORE_HEIGHT / 2, (z0 + z1) / 2],
+        [Math.hypot(x1 - x0, z1 - z0) + 0.055, BORE_HEIGHT + 0.06, 1],
+        Math.atan2(x1 - x0, z1 - z0) + Math.PI / 2, [255, 255, 255], [mode, 0, d, slope]);
+      const outer = Math.sign(lat) * 0.18;
+      siding.add([(x0 + x1) / 2 + (a.rx + b.rx) * outer / 2, y + BORE_HEIGHT / 2,
+        (z0 + z1) / 2 + (a.rz + b.rz) * outer / 2],
+      [Math.hypot(x1 - x0, z1 - z0) + 0.12, BORE_HEIGHT + 0.12, 1],
+      Math.atan2(x1 - x0, z1 - z0) + Math.PI / 2, [38, 34, 50], [0, 0, d, slope]);
+    }
+    ceiling.add([(a.x + b.x) / 2, y + BORE_HEIGHT, (a.z + b.z) / 2],
+      [2 * halfWidth + 0.25, 1, Math.hypot(b.x - a.x, b.z - a.z) + 0.14],
+      Math.atan2(b.x - a.x, b.z - a.z), [255, 255, 255], [mode, 1, d, slope]);
+  }
+}
+
+function addPortal(road, f, entrance, metal, emit) {
+  const width = RAMP_BORE_HALF_WIDTH, up = road.bore.mode === 1;
+  const accent = up ? [80, 255, 150] : [255, 170, 60];
+  const put = (batch, lateral, height, size, color) =>
+    batch.add([f.x + f.rx * lateral, f.y + height, f.z + f.rz * lateral], size, f.th, color, [0, 0]);
+  for (const lateral of [-width, width])
+    put(emit, lateral, 0, [0.28, BORE_HEIGHT + 0.28, 0.32], accent);
+  put(emit, 0, BORE_HEIGHT, [2 * width, 0.28, 0.32], accent);
+  if (!entrance) return;
+  put(metal, 0, BORE_HEIGHT + 0.28, [2 * width + 0.6, 1.4, 0.34], [24, 23, 34]);
+  const label = up ? 'TO LEVEL 2' : 'TO LEVEL 1';
+  addMapLabel(label, BORE_HEIGHT + 0.48, 0.22, (lateral, y, size) => put(emit, lateral, y, size, accent));
+}
+
+function addMapLabel(label, height, pixel, put) {
+  for (let i = 0; i < label.length; i++) {
+    const glyph = FONT[label[i]];
+    for (let bit = 0; bit < glyph.length; bit++) {
+      if (glyph[bit] !== '1') continue;
+      const lateral = (i * 4 + bit % 3 - (label.length * 4 - 2) / 2) * pixel;
+      put(lateral, height + (4 - Math.floor(bit / 3)) * pixel, [pixel, pixel, 0.43]);
+    }
+  }
+}
+
+function addExitSign(f, up, metal, emit) {
+  const span = 8.4, side = up ? -1 : 1;
+  const accent = up ? [80, 255, 150] : [255, 170, 60];
+  const put = (batch, lateral, height, size, color) =>
+    batch.add([f.x + f.rx * (lateral + side * 4.4), f.y + height, f.z + f.rz * (lateral + side * 4.4)], size, f.th, color, [0, 0]);
+  put(metal, side * span / 2, 0, [0.25, 6.3, 0.25], [30, 27, 39]);
+  put(metal, 0, 5.8, [span, 1.42, 0.34], [18, 20, 28]);
+  put(emit, 0, 5.78, [span, 0.08, 0.43], accent);
+  addMapLabel(up ? 'SKY AVENUES' : 'STREET', 6.03, 0.15, (lateral, y, size) => put(emit, lateral, y, size, accent));
+}
+
+// East-side rails and columns stop at the fork and merge openings.
+function rampOpening(road, distance, x) {
+  return x > DECK_COVER.x && distanceToFork(road, distance) < 34;
+}
+
+function distanceToFork(road, distance) {
+  return Math.min(road.a.ramp ? distance : Infinity, road.b.ramp ? road.path.length - distance : Infinity);
+}
+
 export class MapCity extends City {
   constructor(scene) {
     const buildings = makeBuildings();
     super(scene, buildings);
+    this.uniforms.uMapBikeHeight = { value: 0 };
     this.cells = new Map();
     this.groundMat = new THREE.ShaderMaterial({
       vertexShader: groundVertex, fragmentShader: groundFragment, uniforms: this.uniforms,
@@ -145,12 +232,15 @@ export class MapCity extends City {
   roadMaterial(road) {
     const key = road?.id ?? 'junction';
     if (!this.materials.has(key)) {
-      const base = road?.elevated ? this.glassMat : this.roadMat;
+      const base = road?.level === 1 ? this.glassMat : this.roadMat;
       const material = base.clone();
       material.uniforms = { ...base.uniforms,
         uRW: { value: road?.halfWidth ?? 7 },
         uMapMode: { value: road ? (road.oneWay ? 2 : 1) : 3 },
         uMapLength: { value: road?.path.length ?? 0 },
+        uMapDeck: { value: new THREE.Vector4(DECK_COVER.x, DECK_COVER.halfWidth, DECK_COVER.south, DECK_COVER.north) },
+        uMapContinuous: { value: road?.level === 1 ? 1 : 0 },
+        uMapFork: { value: new THREE.Vector3(Number(Boolean(road?.a.ramp)), Number(Boolean(road?.b.ramp)), Number(Boolean(road?.bore))) },
       };
       this.materials.set(key, material);
     }
@@ -176,12 +266,13 @@ export class MapCity extends City {
     group.add(terrain);
     if (cell?.buildings.length) group.add(this.buildingMesh(cell.buildings));
     for (const { road, from, to } of cell?.roads ?? []) {
-      const mesh = new THREE.Mesh(roadGeometry(road, from, to), this.roadMaterial(road));
+      const mesh = new THREE.Mesh(roadGeometry(road, from, to, road.bore ? 0.018 : 0), this.roadMaterial(road));
       mesh.layers.set(ROAD_LAYER);
-      if (road.elevated) mesh.renderOrder = 2;
+      if (road.level === 1) mesh.renderOrder = 2;
       group.add(mesh);
     }
     for (const node of cell?.junctions ?? []) {
+      if (node.ramp) continue;
       const g = new THREE.CircleGeometry(Math.max(node.trim + 1, node.halfWidth + 3.5), 32).rotateX(-Math.PI / 2);
       const p = g.getAttribute('position');
       const lat = new Float32Array(p.count), uv = new Float32Array(p.count * 2);
@@ -198,16 +289,40 @@ export class MapCity extends City {
     }
     if (cell) {
       const metal = new Batch(unitBox), emit = new Batch(unitBox), rails = new Batch(unitPlane);
+      const walls = new Batch(unitPlane), ceiling = new Batch(unitPlaneFlat), siding = new Batch(unitPlane);
       for (const { road, from, to } of cell.roads) {
-        if (!road.elevated) continue;
+        if (road.id === 'street-north-approach' || road.id === 'sky-deck') {
+          const up = road.id === 'street-north-approach', d = up ? road.path.length - 43 : 43;
+          if (d >= from && d < to) {
+            const f = frameOn(road.path, d);
+            if (!up) {
+              f.th += Math.PI;
+              f.rx *= -1;
+              f.rz *= -1;
+            }
+            addExitSign(f, up, metal, emit);
+          }
+        }
+        if (road.bore) {
+          const start = Math.max(from, road.bore.from), end = Math.min(to, road.bore.to);
+          if (start < end) addBore(road, start, end, walls, ceiling, siding);
+          if (road.bore.from >= from && road.bore.from < to)
+            addPortal(road, frameOn(road.path, road.bore.from), true, metal, emit);
+          if (road.bore.to >= from && road.bore.to < to)
+            addPortal(road, frameOn(road.path, road.bore.to), false, metal, emit);
+        } else if (road.level !== 1) continue;
         const rows = Math.ceil((to - from) / 2.5);
         for (let i = 0; i < rows; i++) {
           const a = from + i / rows * (to - from), b = from + (i + 1) / rows * (to - from);
+          const mid = (a + b) / 2;
+          if (road.bore && mid >= road.bore.from && mid <= road.bore.to) continue;
           const first = frameOn(road.path, a), last = frameOn(road.path, b);
           for (const sign of [-1, 1]) {
             const lat = sign * (road.halfWidth + SW - 0.1);
             const x0 = first.x + first.rx * lat, z0 = first.z + first.rz * lat;
             const x1 = last.x + last.rx * lat, z1 = last.z + last.rz * lat;
+            if (road.bore && distanceToFork(road, mid) < (x0 > first.x ? 21 : 35)) continue;
+            if (!road.bore && rampOpening(road, mid, x0)) continue;
             const yaw = Math.atan2(x1 - x0, z1 - z0);
             const span = Math.hypot(x1 - x0, z1 - z0);
             rails.add([(x0 + x1) / 2, (first.y + last.y) / 2 + 0.58, (z0 + z1) / 2],
@@ -218,23 +333,42 @@ export class MapCity extends City {
       for (const { f, road, d } of cell.lamps) {
         const put = (layer, lat, y, size, color, meta) => layer.add(
           [f.x + f.rx * lat, f.y + y, f.z + f.rz * lat], size, f.th, color, meta);
+        const insideBore = road.bore && d >= road.bore.from && d <= road.bore.to;
+        if (insideBore) {
+          const color = road.bore.mode === 1 ? [90, 255, 170] : [255, 170, 80];
+          put(emit, 0, BORE_HEIGHT - 0.12, [0.01, 0.01, 0.01], color, [0, 0.35, 2.2, 40]);
+        }
         for (const side of [-1, 1]) {
           const edge = road.halfWidth + 0.9, color = Math.floor(d / 27) % 3 === 0 ? palette[0] : palette[1];
-          put(metal, side * edge, 0, [0.18, 7, 0.18], [24, 20, 36], [0, 0]);
-          put(metal, side * (edge - 1.1), 7, [2.2, 0.2, 0.2], [24, 20, 36], [0, 0]);
-          put(emit, side * (edge - 2.1), 6.78, [1, 0.22, 0.4], mix(color, [255, 255, 255], 0.5), [0, 0]);
-          put(emit, side * (edge - 2.1), 6.78, [0.01, 0.01, 0.01], color, [0, 0.55, 1.8, 28]);
-          if (road.elevated && f.y > 2) {
-            put(metal, side * (road.halfWidth + SW - 0.18), -f.y, [1.2, f.y, 1.2], [34, 32, 44], [0, 0]);
+          const brace = side * (road.halfWidth + SW - 0.18);
+          const x = f.x + f.rx * brace, z = f.z + f.rz * brace;
+          if (road.bore ? d < 36 || road.path.length - d < 36 : rampOpening(road, d, x)) continue;
+          if (!insideBore) {
+            put(metal, side * edge, 0, [0.18, 7, 0.18], [24, 20, 36], [0, 0]);
+            put(metal, side * (edge - 1.1), 7, [2.2, 0.2, 0.2], [24, 20, 36], [0, 0]);
+            put(emit, side * (edge - 2.1), 6.78, [1, 0.22, 0.4], mix(color, [255, 255, 255], 0.5), [0, 0]);
+            put(emit, side * (edge - 2.1), 6.78, [0.01, 0.01, 0.01], color, [0, 0.55, 1.8, 28]);
+          }
+          if (f.y > 2 && !roadSamples.some(other => other.y < f.y - 1 &&
+            (other.road !== road || Math.abs(other.distance - d) > 18) &&
+            Math.hypot(other.x - x, other.z - z) < other.road.halfWidth + 2)) {
+            put(metal, brace, -f.y, [1.2, f.y, 1.2], [34, 32, 44], [0, 0]);
+          }
+          if (road.level === 1) {
+            put(metal, brace * 0.86, -1.0, [2.8, 1.0, 1.35], [35, 32, 47], [0, 0]);
+            put(emit, brace * 0.87, -1.1, [0.85, 0.12, 1.7], [188, 167, 236], [0, 0, 0, 0]);
           }
         }
+        if (road.level === 1 && !rampOpening(road, d, DECK_COVER.x + 1))
+          put(metal, 0, -0.75, [2 * (road.halfWidth + SW), 0.75, 1.25], [28, 25, 39], [0, 0]);
       }
       for (const b of cell.buildings) {
         if (b.h < 48) continue;
         metal.add([b.x, b.h, b.z], [0.25, 4.8, 0.25], b.rot, [40, 38, 52], [0, 0]);
         emit.add([b.x, b.h + 4.8, b.z], [0.28, 0.3, 0.28], b.rot, [255, 50, 80], [0, 0.55, 1.4, 24]);
       }
-      for (const mesh of [metal.build(this.mats.metal), emit.build(this.mats.emit), rails.build(this.mats.rail)]) if (mesh) group.add(mesh);
+      for (const mesh of [metal.build(this.mats.metal), emit.build(this.mats.emit), rails.build(this.mats.rail),
+        walls.build(this.mats.tunnel), ceiling.build(this.mats.tunnel), siding.build(this.mats.track)]) if (mesh) group.add(mesh);
       if (cell.plaza) group.add(this.makeMonument());
     }
     this.scene.add(group);

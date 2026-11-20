@@ -7,10 +7,14 @@ From the repository root, run `python3 -m http.server` and open
 `http://localhost:8000/neondrive/three/index.html`.
 
 The default game opens in **Vanta Bay**. Vanta Boulevard passes through Prism
-Plaza and its holographic fountain. Four surrounding blocks connect to the plaza,
-and a single ramp reaches the glass sky-avenue deck 35 metres above the city.
-Autopilot follows a route through the plaza, up to the deck, and back through
-the city. Traffic uses the same lane graph.
+Plaza and its holographic fountain. Four surrounding blocks connect to the plaza.
+The glass Sky Avenues deck runs above a busy street at 35 metres. Two one-way
+spiral ramps connect the levels through lit bores. Autopilot and traffic share
+the rider's lane graph, and autopilot stays on each level for several passes.
+
+In manual mode, steer left at the signed northbound Street exit to climb, or
+right at the signed southbound Sky Avenues exit to descend. Keep straight at
+either exit to stay on the same level.
 
 Use `index.html?loop` to revisit the 30-district visual comparison route.
 

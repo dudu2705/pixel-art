@@ -34,6 +34,7 @@ export class Rig {
     this.cam = camera;
     this.frameAt = sampling.frameAt ?? frameAt;
     this.enclosed = sampling.enclosed ?? enclosed;
+    this.boreHalfWidth = sampling.boreHalfWidth ?? BORE_W;
     this.period = sampling.period ?? LEN;
     this.mode = 0;
     this.shot = { ...FOLLOW[0], lat: 0 };
@@ -151,7 +152,7 @@ export class Rig {
     const f = fixed ?? this.frameAt(dist, {});
     const covered = underRoof || this.enclosed(dist);
     const height = covered ? Math.min(1.4 + this.shot.up, BORE_H - 1.9) : 1.4 + this.shot.up;
-    if (covered) side = clamp(side, -(BORE_W - 1.4), BORE_W - 1.4);
+    if (covered) side = clamp(side, -(this.boreHalfWidth - 1.4), this.boreHalfWidth - 1.4);
     this.cam.position.set(f.x + f.rx * side, f.y + height, f.z + f.rz * side);
 
     const focal = Math.max(0.62 * this.cam.aspect, 0.8) * (1 - 0.14 * smooth(45, 85, bike.speed));
@@ -173,7 +174,7 @@ export class Rig {
     let up = 1.6 + Math.sin(this.pitch) * this.dist;
     if (this.enclosed(bike.dist)) {
       const side = x * f.rx + z * f.rz;
-      const limit = BORE_W - 1.4;
+      const limit = this.boreHalfWidth - 1.4;
       const correction = clamp(bike.lat + side, -limit, limit) - bike.lat - side;
       x += correction * f.rx;
       z += correction * f.rz;

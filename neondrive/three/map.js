@@ -1,10 +1,17 @@
 // Vanta Bay's fixed street layout. A road owns its surface and has one or two
 // directed edges. Every driving route uses those edges and their lane offsets.
+import { SEGL, SW } from './world.js';
+
 export const LANE_WIDTH = 3.5;
 export const PLAZA_RADIUS = 43;
+export const RAMP_BORE_HALF_WIDTH = 5.1;
 const R = PLAZA_RADIUS;
+const SKY_HEIGHT = 35;
+const DECK_X = 128;
+const DECK_SOUTH = -305;
+const DECK_NORTH = 325;
 
-const node = (id, x, z, y = 0) => ({ id, x, y, z, exits: [] });
+const node = (id, x, z, level = 0) => ({ id, x, y: level * SKY_HEIGHT, z, level, exits: [] });
 const nodes = Object.fromEntries([
   node('plaza-west', -R, 0), node('plaza-north', 0, R),
   node('plaza-east', R, 0), node('plaza-south', 0, -R),
@@ -12,7 +19,10 @@ const nodes = Object.fromEntries([
   node('northwest', -128, 109), node('north', 0, 109), node('northeast', 128, 109),
   node('southwest', -128, -109), node('south', 0, -109), node('southeast', 128, -109),
   node('gateway', -322, 0), node('east-end', 240, 0),
-  node('sky-arrival', 242, 332, 35), node('sky-outlook', 54, 252, 35),
+  node('street-up', DECK_X, 182), node('street-down', DECK_X, -235),
+  node('street-north', DECK_X, 300), node('street-south', DECK_X, -285),
+  node('sky-arrival', DECK_X, 272, 1), node('sky-departure', DECK_X, -145, 1),
+  node('sky-north', DECK_X, DECK_NORTH, 1), node('sky-south', DECK_X, DECK_SOUTH, 1),
 ].map(n => [n.id, n]));
 
 function path(points) {
@@ -50,10 +60,11 @@ export function frameOn(path, distance, out = {}) {
 const roads = [], edges = [];
 function road(id, name, start, end, lanes, options = {}) {
   const a = nodes[start], b = nodes[end];
-  const { interior = [], oneWay = false, speed = 140, elevated = false } = options;
+  const { interior = [], oneWay = false, speed = 140 } = options;
   const points = [a, ...interior, b];
   const r = {
-    id, name, a, b, lanes, oneWay, speed: speed / 3.6, elevated,
+    id, name, a, b, lanes, oneWay, speed: speed / 3.6,
+    level: a.level === b.level ? a.level : null,
     halfWidth: (oneWay ? lanes * 0.5 : lanes) * LANE_WIDTH,
     path: path(points), edges: [],
   };
@@ -92,41 +103,65 @@ road('southwest', 'Foundry Street', 'southwest', 'south', 1, { speed: 75 });
 road('southeast', 'Foundry Street', 'south', 'southeast', 1, { speed: 75 });
 road('west-north', 'Lantern Row', 'west', 'northwest', 1, { speed: 75 });
 road('west-south', 'Market Row', 'west', 'southwest', 1, { speed: 75 });
-road('east-north', 'Sky Avenue', 'east', 'northeast', 2, { speed: 110 });
+road('east-north', 'Sky Avenue Street', 'east', 'northeast', 2, { speed: 110 });
 road('east-south', 'Arcade Row', 'east', 'southeast', 1, { speed: 75 });
 
-function smoothRamp(points) {
-  const result = [];
-  for (let i = 0; i < points.length - 1; i++) {
-    const a = points[Math.max(0, i - 1)], b = points[i], c = points[i + 1], d = points[Math.min(points.length - 1, i + 2)];
-    for (let j = 1; j <= 12; j++) {
-      if (i === points.length - 2 && j === 12) break;
-      const t = j / 12;
-      const coord = k => 0.5 * (2 * b[k] + (-a[k] + c[k]) * t
-        + (2 * a[k] - 5 * b[k] + 4 * c[k] - d[k]) * t * t + (-a[k] + 3 * b[k] - 3 * c[k] + d[k]) * t * t * t);
-      result.push({ x: coord('x'), y: Math.min(35, Math.max(0, coord('y'))), z: coord('z') });
-    }
+road('street-north-approach', 'Sky Avenue Street', 'northeast', 'street-up', 2, { speed: 100 });
+road('street-north-through', 'Sky Avenue Street', 'street-up', 'street-north', 2, { speed: 100 });
+road('street-south-approach', 'Sky Avenue Street', 'southeast', 'street-down', 1, { speed: 100 });
+road('street-south-through', 'Sky Avenue Street', 'street-down', 'street-south', 1, { speed: 100 });
+
+function spiralRamp(id, name, start, end) {
+  const a = nodes[start], b = nodes[end];
+  const radius = 105, opening = 0.38, samples = 144;
+  const direction = Math.sign(b.z - a.z);
+  const points = Array.from({ length: samples + 1 }, (_, i) => {
+    const t = i / samples, angle = opening + t * (2 * Math.PI - 2 * opening);
+    return {
+      x: DECK_X + radius * (Math.cos(opening) - Math.cos(angle)),
+      z: a.z + (b.z - a.z) * t
+        + direction * radius * (Math.sin(angle) - (1 - 2 * t) * Math.sin(opening)),
+    };
+  });
+  const distances = [0];
+  for (let i = 1; i <= samples; i++) {
+    distances.push(distances[i - 1] + Math.hypot(points[i].x - points[i - 1].x, points[i].z - points[i - 1].z));
   }
-  return result;
+  // Hold the junction elevation while the branch pavement overlaps the through road.
+  const length = distances.at(-1), flat = 24, easing = 10;
+  const ease = distance => distance < easing ? distance ** 2 / (2 * easing) : distance - easing / 2;
+  const gradeLength = length - 2 * flat - easing;
+  for (let i = 1; i < samples; i++) {
+    const distance = distances[i];
+    const rise = ease(Math.max(0, Math.min(distance, length - distance) - flat));
+    points[i].y = a.y + (b.y - a.y) * (distance < length / 2 ? rise : gradeLength - rise) / gradeLength;
+  }
+  const ramp = road(id, name, start, end, 1, { interior: points.slice(1, -1), oneWay: true, speed: 80 });
+  ramp.bore = { from: 56, to: Math.floor((ramp.path.length - 56) / SEGL) * SEGL, mode: a.level < b.level ? 1 : 2 };
 }
 
-const rampPoints = [
-  nodes.northeast, { x: 164, y: 1, z: 119 }, { x: 211, y: 8, z: 152 },
-  { x: 249, y: 17, z: 212 }, { x: 266, y: 27, z: 272 }, nodes['sky-arrival'],
-];
-road('ramp', 'Sky Ramp', 'northeast', 'sky-arrival', 1, {
-  interior: smoothRamp(rampPoints), speed: 85, elevated: true,
-});
-road('sky-deck', 'Sky Avenue Deck', 'sky-arrival', 'sky-outlook', 2, {
-  interior: [{ x: 208, y: 35, z: 335 }, { x: 158, y: 35, z: 314 }, { x: 107, y: 35, z: 285 }], speed: 100, elevated: true,
-});
+road('sky-south-through', 'Sky Avenues', 'sky-south', 'sky-departure', 2, { speed: 100 });
+road('sky-deck', 'Sky Avenues', 'sky-departure', 'sky-arrival', 2, { speed: 110 });
+road('sky-north-through', 'Sky Avenues', 'sky-arrival', 'sky-north', 2, { speed: 100 });
+spiralRamp('sky-up', 'Sky Ramp Up', 'street-up', 'sky-arrival');
+spiralRamp('sky-down', 'Sky Ramp Down', 'sky-departure', 'street-down');
 
 for (const n of Object.values(nodes)) {
   n.halfWidth = Math.max(...roads.filter(r => r.a === n || r.b === n).map(r => r.halfWidth));
-  n.trim = n.id.startsWith('plaza-') ? 8 : n.halfWidth + 3;
+  n.ramp = roads.find(r => r.bore && (r.a === n || r.b === n));
+  n.trim = n.ramp ? 24 : n.id.startsWith('plaza-') ? 8 : n.halfWidth + 3;
 }
 
 export const VANTA_BAY = { nodes, roads, edges };
+export const DECK_COVER = { x: DECK_X, south: DECK_SOUTH, north: DECK_NORTH, halfWidth: 2 * LANE_WIDTH + SW };
+
+export function inBore(road, distance) {
+  return Boolean(road.bore && distance >= road.bore.from && distance <= road.bore.to);
+}
+
+export function underSkyDeck({ x, y, z }) {
+  return y < SKY_HEIGHT - 2 && z > DECK_SOUTH && z < DECK_NORTH && Math.abs(x - DECK_X) < DECK_COVER.halfWidth;
+}
 
 export function laneOffset(edge, lane) {
   return (lane + 0.5) * LANE_WIDTH - (edge.road.oneWay ? edge.road.halfWidth : 0);
@@ -140,7 +175,8 @@ export function frameInLane(edge, distance, lateral, out = {}) {
 }
 
 export function legalTurns(edge) {
-  const options = edge.to.exits.filter(next => next.road !== edge.road);
+  const options = edge.to.exits.filter(next => next.road !== edge.road &&
+    (!edge.to.ramp || Math.abs(turnAngle(edge, next)) < Math.PI / 2));
   return options.length ? options : edge.to.exits;
 }
 
@@ -149,14 +185,14 @@ export function turnAngle(edge, next) {
   return Math.atan2(Math.sin(a.th - b.th), Math.cos(a.th - b.th));
 }
 
-export function routeTo(start, goal, incoming = null) {
+export function routeTo(start, goal, incoming = null, throughLevel = null) {
   const queue = [{ node: start, route: [], incoming }];
   const seen = new Set(incoming ? [incoming] : []);
   for (const item of queue) {
     if (item.node === goal) return item.route;
     const exits = item.incoming ? legalTurns(item.incoming) : item.node.exits;
     for (const edge of exits) {
-      if (seen.has(edge)) continue;
+      if (seen.has(edge) || (throughLevel !== null && edge.road.level !== throughLevel)) continue;
       seen.add(edge);
       queue.push({ node: edge.to, route: [...item.route, edge], incoming: edge });
     }

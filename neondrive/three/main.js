@@ -5,6 +5,7 @@ import { frameAt } from './road.js';
 import { City, ROAD_LAYER } from './city.js';
 import { MapCity } from './map-city.js';
 import { MapDrive } from './map-drive.js';
+import { RAMP_BORE_HALF_WIDTH } from './map.js';
 import { Traffic } from './traffic.js';
 import { Weather } from './weather.js';
 import { Sky } from './sky.js';
@@ -140,7 +141,9 @@ scene.add(cycle);
 const traffic = new Traffic(scene, city.mats);
 const weather = new Weather();
 const signals = comparisonLoop ? new Signals(scene, city.mats) : null;
-const rig = new Rig(camera, canvas, mapDrive ? { frameAt: sampleFrame, enclosed: () => false, period: 0 } : undefined);
+const rig = new Rig(camera, canvas, mapDrive ? {
+  frameAt: sampleFrame, enclosed: mapDrive.enclosed.bind(mapDrive), boreHalfWidth: RAMP_BORE_HALF_WIDTH, period: 0,
+} : undefined);
 
 // ---------- drive ----------
 // All of this lives in sim.js now; `bike` is just the view onto it.
@@ -163,7 +166,10 @@ let lightOn = true;
 
 function setDriveKey(key, down) {
   simKeys[key] = down;
-  if (down && S.auto) setAuto(false);
+  if (down && S.auto) {
+    setAuto(false);
+    if (mapDrive && !mapDrive.player.turn) mapDrive.player.exit = null;
+  }
 }
 
 function handleControl(key) {
@@ -290,6 +296,7 @@ function frame(now) {
   quadMat.uniforms.uFlash.value.set(1, 0.3, 0.4).multiplyScalar(S.crashFlash * 120 / 255);
   const roadUniforms = city.uniforms;
   roadUniforms.uBike.value.set(bx, bz);
+  if (mapDrive) roadUniforms.uMapBikeHeight.value = f.y;
   roadUniforms.uBikeForward.value.set(Math.sin(f.th), Math.cos(f.th));
   roadUniforms.uHeadlight.value = lightOn && cockpit ? 0.14 + 0.22 * (S.TH.dark || 0) + 0.08 * S.night : 0;
 
