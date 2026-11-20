@@ -1,95 +1,132 @@
-// glow.js — the original's light buffer, not a photographic bloom.
-//
-// addLight() spread each light as (1 - d/R)^2 * I into a float buffer and then
-// did `f = Math.floor(f * 6) / 6` before adding it to the picture. That
-// quantisation is why neon in the original has visible steps around it instead
-// of a smooth photographic halo. UnrealBloom cannot do that, so this is a small
-// bright-pass + blur + quantise chain instead.
-
+// The GPU reference accumulates a stepped radial light for each emitter.
 import * as THREE from './vendor/three.module.js';
 
-const QUAD_VERT = /* glsl */`
-  varying vec2 vUv;
-  void main() { vUv = uv; gl_Position = vec4(position.xy, 0.0, 1.0); }
-`;
-
-const BRIGHT_FRAG = /* glsl */`
-  precision highp float;
-  varying vec2 vUv;
-  uniform sampler2D tSrc;
-  uniform float uThreshold;
-  void main() {
-    vec3 c = texture2D(tSrc, vUv).rgb;
-    float l = dot(c, vec3(0.3, 0.5, 0.2));
-    float k = max(0.0, l - uThreshold) / max(0.0001, 1.0 - uThreshold);
-    gl_FragColor = vec4(c * k, 1.0);
-  }
-`;
-
-// a 9-tap blur with a squared falloff, matching (1 - d/R)^2
-const BLUR_FRAG = /* glsl */`
-  precision highp float;
-  varying vec2 vUv;
-  uniform sampler2D tSrc;
-  uniform vec2 uDir;          // texel step, horizontal or vertical
-  void main() {
-    vec3 sum = vec3(0.0);
-    float wsum = 0.0;
-    for (int i = -8; i <= 8; i++) {
-      float fi = float(i);
-      float d = abs(fi) / 9.0;
-      float w = (1.0 - d) * (1.0 - d);      // the original's falloff
-      sum += texture2D(tSrc, vUv + uDir * fi).rgb * w;
-      wsum += w;
-    }
-    gl_FragColor = vec4(sum / wsum, 1.0);
-  }
-`;
+export const EMITTER_LAYER = 1;
 
 export class Glow {
   constructor(renderer) {
     this.renderer = renderer;
     this.scene = new THREE.Scene();
-    this.cam = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
-    this.bright = new THREE.ShaderMaterial({
-      vertexShader: QUAD_VERT, fragmentShader: BRIGHT_FRAG,
-      uniforms: { tSrc: { value: null }, uThreshold: { value: 0.42 } },
+    this.geometry = new THREE.InstancedBufferGeometry();
+    const quad = new THREE.PlaneGeometry(2, 2);
+    this.geometry.setAttribute('position', quad.getAttribute('position'));
+    this.geometry.setIndex(quad.index);
+    this.material = new THREE.ShaderMaterial({
+      glslVersion: THREE.GLSL3,
+      transparent: true,
+      blending: THREE.AdditiveBlending,
+      depthTest: false,
+      depthWrite: false,
+      uniforms: {
+        uSize: { value: new THREE.Vector2() },
+        uRange: { value: new THREE.Vector2() },
+        uFogRange: { value: new THREE.Vector2() },
+        uDepth: { value: null },
+      },
+      vertexShader: `
+        attribute vec3 iCenter;
+        attribute vec4 iLight;
+        attribute float iRadius;
+        uniform vec2 uSize, uFogRange;
+        flat out vec2 vCenter;
+        flat out vec4 vLight;
+        flat out float vRadius, vDepth;
+        void main() {
+          vec4 view = viewMatrix * vec4(iCenter, 1.0);
+          vDepth = -view.z;
+          if (vDepth <= 0.5) {
+            gl_Position = vec4(2.0, 2.0, 2.0, 1.0);
+            return;
+          }
+          vec4 clip = projectionMatrix * view;
+          vCenter = floor((clip.xy / clip.w * 0.5 + 0.5) * uSize + 0.5);
+          vRadius = clamp(round(iRadius * projectionMatrix[1][1] * uSize.y * 0.5 / vDepth), 4.0, 60.0);
+          vLight = vec4(iLight.rgb, iLight.a * (1.0 - smoothstep(uFogRange.x, uFogRange.y, vDepth) * 0.97));
+          vec2 p = vCenter + position.xy * vRadius;
+          gl_Position = vec4(p / uSize * 2.0 - 1.0, 0.0, 1.0);
+        }`,
+      fragmentShader: `
+        precision highp float;
+        uniform vec2 uSize, uRange;
+        uniform sampler2D uDepth;
+        flat in vec2 vCenter;
+        flat in vec4 vLight;
+        flat in float vRadius, vDepth;
+        out vec4 fragColor;
+        void main() {
+          vec2 centerUV = (vCenter + 0.5) / uSize;
+          float depth = texture(uDepth, centerUV).r;
+          float visibleDepth = uRange.x * uRange.y / (uRange.y + depth * (uRange.x - uRange.y));
+          if (vDepth > visibleDepth + 0.9) discard;
+          float f = max(0.0, 1.0 - distance(floor(gl_FragCoord.xy), vCenter) / vRadius);
+          fragColor = vec4(vLight.rgb * floor(6.0 * f * f * vLight.a) / 6.0, 1.0);
+        }`,
     });
-    this.blur = new THREE.ShaderMaterial({
-      vertexShader: QUAD_VERT, fragmentShader: BLUR_FRAG,
-      uniforms: { tSrc: { value: null }, uDir: { value: new THREE.Vector2() } },
+    const mesh = new THREE.Mesh(this.geometry, this.material);
+    mesh.frustumCulled = false;
+    this.scene.add(mesh);
+    this.target = new THREE.WebGLRenderTarget(1, 1, {
+      minFilter: THREE.NearestFilter, magFilter: THREE.NearestFilter, depthBuffer: false,
     });
-    this.quad = new THREE.Mesh(new THREE.PlaneGeometry(2, 2), this.bright);
-    this.scene.add(this.quad);
-    this.a = null; this.b = null;
+    this.sources = [];
+    this.allocate(2048);
   }
 
-  setSize(w, h) {
-    const gw = Math.max(1, Math.round(w / 2)), gh = Math.max(1, Math.round(h / 2));
-    if (this.a) { this.a.dispose(); this.b.dispose(); }
-    const opts = { minFilter: THREE.LinearFilter, magFilter: THREE.LinearFilter, depthBuffer: false };
-    this.a = new THREE.WebGLRenderTarget(gw, gh, opts);
-    this.b = new THREE.WebGLRenderTarget(gw, gh, opts);
-    this.gw = gw; this.gh = gh;
+  allocate(capacity) {
+    this.center = new THREE.InstancedBufferAttribute(new Float32Array(capacity * 3), 3).setUsage(THREE.DynamicDrawUsage);
+    this.light = new THREE.InstancedBufferAttribute(new Float32Array(capacity * 4), 4).setUsage(THREE.DynamicDrawUsage);
+    this.radius = new THREE.InstancedBufferAttribute(new Float32Array(capacity), 1).setUsage(THREE.DynamicDrawUsage);
+    this.geometry.setAttribute('iCenter', this.center);
+    this.geometry.setAttribute('iLight', this.light);
+    this.geometry.setAttribute('iRadius', this.radius);
   }
 
-  // takes the rendered scene, returns a texture holding just the spread light
-  render(srcTexture) {
-    const r = this.renderer;
-    this.quad.material = this.bright;
-    this.bright.uniforms.tSrc.value = srcTexture;
-    r.setRenderTarget(this.a); r.render(this.scene, this.cam);
+  setSize(width, height) {
+    this.target.setSize(width, height);
+    this.material.uniforms.uSize.value.set(width, height);
+  }
 
-    this.quad.material = this.blur;
-    this.blur.uniforms.tSrc.value = this.a.texture;
-    this.blur.uniforms.uDir.value.set(1.6 / this.gw, 0);
-    r.setRenderTarget(this.b); r.render(this.scene, this.cam);
+  render(world, camera, depth, fogNear, fogFar) {
+    this.sources.length = 0;
+    let capacity = 0;
+    world.traverseVisible(mesh => {
+      if (!mesh.layers.isEnabled(EMITTER_LAYER) || !mesh.geometry?.isInstancedBufferGeometry) return;
+      this.sources.push(mesh);
+      capacity += mesh.geometry.instanceCount;
+    });
+    if (capacity > this.center.count) {
+      this.geometry.dispose();
+      this.allocate(Math.max(capacity, this.center.count * 2));
+    }
 
-    this.blur.uniforms.tSrc.value = this.b.texture;
-    this.blur.uniforms.uDir.value.set(0, 1.6 / this.gh);
-    r.setRenderTarget(this.a); r.render(this.scene, this.cam);
+    let count = 0;
+    for (const mesh of this.sources) {
+      const { iPos, iSize, iCol, iMeta } = mesh.geometry.attributes;
+      const sign = mesh.material.userData.lightKind === 'sign';
+      for (let i = 0; i < mesh.geometry.instanceCount; i++) {
+        const height = iSize.getY(i);
+        const strength = sign ? 0.36 : iMeta.getY(i);
+        if (strength < 1 / 6) continue;
+        this.center.setXYZ(count, iPos.getX(i), iPos.getY(i) + height / 2, iPos.getZ(i));
+        this.light.setXYZW(count, iCol.getX(i), iCol.getY(i), iCol.getZ(i), strength);
+        this.radius.setX(count, sign ? 2.2 : Math.min(3.5, 4 * Math.max(iSize.getX(i), height, iSize.getZ(i))));
+        count++;
+      }
+    }
 
-    r.setRenderTarget(null);
-    return this.a.texture;
+    this.geometry.instanceCount = count;
+    for (const attr of [this.center, this.light, this.radius]) {
+      attr.clearUpdateRanges();
+      attr.addUpdateRange(0, count * attr.itemSize);
+      attr.needsUpdate = true;
+    }
+
+    const { uniforms } = this.material;
+    uniforms.uRange.value.set(camera.near, camera.far);
+    uniforms.uFogRange.value.set(fogNear, fogFar);
+    uniforms.uDepth.value = depth;
+    this.renderer.setRenderTarget(this.target);
+    this.renderer.render(this.scene, camera);
+    return this.target.texture;
   }
 }

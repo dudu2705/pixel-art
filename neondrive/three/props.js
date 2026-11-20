@@ -6,6 +6,7 @@ import * as THREE from './vendor/three.module.js';
 import { SEGL, NSEG, RW, SW, blocks, SIDE, ELEV, LAYERED, BASE, district, D, hash } from './world.js';
 import { frameAt } from './road.js';
 import { integerHash } from './shaders.js';
+import { EMITTER_LAYER } from './glow.js';
 
 // ---------- shared glsl ----------
 const COMMON = /* glsl */`
@@ -242,7 +243,7 @@ export function makeMaterials(uniforms) {
 }
 
 export function markGlowing(mats) {
-  for (const k of ['sign', 'emit']) mats[k].userData.glows = true;
+  for (const kind of ['sign', 'emit']) mats[kind].userData.lightKind = kind;
   return mats;
 }
 
@@ -280,7 +281,7 @@ export class Batch {
     g.userData.sharedBase = true;        // position/normal/uv/index belong to the unit mesh
     const m = new THREE.Mesh(g, mat);
     m.frustumCulled = false;
-    if (mat.userData.glows) m.layers.enable(1);        // layer 1 = what the wet road mirrors
+    if (mat.userData.lightKind) m.layers.enable(EMITTER_LAYER);
     return m;
   }
 }

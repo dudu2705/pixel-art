@@ -23,6 +23,30 @@ a generic 3D city. Every step of this project is judged against the GPU version 
 
 Rule: port the look first, then add the city map. If a 3D shortcut looks worse than the GPU version, it's not done.
 
+### Remaining visual work that changes the render pipeline
+
+The city renders at the reference pixel scale, and the wall, billboard and roof formulas run on the streamed
+meshes. The current finish uses a planar reflection and a brightness-based glow. The reference uses individual
+light sources and reflects the finished image at the horizon. Update the renderer in this order after approval.
+
+1. Accumulate the reference's stepped radial light for lamps, signs, vehicles and effects in an additive target.
+   Render a road reflectivity mask with scene depth so vehicles and props occlude it. Apply the reference's
+   horizon reflection, wetness and brightness weights to the combined color and light before banking the image.
+2. Render the sky on the art grid and sample it into the HD city pass. Port the panoramic skyline and the sky
+   effects using the reference's city palettes. Port the remaining district art onto the existing streamed
+   meshes. Composite the weather and cockpit at art-grid resolution after banking.
+3. Match the exterior light cycle and rider and the five reference shots. Correct the road-to-camera handedness
+   so the rider and traffic appear on the same side as the reference. Keep free flight available for inspecting
+   the city.
+4. Compare matched city, level, weather, time of day and camera fixtures at each pass. Include a wet street,
+   an Arcade Row facade, a crown rooftop view, a tunnel, and a Retina ultrawide frame at full lean.
+
+The road graph is a separate approval after the visual comparison passes. For the first city, describe the
+boulevard, plaza loop, surrounding streets and ramp as directed lane edges with connections at their junctions.
+Give traffic and autopilot the same lane graph. Keep the roadway and district art in reusable chunk builders,
+and stream the city by map position. Verify a loop around the plaza, crossing traffic at a junction, and a route
+from the boulevard to the sky-avenue deck before expanding the map.
+
 ## Why three.js, not the GPU version
 
 - The GPU version (`../neondrive-gpu.html`) draws one road with buildings on its two sides. It cannot show an open
@@ -69,4 +93,4 @@ Rule: port the look first, then add the city map. If a 3D shortcut looks worse t
 4. Make that one city truly wow before scaling up.
 5. Then add more cities and the links between them.
 
-Status: noted only.
+Status: visual port in progress. The city map is pending visual parity and approval.

@@ -7,6 +7,7 @@ import { SEGL, NSEG, LEN, RW, SW, LH, D, district, train, airOk, LAYERED, ELEV, 
 import { CARS, PEDS, FLYERS, crossers, S } from './sim.js';
 import { frameAt } from './road.js';
 import { unitBox, unitSphere } from './props.js';
+import { EMITTER_LAYER } from './glow.js';
 
 const NEAR_SPAN = 620, BEHIND_SPAN = 180;
 
@@ -27,7 +28,7 @@ function pool(base, n, mat) {
   g.instanceCount = 0;
   const m = new THREE.Mesh(g, mat);
   m.frustumCulled = false;
-  if (mat.userData.glows) m.layers.enable(1);
+  if (mat.userData.lightKind) m.layers.enable(EMITTER_LAYER);
   return { mesh: m, a, g, i: 0, cap: n };
 }
 

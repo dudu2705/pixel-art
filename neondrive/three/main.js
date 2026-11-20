@@ -5,6 +5,8 @@ import { frameAt } from './road.js';
 import { City, ROAD_LAYER } from './city.js';
 import { Traffic } from './traffic.js';
 import { Weather } from './weather.js';
+import { ArtOverlay } from './overlay.js';
+import { drawCockpit } from './cockpit.js';
 import { Signals } from './signals.js';
 import { S, update as simUpdate, setAuto, setCruise, cruiseKmh, CARS } from './sim.js';
 import { Rig, MODES } from './camera.js';
@@ -23,12 +25,20 @@ camera.layers.enable(ROAD_LAYER);
 
 // Match the GPU game's art grid and its always-on 2x city detail.
 const ART_SHORT_SIDE = 280, CITY_SCALE = 2;
-let rt = null;
+const nearest = { minFilter: THREE.NearestFilter, magFilter: THREE.NearestFilter };
+const rt = new THREE.WebGLRenderTarget(1, 1, {
+  ...nearest, depthTexture: new THREE.DepthTexture(1, 1, THREE.UnsignedIntType),
+});
+const surfaces = new THREE.WebGLRenderTarget(1, 1, nearest);
+const overlay = new ArtOverlay();
 const quadScene = new THREE.Scene();
 const quadCam = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
 const quadMat = new THREE.ShaderMaterial({
+  glslVersion: THREE.GLSL3,
   uniforms: {
-    map: { value: null }, uGlow: { value: null }, uGlowAmt: { value: 1 },
+    map: { value: rt.texture }, uGlow: { value: null }, uGlowAmt: { value: 1 },
+    uSurfaces: { value: surfaces.texture }, uHorizon: { value: 0 },
+    uOverlayAdd: { value: null }, uOverlayMultiply: { value: null },
     uView: { value: new THREE.Vector2() }, uRotation: { value: new THREE.Vector2(1, 0) },
     uTint: { value: new THREE.Vector3(1, 1, 1) }, uFlash: { value: new THREE.Vector3() },
   },
@@ -36,18 +46,34 @@ const quadMat = new THREE.ShaderMaterial({
   fragmentShader: `
     precision highp float;
     varying vec2 vUv;
-    uniform sampler2D map;
-    uniform sampler2D uGlow;
+    uniform sampler2D map, uGlow, uSurfaces, uOverlayAdd, uOverlayMultiply;
     uniform float uGlowAmt;
+    uniform int uHorizon;
     uniform vec2 uView, uRotation;
     uniform vec3 uTint, uFlash;
+    out vec4 fragColor;
+    vec3 finishColor(ivec2 p) {
+      vec3 city = texelFetch(map, p, 0).rgb;
+      vec3 glow = texelFetch(uGlow, p, 0).rgb * uGlowAmt;
+      float beam = texelFetch(uSurfaces, p, 0).g;
+      return city * uTint + glow + vec3(190, 215, 255) / 255.0 * beam;
+    }
     void main() {
       vec2 p = (vUv - 0.5) * uView;
-      vec2 uv = 0.5 + vec2(uRotation.x * p.x + uRotation.y * p.y,
-                            -uRotation.y * p.x + uRotation.x * p.y) / vec2(textureSize(map, 0));
-      vec3 scene = texture2D(map, uv).rgb;
-      vec3 glow = texture2D(uGlow, uv).rgb * uGlowAmt;
-      gl_FragColor = vec4(scene * uTint + glow + uFlash, 1.0);
+      ivec2 size = textureSize(map, 0);
+      vec2 rotated = vec2(uRotation.x * p.x + uRotation.y * p.y, -uRotation.y * p.x + uRotation.x * p.y);
+      ivec2 src = clamp(ivec2(floor(vec2(size) * 0.5 + rotated)), ivec2(0), size - 1);
+      vec3 color = finishColor(src);
+      int mirrorY = 2 * uHorizon - src.y;
+      float reflectivity = texelFetch(uSurfaces, src, 0).r;
+      if (src.y < uHorizon && mirrorY < size.y && reflectivity > 0.0) {
+        vec3 reflection = finishColor(ivec2(src.x, mirrorY));
+        float luma = dot(reflection, vec3(0.3, 0.5, 0.2));
+        color = mix(color, reflection, reflectivity * 0.55 * smoothstep(70.0 / 255.0, 190.0 / 255.0, luma));
+      }
+      vec3 overlayColor = texture(uOverlayAdd, vUv).rgb;
+      vec3 transmission = texture(uOverlayMultiply, vUv).rgb;
+      fragColor = vec4(color * transmission + overlayColor + uFlash, 1.0);
     }`,
 });
 quadScene.add(new THREE.Mesh(new THREE.PlaneGeometry(2, 2), quadMat));
@@ -73,39 +99,29 @@ function resize() {
   const pw = width + 2 * mx, ph = height + 2 * my;
   camera.setViewOffset(width, height, -mx, -my, pw, ph);
   quadMat.uniforms.uView.value.set(width, height);
-  if (rt) rt.dispose();
-  rt = new THREE.WebGLRenderTarget(pw, ph, {
-    minFilter: THREE.NearestFilter, magFilter: THREE.NearestFilter,
-    depthBuffer: true, type: THREE.UnsignedByteType,
-  });
+  rt.setSize(pw, ph);
+  surfaces.setSize(pw, ph);
+  overlay.resize(artWidth, artHeight);
+  quadMat.uniforms.uOverlayAdd.value = overlay.additive;
+  quadMat.uniforms.uOverlayMultiply.value = overlay.multiplier;
+  weather.reset();
   glow.setSize(pw, ph);
-  if (reflectRT) reflectRT.dispose();
-  reflectRT = new THREE.WebGLRenderTarget(Math.round(pw / 2), Math.round(ph / 2), {
-    minFilter: THREE.LinearFilter, magFilter: THREE.LinearFilter, depthBuffer: true,
-  });
-  city.uniforms.uReflect.value = reflectRT.texture;
-  city.uniforms.uRes.value.set(pw, ph);   // gl_FragCoord is in render-target space
 }
-let reflectRT = null;
-const mirrorCam = new THREE.PerspectiveCamera();
-const REFL = new THREE.Matrix4();
+const forward = new THREE.Vector3();
+const horizon = new THREE.Vector4();
 
-// Mirror the scene across the road plane, leaving the receiving surface out.
-function renderReflection(roadY) {
-  REFL.set(1, 0, 0, 0,  0, -1, 0, 2 * roadY,  0, 0, 1, 0,  0, 0, 0, 1);
-  camera.updateMatrixWorld();
-  mirrorCam.copy(camera, false);
-  mirrorCam.matrixAutoUpdate = false;
-  mirrorCam.matrixWorldAutoUpdate = false;
-  mirrorCam.matrixWorld.multiplyMatrices(REFL, camera.matrixWorld);
-  mirrorCam.matrixWorldInverse.copy(mirrorCam.matrixWorld).invert();
-  mirrorCam.layers.disable(ROAD_LAYER);
-  const showCockpit = cockpit.visible;
-  cockpit.visible = false;
-  renderer.setRenderTarget(reflectRT);
-  renderer.render(scene, mirrorCam);
-  cockpit.visible = showCockpit;
+function renderSurfaces() {
+  const cameraLayers = camera.layers.mask;
+  camera.layers.set(ROAD_LAYER);
+  city.uniforms.uSceneDepth.value = rt.depthTexture;
+  city.uniforms.uMaskPass.value = true;
+  renderer.setRenderTarget(surfaces);
+  renderer.render(scene, camera);
+  city.uniforms.uMaskPass.value = false;
+  city.uniforms.uSceneDepth.value = null;
+  camera.layers.mask = cameraLayers;
 }
+
 addEventListener('resize', resize);
 
 // ---------- sky ----------
@@ -288,60 +304,10 @@ const bikeGroup = new THREE.Group();
 }
 scene.add(bikeGroup);
 
-// ---------- the light cycle's cockpit, for camera 1 ----------
-// The original drew a smoked-glass dome with a glowing ring floating inside and
-// no dash. Here it is geometry parented to the camera.
-const cockpit = new THREE.Group();
-{
-  const bar = c => new THREE.MeshBasicMaterial({ color: c });
-  const steel = bar(0xb9bec9), dark = bar(0x11151f), neon = bar(0x3fe6ff);
-
-  // handlebar: a centre span with two swept arms and grips
-  const span = new THREE.Mesh(new THREE.BoxGeometry(0.46, 0.022, 0.022), steel);
-  span.position.set(0, -0.145, -0.42);
-  cockpit.add(span);
-  for (const sd of [-1, 1]) {
-    const arm = new THREE.Mesh(new THREE.BoxGeometry(0.30, 0.019, 0.019), steel);
-    arm.position.set(sd * 0.36, -0.129, -0.44);
-    arm.rotation.z = sd * 0.22;
-    const grip = new THREE.Mesh(new THREE.BoxGeometry(0.12, 0.030, 0.030), dark);
-    grip.position.set(sd * 0.50, -0.112, -0.45);
-    const tip = new THREE.Mesh(new THREE.BoxGeometry(0.035, 0.042, 0.042), steel);
-    tip.position.set(sd * 0.575, -0.106, -0.45);
-    cockpit.add(arm, grip, tip);
-  }
-
-  // the dome rim sweeping up around the view
-  const rim = new THREE.Mesh(new THREE.TorusGeometry(0.44, 0.008, 6, 40, Math.PI), steel);
-  rim.position.set(0, -0.20, -0.46);
-  rim.rotation.z = Math.PI;
-  cockpit.add(rim);
-
-  // the ring of light floating inside the dome
-  const ring = new THREE.Mesh(new THREE.TorusGeometry(0.085, 0.0075, 6, 28), neon);
-  ring.position.set(0, -0.225, -0.44);
-  ring.rotation.x = Math.PI / 2.35;
-  cockpit.add(ring);
-
-  // a sliver of smoked glass catching the road light
-  const glass = new THREE.Mesh(new THREE.PlaneGeometry(0.78, 0.10),
-    new THREE.MeshBasicMaterial({ color: 0x0a1018, transparent: true, opacity: 0.55 }));
-  glass.position.set(0, -0.258, -0.43);
-  cockpit.add(glass);
-
-  // the near plane is at 0.5, so the whole rig is built small and scaled out
-  // past it; the angular size is unchanged
-  cockpit.scale.setScalar(2.6);
-  cockpit.renderOrder = 20;
-  for (const o of cockpit.children) { o.material.depthTest = false; o.renderOrder = 20; }
-}
-camera.add(cockpit);
-scene.add(camera);
-
 // ---------- world streaming ----------
 const city = new City(scene);
 const traffic = new Traffic(scene, city.mats);
-const weather = new Weather(scene);
+const weather = new Weather();
 const signals = new Signals(scene, city.mats);
 const rig = new Rig(camera, canvas);
 
@@ -401,7 +367,6 @@ function theme(dt) {
   mtnUniforms.uCol.value.setRGB(S.FOG[0] / 420, S.FOG[1] / 420, S.FOG[2] / 420);
   fireworks(dt, S.T, (S.TH.fireworks || 0) > 0.3, camera.position);
 
-  weather.setKind(S.fall === 'none' || S.fall === 'off' ? 'clear' : S.fall);
   city.uniforms.uWet.value = S.rainOn ? S.wet : 0;
   city.uniforms.uFlash.value = S.flash;
 
@@ -438,10 +403,9 @@ function frame(now) {
   const bx = f.x + f.rx * bike.lat, bz = f.z + f.rz * bike.lat;
   bikeGroup.position.set(bx, f.y, bz);
   bikeGroup.rotation.set(0, f.th, bike.roll);
-  bikeGroup.visible = rig.mode !== 0;
-  cockpit.visible = rig.mode === 0;
-  const lean = cockpit.visible ? bike.roll : 0;
-  cockpit.rotation.z = -lean;
+  const cockpit = rig.mode === 0;
+  bikeGroup.visible = !cockpit;
+  const lean = cockpit ? bike.roll : 0;
   quadMat.uniforms.uRotation.value.set(Math.cos(lean), Math.sin(lean));
 
   const crown = THREE.MathUtils.smoothstep(f.elev, LH[1] + 15, LH[2]);
@@ -458,15 +422,21 @@ function frame(now) {
   city.update(bike.dist, camera.position, T);
   traffic.update(bike.dist, dt, T);
   signals.update(bike.dist);
-  weather.update(camera.position, dt, T, city.uniforms.uFog.value, city.uniforms.uFogFar.value);
+  weather.update(dt, S, overlay, cockpit);
 
-  if (city.uniforms.uWet.value > 0.02) renderReflection(f.y);
   renderer.setRenderTarget(rt);
   renderer.render(scene, camera);
-  renderer.setRenderTarget(null);
-  quadMat.uniforms.map.value = rt.texture;
-  quadMat.uniforms.uGlow.value = BLOOM ? glow.render(rt.texture) : null;
+  renderSurfaces();
+  camera.getWorldDirection(forward);
+  horizon.set(forward.x, 0, forward.z, 0).applyMatrix4(camera.matrixWorldInverse).applyMatrix4(camera.projectionMatrix);
+  quadMat.uniforms.uHorizon.value = Math.round((horizon.y / horizon.w * 0.5 + 0.5) * rt.height);
+  quadMat.uniforms.uGlow.value = glow.render(scene, camera, rt.depthTexture,
+    roadUniforms.uFogNear.value, roadUniforms.uFogFar.value);
   quadMat.uniforms.uGlowAmt.value = BLOOM ? (1 + 0.35 * S.night) * (1 - 0.25 * crown) : 0;
+  overlay.clear();
+  weather.draw(overlay, S, cockpit);
+  if (cockpit) drawCockpit(overlay, S);
+  overlay.upload();
   renderer.setRenderTarget(null);
   renderer.render(quadScene, quadCam);
 

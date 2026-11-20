@@ -155,8 +155,8 @@ export const roadFrag = /* glsl */`
   uniform vec3 uFog;
   uniform float uFogNear, uFogFar;
   uniform float uRW;
-  uniform sampler2D uReflect;
-  uniform vec2 uRes;
+  uniform sampler2D uSceneDepth;
+  uniform bool uMaskPass;
   uniform float uWet;
   uniform float uGlass;
   uniform vec2 uBike;
@@ -199,26 +199,21 @@ export const roadFrag = /* glsl */`
 
     float d = max(0.0, -(viewMatrix * vec4(vWorld, 1.0)).z);
     float fog = smoothstep(uFogNear, uFogFar, d) * 0.97;
-    col = mix(col / 255.0, uFog, fog);
+    if (uMaskPass) {
+      float depth = texelFetch(uSceneDepth, ivec2(gl_FragCoord.xy), 0).r;
+      if (gl_FragCoord.z > depth + 0.000002) discard;
+      float wet = reflectivity * (1.0 - fog) * uWet * (1.0 - smoothstep(45.0, 170.0, d));
 
-    if (uWet > 0.01) {
-      vec2 uv = gl_FragCoord.xy / uRes;
-      vec3 reflection = texture2D(uReflect, uv).rgb * 0.5
-                      + texture2D(uReflect, uv + vec2(0, 2) / uRes).rgb * 0.25
-                      + texture2D(uReflect, uv - vec2(0, 2) / uRes).rgb * 0.25;
-      float luma = dot(reflection, vec3(0.3, 0.5, 0.2));
-      float weight = reflectivity * (1.0 - fog) * uWet * (1.0 - smoothstep(45.0, 170.0, d));
-      col = mix(col, reflection, weight * 0.55 * smoothstep(70.0 / 255.0, 190.0 / 255.0, luma));
+      vec2 offset = vWorld.xz - uBike;
+      float ahead = dot(offset, uBikeForward);
+      float across = dot(offset, vec2(uBikeForward.y, -uBikeForward.x)) / 2.8;
+      float beam = (1.0 - smoothstep(9.0, 32.0, ahead)) * smoothstep(2.5, 6.0, ahead)
+                   * max(0.0, 1.0 - across * across) * uHeadlight;
+      fragColor = vec4(wet, beam, 0.0, 1.0);
+      return;
     }
 
-    vec2 offset = vWorld.xz - uBike;
-    float ahead = dot(offset, uBikeForward);
-    float across = dot(offset, vec2(uBikeForward.y, -uBikeForward.x)) / 2.8;
-    float beam = (1.0 - smoothstep(9.0, 32.0, ahead)) * smoothstep(2.5, 6.0, ahead)
-                 * max(0.0, 1.0 - across * across) * uHeadlight;
-    col += vec3(190, 215, 255) / 255.0 * beam;
-
-    fragColor = vec4(col, alpha);
+    fragColor = vec4(mix(col / 255.0, uFog, fog), alpha);
   }
 `;
 

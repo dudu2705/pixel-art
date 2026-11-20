@@ -30,8 +30,8 @@ export class City {
       uTime: { value: 0 },
       uFlash: { value: 0 },
       uRW: { value: RW },
-      uReflect: { value: null },
-      uRes: { value: new THREE.Vector2(1, 1) },
+      uSceneDepth: { value: null },
+      uMaskPass: { value: false },
       uWet: { value: 0 },
       uBike: { value: new THREE.Vector2() },
       uBikeForward: { value: new THREE.Vector2() },
@@ -141,7 +141,6 @@ export class City {
     g.setIndex(idx);
     g.computeBoundingSphere();
     const m = new THREE.Mesh(g, this.floorMat);
-    m.layers.set(ROAD_LAYER);
     m.renderOrder = -2;
     return m;
   }
