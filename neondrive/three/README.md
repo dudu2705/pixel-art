@@ -16,6 +16,9 @@ layout, with their own districts, weather, palettes, and connectors.
 Autopilot visits all three levels in each city, goes as far as Storm Citadel,
 then returns to Vanta Bay. In manual mode, follow the signed road branches to
 climb from Street or descend from Sky Avenues. The helix runs both ways.
+In Vanta Bay, the signed Tower Lift branches off the south end of Street and
+Sky Avenues. Drive to the gate to call it and roll aboard. With autopilot on,
+press `E` in Vanta Bay to route to the lift.
 
 Use `index.html?loop` to revisit the 30-district visual comparison route.
 
@@ -25,6 +28,7 @@ Use `index.html?loop` to revisit the 30-district visual comparison route.
 |---|---|
 | `map.js`, `map-drive.js` | Define the city and connector lane graphs, manual road surfaces, and tour itinerary |
 | `map-city.js`, `map-bridge.js`, `map-dressing.js` | Stream roads and buildings by map position and draw the districts, decks, and connector scenery |
+| `map-lift.js`, `map-lift-view.js` | Queue, move, and display Vanta Bay's drive-on tower lift |
 | `world.js`, `road.js` | Supply the reference palette and art data and generate the comparison loop |
 | `city.js` | Stream the road, buildings, and district art in 64-segment chunks |
 | `facade.glsl.js`, `shaders.js` | Paint the building walls, billboards, roofs, street surfaces, and glass decks |

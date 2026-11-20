@@ -9,7 +9,7 @@ const SPACING = 9;                                      // about one walker per 
 
 export const WALKERS = [];
 for (const road of VANTA_BAY.roads) {
-  if (road.bore || road.helix || road.tube || road.link?.height) continue;
+  if (road.bore || road.helix || road.tube || road.lift || road.liftApproach || road.link?.height) continue;
   const e = road.edges[0], a = e.from.trim, b = e.path.length - e.to.trim;
   if (b - a < 10) continue;
   const start = WALKERS.length, points = road.path.points, margin = road.halfWidth + SW;

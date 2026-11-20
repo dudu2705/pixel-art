@@ -15,6 +15,7 @@ const DECK_NORTH = 325;
 // the Crown helix: from the north end of the Sky Avenues, 3 turns round a 280 m tower, out heading north above
 // where it began
 export const CROWN_HELIX = { cx: DECK_X - 70, cz: DECK_NORTH, r: 70, turns: 3 };
+export const TOWER_LIFT = { x: 55, z: -285, halfLength: 5, halfWidth: 3.5, height: 5.6, exitClearance: 2.5 };
 
 const node = (id, x, z, level = 0) => ({ id, x, y: LEVEL_Y[level], z, level, exits: [] });
 const nodes = Object.fromEntries([
@@ -29,6 +30,8 @@ const nodes = Object.fromEntries([
   node('sky-arrival', DECK_X, 272, 1), node('sky-departure', DECK_X, -145, 1),
   node('sky-north', DECK_X, DECK_NORTH, 1), node('sky-south', DECK_X, DECK_SOUTH, 1),
   node('crown-arrival', DECK_X, DECK_NORTH, 2), node('crown-outlook', -262, 480, 2),
+  node('lift-street', TOWER_LIFT.x + TOWER_LIFT.halfLength, TOWER_LIFT.z),
+  node('lift-sky', TOWER_LIFT.x - TOWER_LIFT.halfLength, TOWER_LIFT.z, 1),
 ].map(n => [n.id, n]));
 
 function path(points) {
@@ -176,6 +179,20 @@ crownHelix('crown-helix', 'sky-north', 'crown-arrival', CROWN_HELIX);
 road('crown-way', 'Crown Way', 'crown-arrival', 'crown-outlook', 2, { speed: 120, interior:
   Array.from({ length: 16 }, (_, i) => { const a = (i + 0.5) / 16 * Math.PI / 2;
     return { x: DECK_X - 120 + 120 * Math.cos(a), y: 100, z: 360 + 120 * Math.sin(a) }; }) });
+
+// The east door opens at Street, the west door at Sky Avenues. The upper approach bends behind the shaft.
+TOWER_LIFT.landings = [nodes['lift-street'], nodes['lift-sky']];
+const liftBend = Array.from({ length: 25 }, (_, i) => {
+  const angle = -Math.PI * (0.5 + i / 24);
+  return { x: 16 + Math.cos(angle) * 10, y: SKY_HEIGHT, z: -295 + Math.sin(angle) * 10 };
+});
+TOWER_LIFT.approaches = [
+  road('lift-street-approach', 'Tower Lift · Street', 'street-south', 'lift-street', 1, { speed: 25 }),
+  road('lift-sky-approach', 'Tower Lift · Sky Avenues', 'sky-south', 'lift-sky', 1, { speed: 20, interior: liftBend }),
+];
+for (const approach of TOWER_LIFT.approaches) approach.liftApproach = true;
+road('tower-lift', 'Tower Lift', 'lift-street', 'lift-sky', 1, { speed: 12 }).lift = true;
+for (const landing of TOWER_LIFT.landings) landing.liftLanding = true;
 
 // ---------- the grid cities beyond Vanta Bay, and the links that join them ----------
 // Each is the same template: a gate road off the incoming link onto a central avenue (3 lanes each way) through a
@@ -325,8 +342,8 @@ export function inTube(road, distance) { return Boolean(road.tube && distance >=
 for (const n of Object.values(nodes)) {
   n.halfWidth = Math.max(...roads.filter(r => r.a === n || r.b === n).map(r => r.halfWidth));
   n.ramp = roads.find(r => r.bore && (r.a === n || r.b === n));
-  n.trim = n.ramp ? 24 : n.id.startsWith('plaza-') ? 8 : n.halfWidth + 3;
-  n.discR = n.ramp ? 0 : Math.max(n.trim + 1, n.halfWidth + 3.5);   // the junction disc map-city draws
+  n.trim = n.liftLanding ? 0 : n.ramp ? 24 : n.id.startsWith('plaza-') ? 8 : n.halfWidth + 3;
+  n.discR = n.ramp || n.liftLanding ? 0 : Math.max(n.trim + 1, n.halfWidth + 3.5);
 }
 
 export const VANTA_BAY = { nodes, roads, edges };
@@ -367,9 +384,11 @@ export function nearestOnPath(path, x, z, out = {}, y = null) {
 // A surface only connects to the surfaces meeting at its nodes, so overlapping levels never swap.
 export const SURFACES = (() => {
   const list = [];
-  for (const road of roads) list.push({ kind: 'road', road, half: road.halfWidth + SW, nodes: [road.a, road.b], level: road.level });
+  for (const road of roads) {
+    if (!road.lift) list.push({ kind: 'road', road, half: road.halfWidth + SW, nodes: [road.a, road.b], level: road.level });
+  }
   for (const n of Object.values(nodes)) {
-    if (n.ramp) continue;
+    if (!n.discR) continue;
     list.push({ kind: 'node', node: n, radius: n.discR, nodes: [n], level: n.level });
   }
   for (const s of list) {
@@ -405,10 +424,11 @@ export function frameInLane(edge, distance, lateral, out = {}) {
   return out;
 }
 
-export function legalTurns(edge) {
-  const options = edge.to.exits.filter(next => next.road !== edge.road &&
+export function legalTurns(edge, liftAccess = false) {
+  const exits = edge.to.exits.filter(next => liftAccess || (!next.road.lift && (!next.road.liftApproach || next.road === edge.road)));
+  const options = exits.filter(next => next.road !== edge.road &&
     (!edge.to.ramp || Math.abs(turnAngle(edge, next)) < Math.PI / 2));
-  return options.length ? options : edge.to.exits;
+  return options.length ? options : exits;
 }
 
 export function turnAngle(edge, next) {
@@ -416,12 +436,13 @@ export function turnAngle(edge, next) {
   return Math.atan2(Math.sin(a.th - b.th), Math.cos(a.th - b.th));
 }
 
-export function routeTo(start, goal, incoming = null, throughLevel = null) {
+export function routeTo(start, goal, incoming = null, throughLevel = null, liftAccess = false) {
   const queue = [{ node: start, route: [], incoming }];
   const seen = new Set(incoming ? [incoming] : []);
   for (const item of queue) {
     if (item.node === goal) return item.route;
-    const exits = item.incoming ? legalTurns(item.incoming) : item.node.exits;
+    const exits = item.incoming ? legalTurns(item.incoming, liftAccess) : item.node.exits.filter(edge =>
+      liftAccess || (!edge.road.lift && !edge.road.liftApproach));
     for (const edge of exits) {
       if (seen.has(edge) || (throughLevel !== null && edge.road.level !== throughLevel)) continue;
       seen.add(edge);

@@ -35,6 +35,7 @@ export class Rig {
     this.frameAt = sampling.frameAt ?? frameAt;
     this.enclosed = sampling.enclosed ?? enclosed;
     this.boreHalfWidth = sampling.boreHalfWidth ?? BORE_W;
+    this.cabinBounds = sampling.cabinBounds;
     this.period = sampling.period ?? LEN;
     this.mode = 0;
     this.shot = { ...FOLLOW[0], lat: 0 };
@@ -136,7 +137,9 @@ export class Rig {
     let dist = bike.dist - this.shot.back;
     let side = bike.lat + this.shot.lat;
     let fixed = null;
-    if (this.mode === 3) {
+    const cabin = this.cabinBounds?.();
+    if (cabin) this.trackside = null;
+    if (this.mode === 3 && !cabin) {
       const gap = this.trackside ? bike.dist - this.trackside.dist : 0;
       const passed = this.period ? (gap + this.period) % this.period : gap;
       if (!this.trackside || (passed > 55 && (!this.period || passed < this.period / 2))) {
@@ -153,7 +156,7 @@ export class Rig {
     const covered = underRoof || this.enclosed(dist);
     const height = covered ? Math.min(1.4 + this.shot.up, BORE_H - 1.9) : 1.4 + this.shot.up;
     if (covered) side = clamp(side, -(this.boreHalfWidth - 1.4), this.boreHalfWidth - 1.4);
-    this.cam.position.set(f.x + f.rx * side, f.y + height, f.z + f.rz * side);
+    this.placeCamera(f.x + f.rx * side, f.y + height, f.z + f.rz * side, cabin);
 
     const focal = Math.max(0.62 * this.cam.aspect, 0.8) * (1 - 0.14 * smooth(45, 85, bike.speed));
     const lift = 0.14 * smooth(0, LH[1], f.elev) - 0.16 * smooth(LH[1] + 15, LH[2], f.elev);
@@ -180,9 +183,18 @@ export class Rig {
       z += correction * f.rz;
       up = clamp(up, 1.1, BORE_H - 1.9);
     }
-    this.cam.position.set(bx + x, f.y + up, bz + z);
+    this.placeCamera(bx + x, f.y + up, bz + z, this.cabinBounds?.());
     this.cam.lookAt(bx, f.y + 1.6, bz);
     this.setFov(68);
+  }
+
+  placeCamera(x, y, z, bounds) {
+    if (bounds) {
+      x = clamp(x, bounds.x0, bounds.x1);
+      y = clamp(y, bounds.y0, bounds.y1);
+      z = clamp(z, bounds.z0, bounds.z1);
+    }
+    this.cam.position.set(x, y, z);
   }
 
   setFov(fov) {

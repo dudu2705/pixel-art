@@ -141,7 +141,7 @@ addEventListener('resize', resize);
 // ---------- world streaming ----------
 const comparisonLoop = new URL(location.href).searchParams.has('loop');
 const mapDrive = comparisonLoop ? null : new MapDrive();
-const city = comparisonLoop ? new City(scene) : new MapCity(scene);
+const city = comparisonLoop ? new City(scene) : new MapCity(scene, mapDrive.lift);
 const sampleFrame = mapDrive ? mapDrive.cameraFrame.bind(mapDrive) : frameAt;
 const cycle = makeLightCycle(city.uniforms);
 scene.add(cycle);
@@ -151,7 +151,8 @@ const signals = comparisonLoop ? new Signals(scene, city.mats) : new MapSignals(
 if (!comparisonLoop) for (const mesh of [buildGates(city.mats), buildRail(city.mats), ...buildMapDressing(city.mats), ...buildSetPieces(city.mats, city.groundMat)]) if (mesh) scene.add(mesh);
 const mapFlyers = [], mapTrain = [];
 const rig = new Rig(camera, canvas, mapDrive ? {
-  frameAt: sampleFrame, enclosed: mapDrive.enclosed.bind(mapDrive), boreHalfWidth: RAMP_BORE_HALF_WIDTH, period: 0,
+  frameAt: sampleFrame, enclosed: mapDrive.enclosed.bind(mapDrive), boreHalfWidth: RAMP_BORE_HALF_WIDTH,
+  cabinBounds: mapDrive.cabinBounds.bind(mapDrive), period: 0,
 } : undefined);
 
 // ---------- drive ----------
@@ -177,6 +178,7 @@ function setDriveKey(key, down) {
   simKeys[key] = down;
   if (down && S.auto) {
     setAuto(false);
+    if (mapDrive) mapDrive.player.liftStop = null;
     if (mapDrive && !mapDrive.player.turn) mapDrive.player.exit = null;
   }
 }
@@ -185,8 +187,12 @@ function handleControl(key) {
   if (key === 'm') { banner2('SOUND · ' + (audio.toggleMute() ? 'OFF' : 'ON')); return; }
   if (key === 'a') {
     setAuto(!S.auto);
+    if (mapDrive && !S.auto) mapDrive.player.liftStop = null;
     if (mapDrive && !mapDrive.player.turn) mapDrive.player.exit = null;
     banner2('AUTOPILOT · ' + (S.auto ? 'ON' : 'OFF'));
+  }
+  else if (key === 'e' && mapDrive) {
+    if (mapDrive.routeViaLift()) banner2('AUTOPILOT · TOWER LIFT');
   }
   else if (key === 'r' || key === 'w') { S.rainOn = !S.rainOn; banner2('WEATHER · ' + (S.rainOn ? 'ON' : 'OFF')); }
   else if (key === 'v') { setCruise(S.cruise + 1); banner2('CRUISE · ' + cruiseKmh() + ' KMH' + (S.auto ? '' : ' (AUTOPILOT)')); }

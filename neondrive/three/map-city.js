@@ -3,6 +3,7 @@ import { City, ROAD_LAYER } from './city.js';
 import { Batch, unitBox, unitCyl, unitSphere, unitPlane, unitPlaneFlat } from './props.js';
 import { VANTA_BAY, frameOn, PLAZA_RADIUS, deckCoverFor, RAMP_BORE_HALF_WIDTH, CROWN_HELIX, GRID_CITIES, LINKS } from './map.js';
 import { FONT } from './cockpit.js';
+import { buildTowerLift } from './map-lift-view.js';
 import { blocks, CITIES, zoneAt, D, SW, SEGL, mulberry, mix } from './world.js';
 
 const CELL = 96;
@@ -25,6 +26,7 @@ const cellKey = (x, z) => Math.floor(x / CELL) + '/' + Math.floor(z / CELL);
 const BORE_HEIGHT = 6.5;
 const sampleCells = new Map();
 for (const road of roads) {
+  if (road.lift) continue;
   for (let d = 0; d < road.path.length + 4; d += 4) {
     const distance = Math.min(d, road.path.length), f = frameOn(road.path, distance);
     const key = cellKey(f.x, f.z);
@@ -55,7 +57,7 @@ function makeBuildings() {
     const collection = set[style].length ? set[style] : all;
     const source = collection[Math.floor(random() * collection.length)];
     const clearance = Math.hypot(sx, sz) / 2;
-    if (roadNear(x, z, clearance + 19, f => (f.road.bore || f.road.id.startsWith('street-') || f.road.helix || f.road.level === 2 || f.road.city !== 'VANTA BAY') &&
+    if (roadNear(x, z, clearance + 19, f => (f.road.bore || f.road.liftApproach || f.road.id.startsWith('street-') || f.road.helix || f.road.level === 2 || f.road.city !== 'VANTA BAY') &&
       Math.hypot(f.x - x, f.z - z) < clearance + f.road.halfWidth + SW + 2)) return;
     const ratio = sz / (source.len * SEGL);
     const bbs = source.bbs.filter(b => b.v1 < h).map(b => ({ ...b, u0: b.u0 * ratio, u1: b.u1 * ratio }));
@@ -297,7 +299,7 @@ function distanceToFork(road, distance) {
 }
 
 export class MapCity extends City {
-  constructor(scene) {
+  constructor(scene, lift) {
     const buildings = makeBuildings();
     super(scene, buildings);
     this.uniforms.uMapBikeHeight = { value: 0 };
@@ -306,8 +308,12 @@ export class MapCity extends City {
       vertexShader: groundVertex, fragmentShader: groundFragment, uniforms: this.uniforms,
     });
     this.materials = new Map();
+    this.lift = lift;
+    this.liftView = buildTowerLift(this.mats);
+    scene.add(this.liftView.group);
     for (const building of buildings) this.cell(building.x, building.z).buildings.push(building);
     for (const road of roads) {
+      if (road.lift) continue;
       for (let d = 0; d < road.path.length; d += 32) {
         const end = Math.min(d + 32, road.path.length);
         const f = frameOn(road.path, (d + end) / 2);
@@ -377,7 +383,7 @@ export class MapCity extends City {
       group.add(mesh);
     }
     for (const node of cell?.junctions ?? []) {
-      if (node.ramp) continue;
+      if (!node.discR) continue;
       const g = new THREE.CircleGeometry(node.discR, 32).rotateX(-Math.PI / 2);
       const p = g.getAttribute('position');
       const lat = new Float32Array(p.count), uv = new Float32Array(p.count * 2);
@@ -534,6 +540,7 @@ export class MapCity extends City {
   }
 
   update(_, camera, time) {
+    if (this.lift) this.liftView.update(this.lift, camera);
     this.uniforms.uCam.value.copy(camera);
     this.uniforms.uTime.value = time;
     const cx = Math.floor(camera.x / CELL), cz = Math.floor(camera.z / CELL), next = new Set();

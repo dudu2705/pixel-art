@@ -1,5 +1,6 @@
 import { VANTA_BAY, frameOn, frameInLane, laneOffset, legalTurns, routeTo, turnAngle, turnPath,
-  inBore, inTube, underSkyDeck, LANE_WIDTH, SURFACES, onSurface, LEVEL_NAMES, LINKS, AURUM, GRID_CITIES } from './map.js';
+  inBore, inTube, underSkyDeck, LANE_WIDTH, SURFACES, onSurface, LEVEL_NAMES, LINKS, AURUM, GRID_CITIES, TOWER_LIFT } from './map.js';
+import { TowerLift } from './map-lift.js';
 import { S, blendCities, setAuto, updateClimate } from './sim.js';
 import { signalState, pedsOn, pedsOnOutbound, allCrossers } from './map-signals.js';
 import { walkersNear } from './map-people.js';
@@ -38,7 +39,7 @@ export class MapDrive {
     this.waiting = new Map();
     this.history = [];
     const avenueIds = ['east-north', 'east-south', 'street-north-through', 'sky-deck'];
-    const localEdges = edges.filter(edge => edge.road.city === 'VANTA BAY' && edge.road.level === 0 && !edge.road.oneWay &&
+    const localEdges = edges.filter(edge => edge.road.city === 'VANTA BAY' && edge.road.level === 0 && !edge.road.oneWay && !edge.road.liftApproach &&
       !avenueIds.includes(edge.road.id) && edge.from !== nodes.gateway).filter((_, i) => i % 3 === 0);
     const avenueEdges = edges.filter(edge => avenueIds.includes(edge.road.id));
     this.traffic = [...localEdges, ...avenueEdges, ...edges.filter(edge => edge.road.city === 'VANTA BAY' && edge.road.bore)]
@@ -92,6 +93,7 @@ export class MapDrive {
     }
     this.vehicles = [this.player, ...this.traffic];
     this.onEdges = new Map();
+    this.lift = new TowerLift();
     this.spawn();
   }
 
@@ -106,6 +108,12 @@ export class MapDrive {
 
   autoExit(current) {
     const node = current.edge.to;
+    if (current.liftStop) {
+      if (node === current.liftStop) return node.exits.find(edge => edge.road.lift);
+      const level = node.level === current.liftStop.level ? node.level : null;
+      const towardLift = routeTo(node, current.liftStop, current.edge, level, true)[0];
+      if (towardLift) return towardLift;
+    }
     const stops = current.itinerary;
     let index = current.stopIndex ?? 0;
     while (node === nodes[stops[index].id] || (stops[index].level != null && stops[index].level !== node.level)) {
@@ -243,6 +251,10 @@ export class MapDrive {
       if (current.s < stop - 0.0001) break;
       if (held) { current.speed = 0; break; }
       current.exit ??= this.selectExit(current, isPlayer);
+      if (current.exit.road.lift) {
+        this.callLift(current);
+        break;
+      }
       // first come, first served: a car already refused at this junction goes next, so a busy crossing street
       // can't starve a turn forever
       const node = current.edge.to, first = this.waiting.get(node);
@@ -329,6 +341,33 @@ export class MapDrive {
     }
   }
 
+  routeViaLift() {
+    const p = this.player;
+    if (!S.auto || p.edge.road.city !== 'VANTA BAY' || this.lift.holds(p)) return false;
+    p.liftStop = TOWER_LIFT.landings[S.layer === 0 ? 0 : 1];
+    if (!p.turn) p.exit = null;
+    return true;
+  }
+
+  callLift(vehicle) {
+    this.lift.request(vehicle, vehicle.edge.to.level);
+    if (vehicle !== this.player) return;
+    this.free = null;
+    S.waitLight = false;
+  }
+
+  releaseLift({ vehicle, to }) {
+    const edge = TOWER_LIFT.approaches[to].edges[1];
+    this.vehiclesOn(vehicle.edge).delete(vehicle);
+    Object.assign(vehicle, { edge, s: TOWER_LIFT.exitClearance, lane: 0, lat: laneOffset(edge, 0), turn: null, exit: null, liftStop: null });
+    this.vehiclesOn(edge).add(vehicle);
+    sample(vehicle, vehicle.pose);
+    if (vehicle !== this.player) return;
+    S.layer = to;
+    S.zoneText = to ? '▲ LEVEL 2 · SKY AVENUES' : '▼ LEVEL 1 · STREET';
+    S.zoneT = 3.5;
+  }
+
   vehiclesOn(edge) {
     if (!this.onEdges.has(edge)) this.onEdges.set(edge, new Set());
     return this.onEdges.get(edge);
@@ -340,7 +379,7 @@ export class MapDrive {
     S.zoneT -= dt;
     const steer = Number(Boolean(keys.right)) - Number(Boolean(keys.left));
     S.steer += (steer - S.steer) * Math.min(1, dt * 9);
-    if (!S.auto) {
+    if (!S.auto && !this.lift.holds(p)) {
       S.idle = keys.left || keys.right || keys.gas || keys.brake ? 0 : S.idle + dt;
       if (S.idle > 10) {
         setAuto(true);
@@ -349,19 +388,35 @@ export class MapDrive {
     }
     this.onEdges.clear();
     for (const current of this.vehicles) this.vehiclesOn(current.edge).add(current);
-    for (const current of this.traffic) this.updateVehicle(current, dt, keys);
+    const released = this.lift.step(dt, ({ vehicle, to }) =>
+      this.leadDistance(vehicle, TOWER_LIFT.approaches[to].edges[1], 0, 0) > TOWER_LIFT.exitClearance + 6);
+    if (released) this.releaseLift(released);
+    for (const current of this.traffic) if (!this.lift.holds(current)) this.updateVehicle(current, dt, keys);
     // by hand the rider is a free body on the road surfaces; autopilot drives the lane graph
-    if (!S.auto && !this.free) this.enterFree();
-    else if (S.auto && this.free) {
-      const edge = p.edge;
-      this.leaveFree();
-      if (p.edge !== edge) {
-        this.vehiclesOn(edge).delete(p);
-        this.vehiclesOn(p.edge).add(p);
+    if (!this.lift.holds(p)) {
+      if (!S.auto && !this.free) this.enterFree();
+      else if (S.auto && this.free) {
+        const edge = p.edge;
+        this.leaveFree();
+        if (p.edge !== edge) {
+          this.vehiclesOn(edge).delete(p);
+          this.vehiclesOn(p.edge).add(p);
+        }
       }
+      if (this.free) this.stepFree(dt, keys);
+      else this.updateVehicle(p, dt, keys);
+    } else {
+      S.roll *= Math.exp(-dt * 5);
+      S.waitLight = false;
     }
-    if (this.free) this.stepFree(dt, keys);
-    else this.updateVehicle(p, dt, keys);
+    const liftStatus = this.lift.holds(p) ? (this.lift.trip?.vehicle === p ? this.lift.phase : 'queue') : null;
+    if (liftStatus !== this.liftStatus) {
+      this.liftStatus = liftStatus;
+      if (liftStatus === 'queue' || liftStatus === 'summon') S.zoneText = 'TOWER LIFT · WAITING';
+      if (liftStatus === 'board') S.zoneText = 'TOWER LIFT · BOARDING';
+      if (liftStatus === 'travel') S.zoneText = 'TOWER LIFT · MOVING';
+      if (liftStatus && liftStatus !== 'release') S.zoneT = 7;
+    }
     // people on the crossings: drawn by main.js, and riding into one stops you dead, as in the reference
     this.crossers = allCrossers(S.T, p.pose.x, p.pose.z, 200);
     walkersNear(S.T, p.pose.x, p.pose.z, 180, this.crossers);   // and the sidewalk crowd around you
@@ -540,6 +595,10 @@ export class MapDrive {
     this.yawRate = (this.yawRate ?? 0) + (turnRate - (this.yawRate ?? 0)) * Math.min(1, dt * 6);
     const tilt = clamp(Math.atan(this.yawRate * p.speed / 9.8), -0.42, 0.42);
     S.roll += (tilt - S.roll) * Math.min(1, dt * 4);
+    if (keys.gas && p.edge.road.liftApproach && p.edge.to.liftLanding &&
+        p.edge.path.length - p.s < 1.4 && Math.abs(f.z - TOWER_LIFT.z) < TOWER_LIFT.halfWidth - 0.5) {
+      this.callLift(p);
+    }
   }
 
   arrive(surface) {                                   // banners when the rider reaches a new road or level
@@ -582,13 +641,26 @@ export class MapDrive {
 
   enclosed(distance) {
     const p = this.player;
+    if (this.lift.onboard(p)) return true;
     const road = p.edge.road, s = p.s + distance - p.traveled;
     return !p.turn && (inBore(road, s) || inTube(road, road.edges[0] === p.edge ? s : road.path.length - s));
+  }
+
+  cabinBounds() {
+    if (!this.lift.onboard(this.player)) return null;
+    const { x, z, halfLength, halfWidth, height } = TOWER_LIFT;
+    return { x0: x - halfLength + 0.5, x1: x + halfLength - 0.5, z0: z - halfWidth + 0.5,
+      z1: z + halfWidth - 0.5, y0: this.lift.y + 0.8, y1: this.lift.y + height - 0.8 };
   }
 
   cameraFrame(distance, out = {}) {
     const p = this.player;
     const offset = distance - p.traveled;
+    if (this.lift.holds(p)) {
+      Object.assign(out, p.pose);
+      if (this.lift.onboard(p)) out.x += Math.sin(p.pose.th) * offset;
+      return out;
+    }
     if (Math.abs(offset) < 0.0001) return Object.assign(out, p.pose);
     if (offset > 0 && this.free) {
       const f = this.free;
@@ -605,6 +677,7 @@ export class MapDrive {
       const stop = p.edge.path.length - p.edge.to.trim;
       if (p.s + offset <= stop) return frameInLane(p.edge, p.s + offset, p.lat, out);
       const next = p.exit ?? legalTurns(p.edge)[0], lat = laneOffset(next, this.nextLane(p, next));
+      if (next.road.lift) return frameInLane(p.edge, stop, p.lat, out);
       const path = turnPath(p.edge, p.lat, next, lat);
       const delta = p.s + offset - stop;
       return delta < path.length ? frameOn(path, delta, out) : frameInLane(next, p.edge.to.trim + delta - path.length, lat, out);
