@@ -134,7 +134,18 @@ Done first, without a structural change:
   steering in manual mode, eased in. Exits are chosen early enough to brake to the turn speed at any cruise
   setting (at least `v² / 14 + 20` m out), so 300 km/h no longer reaches a junction with nowhere to slow down.
 
-### Free steering (proposed, for review before any code)
+### Free steering (built)
+
+Built as below in `map.js` (`SURFACES`, `onSurface`, `nearestOnPath`) and `map-drive.js` (`enterFree`, `stepFree`,
+`leaveFree`, `locate`, `project`, `collide`). Where connected surfaces overlap at the same height (a ramp peeling
+off its through road, a junction), the rider is on whichever it is most centred on; the height check keeps stacked
+levels apart. Hands off the arrows, the heading settles into the road's direction so curves and the spiral ramps
+ride without constant tapping. Verified headlessly: boulevard into the plaza and around the ring, out along Arcade
+and Foundry streets, U-turns at a junction and a dead end, the full run under the Sky Avenue deck staying at street
+level, peeling onto Sky Ramp Up and climbing it, and handing back to autopilot mid-street and mid-ramp (autopilot
+then reaches the Sky Avenues with the level banner). Not yet checked by eye in cockpit and chase view.
+
+The design as reviewed:
 
 Today the manual rider is still a graph vehicle: arrows slide it sideways within its lanes, pick an exit in the
 last 34 m, and the graph drives the turn. Proposed instead:

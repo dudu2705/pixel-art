@@ -1,5 +1,5 @@
 import { VANTA_BAY, frameOn, frameInLane, laneOffset, legalTurns, routeTo, turnAngle, turnPath,
-  inBore, underSkyDeck, LANE_WIDTH } from './map.js';
+  inBore, underSkyDeck, LANE_WIDTH, SURFACES, onSurface } from './map.js';
 import { S, blendTheme, setAuto, updateClimate } from './sim.js';
 import { CITIES, CRUISE, SEGL, ZONES, cars, clamp, mulberry } from './world.js';
 
@@ -249,7 +249,13 @@ export class MapDrive {
       }
     }
     for (const current of this.traffic) this.updateVehicle(current, dt, keys);
-    this.updateVehicle(p, dt, keys);
+    // by hand the rider is a free body on the road surfaces; autopilot drives the lane graph
+    if (!S.auto && !this.free) this.enterFree();
+    else if (S.auto && this.free) this.leaveFree();
+    if (this.free) this.stepFree(dt, keys);
+    else this.updateVehicle(p, dt, keys);
+    S.shake *= Math.exp(-dt * 4);
+    S.crashFlash *= Math.exp(-dt * 5);
     S.z = p.traveled;
     S.px = p.lat;
     S.speed = p.speed;
@@ -261,6 +267,163 @@ export class MapDrive {
       this.history.push({ distance: p.traveled, pose: { ...p.pose } });
     }
     while (this.history.length > 2 && p.traveled - this.history[1].distance > 108) this.history.shift();
+  }
+
+  // ---------- free steering ----------
+  locate(x, z, y, current) {                          // the surface under (x, z): the current one while it holds you
+    // where connected surfaces overlap at the same height (a ramp peeling off a through road, a junction), take
+    // the one you're most centred on; the height check keeps stacked levels apart
+    const norm = (s, o) => o.depth / (s.kind === 'node' ? s.radius : s.half);
+    const hit = {};
+    let best = current && onSurface(current, x, z, hit) && Math.abs(hit.y - y) < 2 ? { surface: current, hit, k: norm(current, hit) + 0.1 } : null;
+    for (const s of current ? current.next : SURFACES) {
+      const o = onSurface(s, x, z, {});
+      if (!o || Math.abs(o.y - y) > (best ? 0.3 : 2)) continue;
+      const k = norm(s, o);
+      if (!best || k > best.k) best = { surface: s, hit: o, k };
+    }
+    return best;
+  }
+
+  enterFree() {
+    const p = this.player, pose = p.pose;
+    const road = p.turn ? p.turn.edge.road : p.edge.road;
+    const start = SURFACES.find(s => s.road === road);
+    const found = this.locate(pose.x, pose.z, pose.y, start) ?? this.locate(pose.x, pose.z, pose.y, null);
+    this.free = { x: pose.x, z: pose.z, y: pose.y, th: pose.th, surface: found ? found.surface : start, wall: 0 };
+    if (p.turn) { if (this.owners.get(p.edge.to) === p) this.owners.delete(p.edge.to); p.edge = p.turn.edge; p.s = p.edge.to === p.edge.from ? 0 : p.edge.from.trim; }
+    p.turn = null; p.exit = null;
+    this.project();
+  }
+
+  leaveFree() {                                       // snap onto the nearest lane going your way
+    const p = this.player, f = this.free;
+    const roads = (f.surface.kind === 'road' ? [f.surface] : []).concat(f.surface.next.filter(s => s.kind === 'road'));
+    let best = null;
+    for (const s of roads) for (const edge of s.road.edges) {
+      const fr = {}, o = onSurface(s, f.x, f.z, fr) ?? (() => { frameOn(s.road.path, 0, fr); fr.s = 0; fr.lat = 0; return fr; })();
+      const forward = edge.path === s.road.path, th = forward ? o.th : o.th + Math.PI;
+      const score = Math.cos(th - f.th) - Math.abs(o.lat) * 0.01 - (o.depth == null ? 1 : 0);
+      if (!best || score > best.score) best = { score, edge, s: forward ? o.s : edge.path.length - o.s, lat: forward ? o.lat : -o.lat };
+    }
+    const e = best.edge, lanes = e.road.lanes;
+    p.edge = e;
+    p.s = clamp(best.s, e.from.trim + 0.5, e.path.length - e.to.trim - 0.5);
+    p.lane = clamp(Math.round((best.lat + (e.road.oneWay ? e.road.halfWidth : 0)) / LANE_WIDTH - 0.5), 0, lanes - 1);
+    p.lat = laneOffset(e, p.lane);
+    p.turn = null; p.exit = null;
+    this.free = null;
+    sample(p, p.pose);
+  }
+
+  project() {                                         // where traffic, banners and bores see the free rider on the graph
+    const p = this.player, f = this.free, s = f.surface;
+    if (s.kind !== 'road') return;
+    const o = {}; if (!onSurface(s, f.x, f.z, o)) return;
+    const edges = s.road.edges;
+    const back = edges.length > 1 && Math.cos(o.th - f.th) < 0;
+    const e = back ? edges[1] : edges[0];
+    p.edge = e;
+    p.s = back ? e.path.length - o.s : o.s;
+    const lat = back ? -o.lat : o.lat;
+    p.lane = clamp(Math.round((lat + (e.road.oneWay ? e.road.halfWidth : 0)) / LANE_WIDTH - 0.5), 0, e.road.lanes - 1);
+    p.lat = lat;
+  }
+
+  stepFree(dt, keys) {
+    const p = this.player, f = this.free;
+    const oldTh = f.th, wasSpeed = p.speed;
+    // speed: as before, the road's own limit by hand
+    const limit = f.surface.speed;
+    const target = keys.brake ? 0 : keys.gas ? limit : Math.min(limit, Math.max(0, p.speed - 0.7 * dt));
+    p.speed = Math.max(0, p.speed + clamp(target - p.speed, -(keys.brake ? 18 : 12) * dt, 13 * dt));
+    if (f.wall > 0) p.speed *= Math.exp(-dt * 2.5);
+    p.brake = p.speed < wasSpeed - 0.03;
+    // steering: a turn rate capped by grip (about 0.9 g sideways), tight enough at walking pace for a U-turn
+    const v = p.speed, cap = Math.min(1.5, 9 / Math.max(v, 1));
+    let yaw = -S.steer * cap;
+    if (Math.abs(S.steer) < 0.08 && f.surface.kind === 'road') {   // hands off: settle into the road's direction
+      const o = {};
+      if (onSurface(f.surface, f.x, f.z, o)) {
+        let d = Math.atan2(Math.sin(o.th - f.th), Math.cos(o.th - f.th));
+        if (Math.abs(d) > Math.PI / 2 && f.surface.road.edges.length > 1) d = Math.atan2(Math.sin(o.th + Math.PI - f.th), Math.cos(o.th + Math.PI - f.th));
+        if (Math.abs(d) < 0.6) yaw += clamp(d * Math.min(2.5, v * 0.2), -cap, cap);
+      }
+    }
+    f.th += yaw * dt;
+    // move, then find the ground; off the edge of everything is a wall you slide along
+    const step = v * dt;
+    let tx = f.x + Math.sin(f.th) * step, tz = f.z + Math.cos(f.th) * step;
+    let at = this.locate(tx, tz, f.y, f.surface);
+    f.wall = Math.max(0, f.wall - dt);
+    if (!at) {
+      const base = onSurface(f.surface, f.x, f.z, {});
+      if (base) {
+        // the edge's direction: along the road, or around a junction disc
+        let ux, uz, nx, nz;
+        if (base.th != null) { ux = Math.sin(base.th); uz = Math.cos(base.th); nx = -base.rx * Math.sign(base.lat); nz = -base.rz * Math.sign(base.lat); }
+        else {
+          const n = f.surface.node, d = Math.hypot(f.x - n.x, f.z - n.z) || 1;
+          nx = -(f.x - n.x) / d; nz = -(f.z - n.z) / d; ux = -nz; uz = nx;
+        }
+        const d = (tx - f.x) * ux + (tz - f.z) * uz;
+        tx = f.x + ux * d + nx * 0.05; tz = f.z + uz * d + nz * 0.05;
+        at = this.locate(tx, tz, f.y, f.surface);
+        const along = Math.atan2(ux * Math.sign(d || 1), uz * Math.sign(d || 1));
+        f.th += clamp(Math.atan2(Math.sin(along - f.th), Math.cos(along - f.th)), -2 * dt, 2 * dt);
+      }
+      if (v > 3) S.shake = Math.max(S.shake, 0.15 * Math.min(1, v / 20));
+      f.wall = 0.25;
+    }
+    let moved = 0;
+    if (at) {
+      moved = Math.hypot(tx - f.x, tz - f.z);
+      f.x = tx; f.z = tz; f.y = at.hit.y;
+      this.arrive(at.surface);
+    } else p.speed *= 0.5;
+    p.traveled += moved;
+    this.collide();
+    this.project();
+    const pose = p.pose;
+    pose.x = f.x; pose.y = f.y; pose.z = f.z; pose.th = f.th; pose.elev = f.y;
+    pose.rx = -Math.cos(f.th); pose.rz = Math.sin(f.th);
+    S.waitLight = false;
+    const turnRate = Math.sin(oldTh - f.th) / Math.max(dt, 0.001);
+    this.yawRate = (this.yawRate ?? 0) + (turnRate - (this.yawRate ?? 0)) * Math.min(1, dt * 6);
+    const tilt = clamp(Math.atan(this.yawRate * p.speed / 9.8), -0.42, 0.42);
+    S.roll += (tilt - S.roll) * Math.min(1, dt * 4);
+  }
+
+  arrive(surface) {                                   // banners when the rider reaches a new road or level
+    const f = this.free;
+    if (surface === f.surface) return;
+    const before = f.surface;
+    f.surface = surface;
+    if (surface.kind !== 'road') return;
+    const level = surface.level;
+    if (level !== null && level !== S.layer) {
+      S.zoneText = level > S.layer ? '▲ LEVEL 2 · SKY AVENUES' : '▼ LEVEL 1 · STREET';
+      S.zoneT = 3.5;
+      S.layer = level;
+    } else if (before.road?.name !== surface.road.name && surface.road.name !== this.lastRoadName && !(S.zoneT > 0 && S.zoneText.includes('LEVEL'))) {
+      S.zoneText = surface.road.name.toUpperCase();
+      S.zoneT = 2.5;
+    }
+    this.lastRoadName = surface.road.name;
+  }
+
+  collide() {                                         // against cars at your height: rear-end or head-on, as in the reference
+    const p = this.player, f = this.free;
+    if (S.T - (S.lastHit ?? -9) < 0.6) return;
+    for (const c of this.traffic) {
+      const q = c.pose, dx = q.x - f.x, dz = q.z - f.z;
+      if (Math.abs(q.y - f.y) > 3 || dx * dx + dz * dz > 2.4 * 2.4) continue;
+      const ahead = dx * Math.sin(f.th) + dz * Math.cos(f.th) > 0;
+      if (!ahead) continue;
+      if (Math.cos(q.th - f.th) > 0) { if (p.speed > c.speed) { p.speed = c.speed * 0.6; S.shake = 0.7; S.crashFlash = 0.6; S.lastHit = S.T; } }
+      else { p.speed *= 0.25; S.shake = 1; S.crashFlash = 1; S.lastHit = S.T; }
+      return;
+    }
   }
 
   turnSpeed(current) {
@@ -278,6 +441,12 @@ export class MapDrive {
     const p = this.player;
     const offset = distance - p.traveled;
     if (Math.abs(offset) < 0.0001) return Object.assign(out, p.pose);
+    if (offset > 0 && this.free) {
+      const f = this.free;
+      Object.assign(out, p.pose);
+      out.x = f.x + Math.sin(f.th) * offset; out.z = f.z + Math.cos(f.th) * offset;
+      return out;
+    }
     if (offset > 0) {
       if (p.turn) {
         const remaining = p.turn.path.length - p.turn.s;

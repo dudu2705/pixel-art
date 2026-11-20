@@ -168,6 +168,54 @@ export function underSkyDeck({ x, y, z }) {
   return y < SKY_HEIGHT - 2 && z > DECK_SOUTH && z < DECK_NORTH && Math.abs(x - DECK_X) < DECK_COVER.halfWidth;
 }
 
+// the closest point of a path to (x, z) in plan view: distance along it, signed sideways offset (+ is the
+// rider's right, as laneOffset), height and heading there, and whether the point lies past either end
+export function nearestOnPath(path, x, z, out = {}) {
+  let best = Infinity;
+  for (const g of path.segments) {
+    const len2 = g.dx * g.dx + g.dz * g.dz;
+    const t = len2 > 0 ? Math.max(0, Math.min(1, ((x - g.start.x) * g.dx + (z - g.start.z) * g.dz) / len2)) : 0;
+    const px = g.start.x + g.dx * t, pz = g.start.z + g.dz * t, d2 = (x - px) ** 2 + (z - pz) ** 2;
+    if (d2 < best) { best = d2; out.s = g.at + g.size * t; }
+  }
+  frameOn(path, out.s, out);
+  out.lat = (x - out.x) * out.rx + (z - out.z) * out.rz;
+  out.dist = Math.sqrt(best);
+  out.end = out.s < 0.01 || out.s > path.length - 0.01;
+  return out;
+}
+
+// everything the rider can ride on: each road's full width with its sidewalks, and each junction's disc.
+// A surface only connects to the surfaces meeting at its nodes, so overlapping levels never swap.
+export const SURFACES = (() => {
+  const list = [];
+  for (const road of roads) list.push({ kind: 'road', road, half: road.halfWidth + SW, nodes: [road.a, road.b], level: road.level });
+  for (const n of Object.values(nodes)) {
+    if (n.ramp) continue;
+    list.push({ kind: 'node', node: n, radius: Math.max(n.trim + 1, n.halfWidth + 3.5), nodes: [n], level: n.level });
+  }
+  for (const s of list) {
+    s.next = list.filter(o => o !== s && o.nodes.some(n => s.nodes.includes(n)));
+    s.speed = s.kind === 'road' ? s.road.speed : Math.max(...roads.filter(r => r.a === s.node || r.b === s.node).map(r => r.speed));
+  }
+  return list;
+})();
+
+// where (x, z) lies on a surface: null if outside it, else its height, heading and how deep inside (0 at the edge)
+export function onSurface(surface, x, z, out = {}) {
+  if (surface.kind === 'node') {
+    const n = surface.node, d = Math.hypot(x - n.x, z - n.z);
+    if (d > surface.radius) return null;
+    out.y = n.y; out.th = null; out.depth = surface.radius - d; out.s = 0; out.lat = 0;
+    return out;
+  }
+  nearestOnPath(surface.road.path, x, z, out);
+  const off = out.end ? out.dist : Math.abs(out.lat);
+  if (off > surface.half) return null;
+  out.depth = surface.half - off;
+  return out;
+}
+
 export function laneOffset(edge, lane) {
   return (lane + 0.5) * LANE_WIDTH - (edge.road.oneWay ? edge.road.halfWidth : 0);
 }

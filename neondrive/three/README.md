@@ -43,9 +43,11 @@ select those shots directly. Use `6` for orbit or `7` for free flight.
 Drag to look and use the wheel to zoom in orbit. Use `WASD` and `QE` to move
 in free flight. `F` shows diagnostics and `B` toggles glow for comparison.
 
-In Vanta Bay, steer to change lanes between junctions. As you approach a junction
-in manual mode, steer toward the turn you want. The banner names the selected
-street.
+In Vanta Bay, manual mode steers freely: the arrows turn the bike, anywhere on the
+road surfaces, junctions and the plaza ring. Hands off the arrows, the bike settles
+into the road's direction. Deck edges, bore walls and the plaza's centre are walls
+you slide along. Turn around wherever there is room. Autopilot drives the lane
+graph; switching back to it snaps you onto the nearest lane going your way.
 
 The shorter side of the screen determines the art grid. Each art pixel spans
 a whole number of physical pixels and the city always renders at twice the
