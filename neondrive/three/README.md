@@ -34,8 +34,12 @@ The original's bindings, unchanged:
 `R` or `W` weather · `L` headlight · `C` camera · `H` hints
 
 Added for the free camera only: `1`–`6` pick a camera directly (cockpit, chase,
-side, top, orbit, free), drag to look, wheel to zoom, `P` pixel mode, `B` glow,
-`[` `]` resolution. In the free camera, `WASD` / `QE` move.
+side, top, orbit, free), drag to look, wheel to zoom, and `B` to toggle glow.
+In the free camera, `WASD` / `QE` move.
+
+The art grid is sized from the shorter side of the screen and each art pixel
+spans a whole number of physical pixels. The city always renders at twice
+the art grid resolution with nearest-neighbour sampling.
 
 ## What is in
 

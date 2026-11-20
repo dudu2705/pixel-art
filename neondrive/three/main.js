@@ -20,18 +20,13 @@ renderer.outputColorSpace = THREE.LinearSRGBColorSpace;
 const scene = new THREE.Scene();
 const camera = new THREE.PerspectiveCamera(68, 1, 0.5, 6000);
 
-// pixel-art pass: render small, upscale with nearest neighbour
-let PIXEL = true, PIXEL_H = 300;
+// Match the GPU game's art grid and its always-on 2x city detail.
+const ART_SHORT_SIDE = 280, CITY_SCALE = 2;
 let rt = null;
 const quadScene = new THREE.Scene();
 const quadCam = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
-// The original rendered into a small float buffer and wrote 0-255 through a
-// 4x4 Bayer dither, which is why every gradient in it stipples instead of
-// banding smoothly. A clean 3D pipeline has no such texture, so the final blit
-// puts it back.
 const quadMat = new THREE.ShaderMaterial({
-  uniforms: { map: { value: null }, uGlow: { value: null }, uGlowAmt: { value: 1.0 },
-              uRes: { value: new THREE.Vector2(1, 1) }, uLevels: { value: 28.0 } },
+  uniforms: { map: { value: null }, uGlow: { value: null }, uGlowAmt: { value: 1.0 } },
   vertexShader: `varying vec2 vUv; void main(){ vUv = uv; gl_Position = vec4(position.xy, 0.0, 1.0); }`,
   fragmentShader: `
     precision highp float;
@@ -39,30 +34,12 @@ const quadMat = new THREE.ShaderMaterial({
     uniform sampler2D map;
     uniform sampler2D uGlow;
     uniform float uGlowAmt;
-    uniform vec2 uRes;
-    uniform float uLevels;
-    // the generator's own Bayer table
-    float bayer(vec2 p) {
-      int x = int(mod(p.x, 4.0)), y = int(mod(p.y, 4.0));
-      int i = y * 4 + x;
-      float t =
-        i==0?0.0: i==1?8.0: i==2?2.0: i==3?10.0:
-        i==4?12.0:i==5?4.0: i==6?14.0:i==7?6.0:
-        i==8?3.0: i==9?11.0:i==10?1.0:i==11?9.0:
-        i==12?15.0:i==13?7.0:i==14?13.0:5.0;
-      return (t + 0.5) / 16.0;
-    }
     void main() {
       vec3 c = texture2D(map, vUv).rgb;
       // the light buffer, quantised to six steps before it is added, exactly as
       // addLight() did. The steps are the point: a smooth bloom reads as film.
       vec3 g = floor(texture2D(uGlow, vUv).rgb * uGlowAmt * 6.0) / 6.0;
-      c += g;
-      vec2 px = floor(vUv * uRes);
-      float d = bayer(px);
-      // quantise with the dither offset: stipple instead of banding
-      c = floor(c * uLevels + d) / uLevels;
-      gl_FragColor = vec4(c, 1.0);
+      gl_FragColor = vec4(c + g, 1.0);
     }`,
 });
 quadScene.add(new THREE.Mesh(new THREE.PlaneGeometry(2, 2), quadMat));
@@ -71,13 +48,19 @@ let BLOOM = true;
 const glow = new Glow(renderer);
 
 function resize() {
-  const w = innerWidth, h = innerHeight;
-  renderer.setSize(w, h, false);
-  camera.aspect = w / h;
+  const dpr = devicePixelRatio || 1;
+  const pixelWidth = innerWidth * dpr, pixelHeight = innerHeight * dpr;
+  const pixelScale = Math.max(CITY_SCALE, Math.round(Math.min(pixelWidth, pixelHeight) / ART_SHORT_SIDE));
+  const artWidth = Math.max(1, Math.ceil(pixelWidth / pixelScale));
+  const artHeight = Math.max(1, Math.ceil(pixelHeight / pixelScale));
+  const outputWidth = artWidth * pixelScale, outputHeight = artHeight * pixelScale;
+  renderer.setSize(outputWidth, outputHeight, false);
+  canvas.style.width = `${outputWidth / dpr}px`;
+  canvas.style.height = `${outputHeight / dpr}px`;
+  camera.aspect = artWidth / artHeight;
   camera.updateProjectionMatrix();
   if (rt) rt.dispose();
-  const ph = PIXEL ? PIXEL_H : h;
-  const pw = Math.round(ph * w / h);
+  const pw = artWidth * CITY_SCALE, ph = artHeight * CITY_SCALE;
   rt = new THREE.WebGLRenderTarget(pw, ph, {
     minFilter: THREE.NearestFilter, magFilter: THREE.NearestFilter,
     depthBuffer: true, type: THREE.UnsignedByteType,
@@ -89,7 +72,6 @@ function resize() {
   });
   city.uniforms.uReflect.value = reflectRT.texture;
   city.uniforms.uRes.value.set(pw, ph);   // gl_FragCoord is in render-target space
-  quadMat.uniforms.uRes.value.set(pw, ph);
 }
 let reflectRT = null;
 const mirrorCam = new THREE.PerspectiveCamera();
@@ -382,10 +364,7 @@ addEventListener('keydown', e => {
   else if (k === 'l') { lightOn = !lightOn; banner2('HEADLIGHT · ' + (lightOn ? 'ON' : 'OFF')); }
   else if (k === 'c') { rig.setMode((rig.mode + 1) % MODES.length); banner2('CAMERA · ' + MODES[rig.mode]); }
   else if (k === 'h') document.body.classList.toggle('hints');
-  else if (k === 'p') { PIXEL = !PIXEL; resize(); banner2('PIXELS · ' + (PIXEL ? PIXEL_H + 'p' : 'FULL')); }
   else if (k === 'b') { BLOOM = !BLOOM; banner2('GLOW · ' + (BLOOM ? 'ON' : 'OFF')); }
-  else if (e.key === '[') { PIXEL_H = Math.max(120, PIXEL_H - 60); resize(); }
-  else if (e.key === ']') { PIXEL_H = Math.min(1080, PIXEL_H + 60); resize(); }
   else if (/^[1-6]$/.test(e.key)) { rig.setMode(+e.key - 1); banner2('CAMERA · ' + MODES[rig.mode]); }
 });
 addEventListener('keyup', e => { if (KEYMAP[e.key]) simKeys[KEYMAP[e.key]] = false; });
@@ -433,7 +412,7 @@ const el = {
 rig.onMode = () => hud();
 function hud() {
   const z = zoneAt(Math.floor(S.z / SEGL) % NSEG);
-  el.mode.textContent = MODES[rig.mode] + (PIXEL ? '  ·  PIXEL ' + PIXEL_H + 'p' : '  ·  FULL RES')
+  el.mode.textContent = MODES[rig.mode]
     + (S.auto ? '  ·  AUTO ' + cruiseKmh() : '  ·  MANUAL') + (S.rainOn ? '' : '  ·  DRY');
   el.place.textContent = CITIES[z[3]].name + '  /  ' + (z[4] ? (LINK_NAMES[z[2]] || 'LINK') : ZONE_NAMES[z[2]]);
 }
