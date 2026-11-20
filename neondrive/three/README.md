@@ -23,7 +23,7 @@ This build puts the same city on the GPU. Measured here: **2.07ms a frame
 | `road.js` | integrates `curve`/`hill` into a world-space centreline and gives you a frame at any distance |
 | `city.js` | streams the world into GPU meshes a chunk at a time (64 segments each, ~28 live) |
 | `shaders.js` | the facade and road shaders — the old `wallTex()` logic moved to the fragment stage |
-| `camera.js` | the camera rig: six modes, mouse orbit, free flight |
+| `camera.js` | the camera rig: five modes, mouse orbit, free flight |
 | `main.js` | loop, driving, theme, HUD, the pixel-art downsample pass |
 
 ## Controls
@@ -33,8 +33,8 @@ The original's bindings, unchanged:
 `←` `→` steer · `↑` gas · `↓` brake · `A` autopilot · `V` cruise speed ·
 `R` or `W` weather · `L` headlight · `C` camera · `H` hints
 
-Added for the free camera only: `1`–`6` pick a camera directly (cockpit, chase,
-side, top, orbit, free), drag to look, wheel to zoom, and `B` to toggle glow.
+Added for the free camera only: `1`–`5` pick a camera directly (cockpit, chase,
+top, orbit, free), drag to look, wheel to zoom, and `B` to toggle glow.
 In the free camera, `WASD` / `QE` move.
 
 The art grid is sized from the shorter side of the screen and each art pixel
@@ -92,7 +92,7 @@ Ported from the original's `update()`, not reinvented:
 - **Autopilot** — picks between the two lanes, looks far enough ahead to stop
   from its current speed, eases off before a bend to keep sideways grip under
   0.7g, brakes smoothly to a red light and waits for people to finish crossing.
-  Cruise cycles 80/130/190/250 km/h on `V`. Idle ten seconds in manual and it
+  Cruise cycles 80/140/200/300 km/h on `V`. Idle ten seconds in manual and it
   takes over again.
 - **Traffic AI** — every car queues behind the one in front, brakes for its own
   red lights, flares its tail lights when slowing, and treats you as an obstacle.

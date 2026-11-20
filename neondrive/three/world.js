@@ -124,11 +124,12 @@ let fogK = 1;
 const RW = 7, SW = 3.2, NEAR = 0.7;
 let roll = 0;
 const BIKE_NAMES = ['LIGHT CYCLE', 'NO BIKE'];
-const CRUISE = [22, 36, 53, 69], CRUISE_KMH = [80, 130, 190, 250];   // autopilot cruise speeds, V cycles them
+const CRUISE_KMH = [80, 140, 200, 300];   // V cycles the autopilot cruise speeds
+const CRUISE = CRUISE_KMH.map(kmh => kmh / 3.6);
 let cruise = 2, wakeLock = null, lightOn = true;
 const DAY = 3600, DAY0 = rng() * DAY;                  // one slow day-night cycle per hour, starting anywhere in it
 let bikeStyle = 0, bikeGeo = {}, horizY = 0, crownK = 0;   // crownK: 0 below level 3, 1 riding the crown          // the chopper is the default ride
-const maxV = z => district(Math.floor(z / SEGL) % NSEG) === D.VAC ? 125 : 83;   // 300 km/h, and 450 in the vactrain
+const maxV = z => district(Math.floor(z / SEGL) % NSEG) === D.VAC ? 125 : CRUISE[3];   // 300 km/h, and 450 in the vactrain
 // the camera: 0 back/up/lat is the cockpit; fixed pins it beside the road (trackside); pitch tips the view down
 const CAM = { back: 0, up: 0, lat: 0, pitch: 0, fixed: null };
 const outside = () => CAM.back > 0.05 || CAM.fixed !== null || CAM.lat * CAM.lat > 0.01;

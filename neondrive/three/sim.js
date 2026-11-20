@@ -150,7 +150,7 @@ export function blendTheme(seg) {
   return { a, b, t, z, FOG, SKY, TH, wx };
 }
 
-export function setCruise(i) { S.cruise = ((i % 4) + 4) % 4; }
+export function setCruise(i) { S.cruise = ((i % CRUISE.length) + CRUISE.length) % CRUISE.length; }
 export function cruiseKmh() { return CRUISE_KMH[S.cruise]; }
 export function setAuto(on) {
   S.auto = on; S.idle = 0;
@@ -176,7 +176,7 @@ export function update(dt, keys) {
     const cur = laneInfo(S.autoLane), alt = laneInfo(other);
     const look = Math.max(80, S.speed * S.speed / 12 + 30);
     if (S.laneCool <= 0 && cur.d < look + 10 && alt.d > cur.d + 20 && !alt.blocked) { S.autoLane = other; S.laneCool = 2.5; }
-    let target = Math.min(maxV(S.z) * 0.86, CRUISE[S.cruise] * (district(n) === D.VAC ? 1.6 : 1));
+    let target = Math.min(maxV(S.z), CRUISE[S.cruise] * (district(n) === D.VAC ? 1.6 : 1));
     let kmax = 0;                                   // ease off before a bend: keep sideways grip under about 0.7g
     for (let i = 0; i < 40; i++) kmax = Math.max(kmax, Math.abs(curve[(n + i) % NSEG]));
     if (kmax > 0) target = Math.min(target, Math.sqrt(7 / (kmax / (SEGL * SEGL))));

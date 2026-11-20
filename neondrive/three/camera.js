@@ -1,9 +1,5 @@
 // camera.js — the free camera rig.
 //
-// The old build could not do this: it rastered one forward view and faked the
-// side shot by reprojecting that same buffer, which is why side view looked
-// wrong. Here the city is real geometry, so a camera is just a transform.
-
 import * as THREE from './vendor/three.module.js';
 import { frameAt } from './road.js';
 import { SEGL, NSEG, RW, D, district, TRANS, TRANS_AT } from './world.js';
@@ -19,7 +15,7 @@ function enclosed(dist) {
   return tri >= 0 && n >= TRANS[tri].s && n < TRANS[tri].e;
 }
 
-export const MODES = ['COCKPIT', 'CHASE', 'SIDE', 'TOP', 'ORBIT', 'FLY'];
+export const MODES = ['COCKPIT', 'CHASE', 'TOP', 'ORBIT', 'FLY'];
 
 const lerp = (a, b, t) => a + (b - a) * t;
 const damp = (a, b, l, dt) => lerp(a, b, 1 - Math.exp(-l * dt));
@@ -45,20 +41,20 @@ export class Rig {
       this.dragging = true; this.lx = e.clientX; this.ly = e.clientY;
       dom.setPointerCapture(e.pointerId);
       // dragging always takes you to a camera you can steer
-      if (this.mode !== 4 && this.mode !== 5) this.setMode(4);
+      if (this.mode !== 3 && this.mode !== 4) this.setMode(3);
     });
     dom.addEventListener('pointerup', e => { this.dragging = false; });
     dom.addEventListener('pointermove', e => {
       if (!this.dragging) return;
       const dx = (e.clientX - this.lx) * 0.006, dy = (e.clientY - this.ly) * 0.006;
       this.lx = e.clientX; this.ly = e.clientY;
-      if (this.mode === 5) { this.flyYaw -= dx; this.flyPitch = clampP(this.flyPitch - dy); }
+      if (this.mode === 4) { this.flyYaw -= dx; this.flyPitch = clampP(this.flyPitch - dy); }
       else { this.tYaw -= dx; this.tPitch = clampP(this.tPitch + dy); }
     });
     dom.addEventListener('wheel', e => {
       e.preventDefault();
       this.tDist = Math.min(400, Math.max(1.5, this.tDist * Math.exp(e.deltaY * 0.0012)));
-      if (this.mode !== 4 && this.mode !== 5) this.setMode(4);
+      if (this.mode !== 3 && this.mode !== 4) this.setMode(3);
     }, { passive: false });
     // the camera no longer binds its own keys: main.js owns the keyboard so the
     // original's bindings stay exactly as they were
@@ -69,13 +65,13 @@ export class Rig {
   setMode(m) {
     const prev = this.mode;
     this.mode = m;
-    if (m === 5 && prev !== 5) {                 // entering free flight: start where we are
+    if (m === 4 && prev !== 4) {                 // entering free flight: start where we are
       this.fly.copy(this.cam.position);
       const d = new THREE.Vector3(); this.cam.getWorldDirection(d);
       this.flyYaw = Math.atan2(-d.x, -d.z);
       this.flyPitch = Math.asin(THREE.MathUtils.clamp(d.y, -1, 1));
     }
-    if (m === 4) { this.tYaw = this.yaw; this.tPitch = this.pitch; this.tDist = this.dist; }
+    if (m === 3) { this.tYaw = this.yaw; this.tPitch = this.pitch; this.tDist = this.dist; }
     this.onMode && this.onMode(MODES[m]);
   }
 
@@ -87,7 +83,7 @@ export class Rig {
     const bx = f.x + f.rx * bike.lat, by = f.y, bz = f.z + f.rz * bike.lat;
     const head = f.th;
 
-    if (this.mode === 5) {                        // FLY: detached, WASD + mouse
+    if (this.mode === 4) {                        // FLY: detached, WASD + mouse
       const sp = (this.keys.ShiftLeft ? 160 : 45) * dt;
       const cy = Math.cos(this.flyYaw), sy = Math.sin(this.flyYaw);
       const fwd = new THREE.Vector3(-sy * Math.cos(this.flyPitch), Math.sin(this.flyPitch), -cy * Math.cos(this.flyPitch));
@@ -118,12 +114,7 @@ export class Rig {
       const ahead = frameAt(bike.dist + 26, {});
       lookAt.set(ahead.x, ahead.y + 2.2, ahead.z);
       roll = bike.roll * 0.85;   // the chase view leans with it too
-    } else if (this.mode === 2) {                 // SIDE — a real camera, properly beside the bike
-      const side = 17, lift = 3.4;
-      want.set(bx + f.rx * side, by + lift, bz + f.rz * side);
-      lookAt.set(bx, by + 1.5, bz);
-      fov = 55;
-    } else if (this.mode === 3) {                 // TOP
+    } else if (this.mode === 2) {                 // TOP
       want.set(bx, by + 46, bz);
       lookAt.set(bx + Math.sin(head) * 18, by, bz + Math.cos(head) * 18);
       fov = 60;
@@ -144,7 +135,7 @@ export class Rig {
       lat = Math.max(-(BORE_W - 1.4), Math.min(BORE_W - 1.4, lat));
       const maxUp = BORE_H - 1.9;
       const up = Math.min(dy, maxUp);
-      if (this.mode === 3) fwd = Math.min(fwd, -5);         // the top camera becomes a low chase
+      if (this.mode === 2) fwd = Math.min(fwd, -5);         // the top camera becomes a low chase
       want.set(bx + f.rx * lat + Math.sin(head) * fwd,
                by + Math.max(1.1, up),
                bz + f.rz * lat + Math.cos(head) * fwd);
