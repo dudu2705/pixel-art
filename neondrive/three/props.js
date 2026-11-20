@@ -3,10 +3,11 @@
 // built per chunk alongside the buildings.
 
 import * as THREE from './vendor/three.module.js';
-import { SEGL, NSEG, RW, SW, blocks, SIDE, ELEV, LAYERED, BASE, district, D, hash } from './world.js';
+import { SEGL, NSEG, RW, SW, LH, NEON, blocks, SIDE, ELEV, LAYERED, BASE, TRANS, TRANS_AT, district, D, hash, mix } from './world.js';
 import { frameAt } from './road.js';
 import { integerHash } from './shaders.js';
 import { EMITTER_LAYER } from './glow.js';
+import { makeEffectMaterial } from './effects.js';
 
 // ---------- shared glsl ----------
 const COMMON = /* glsl */`
@@ -18,7 +19,7 @@ const COMMON = /* glsl */`
 `;
 
 // instanced, oriented, box-or-quad vertex shader shared by every prop
-const PROP_VERT = /* glsl */`
+const propVertex = (slope = '') => /* glsl */`
   attribute vec3 iPos;
   attribute vec3 iSize;
   attribute float iRot;
@@ -28,12 +29,16 @@ const PROP_VERT = /* glsl */`
   void main() {
     vCol = iCol; vMeta = iMeta; vUv = uv; vNL = normal;
     vec3 p = position * iSize;
+    ${slope}
     float c = cos(iRot), s = sin(iRot);
     vec3 r = vec3(c * p.x + s * p.z, p.y, -s * p.x + c * p.z) + iPos;
     vWorld = r;
     gl_Position = projectionMatrix * viewMatrix * vec4(r, 1.0);
   }
 `;
+
+const PROP_VERT = propVertex();
+const TUNNEL_VERT = propVertex('p.y += (iMeta.y > 0.5 ? position.z : -position.x) * iMeta.w;');
 
 const fogTail = /* glsl */`
     float d = distance(vWorld, uCam);
@@ -148,8 +153,9 @@ const WATER_FRAG = /* glsl */`
   varying vec3 vCol; varying vec4 vMeta; varying vec2 vUv; varying vec3 vWorld; varying vec3 vNL;
   uniform vec3 uFog, uCam; uniform float uFogNear, uFogFar, uTime;
   void main() {
-    float st = mod(vUv.y * 24.0 + uTime * 14.0 + sin(vUv.x * 22.0) * 2.0, 3.0);
-    float k = st < 0.6 ? 1.0 : 0.6 + 0.15 * sin(vUv.x * 30.0);
+    float w = vMeta.x + (1.0 - vUv.x) * ${SEGL}.0, v = vUv.y * vMeta.z;
+    float st = mod(v * 0.9 + uTime * 14.0 + sin(w * 3.0) * 2.0, 3.0);
+    float k = st < 0.6 ? 1.0 : 0.6 + 0.15 * sin(w * 5.0 + v);
     vec3 col = vec3(0.59, 0.82, 0.90) * k;
     ${fogTail}
   }
@@ -158,52 +164,40 @@ const WATER_FRAG = /* glsl */`
 // tunnel lining: tiles, grout, a cyan strip and lamp panels on the ceiling
 const TUNNEL_FRAG = /* glsl */`
   precision highp float;
-  varying vec3 vCol; varying vec4 vMeta; varying vec2 vUv; varying vec3 vWorld; varying vec3 vNL;
+  varying vec4 vMeta; varying vec2 vUv; varying vec3 vWorld;
   uniform vec3 uFog, uCam; uniform float uFogNear, uFogFar, uTime;
   void main() {
-    float mode = vMeta.x;      // 0 plain bore, 1 climbing, 2 descending, 3 vactrain
-    float kind = vMeta.y;      // 0 wall, 1 ceiling
-    float u = vUv.x * vMeta.z, v = vUv.y * vMeta.w;
-    bool up = mode < 1.5;
-    vec3 accent = mode > 2.5 ? vec3(0.31, 0.86, 1.0)
-                : up ? vec3(0.31, 1.0, 0.59) : vec3(1.0, 0.67, 0.24);
+    float mode = vMeta.x;
+    bool ceiling = vMeta.y > 0.5, lift = mode > 0.5 && mode < 2.5, up = mode < 1.5;
+    float w = vMeta.z + (1.0 - (ceiling ? vUv.y : vUv.x)) * ${SEGL}.0;
+    float v = vUv.y * 6.5;
+    vec3 lc = up ? vec3(80, 255, 150) : vec3(255, 170, 60);
     vec3 col;
-
-    if (mode > 2.5) {                                   // vactrain: a dark pipe with light rings
-      if (kind > 0.5) col = mod(u, 28.0) < 0.8 ? accent * 1.6 : vec3(0.047, 0.055, 0.086);
-      else col = mod(u, 28.0) < 0.8 ? accent * 1.5 : vec3(0.047, 0.055, 0.086);
-    } else if (mode > 0.5) {                            // the level-change bore
-      if (kind > 0.5) {
-        float lamp = step(mod(u, 8.0), 2.5) * step(abs(vUv.y - 0.5), 0.09);
-        col = lamp > 0.5 ? accent * 1.5 : vec3(0.12, 0.125, 0.17);
-      } else {
-        col = vec3(0.133, 0.141, 0.188);
-        bool seam = mod(u, 3.0) < 0.1 || mod(v, 1.6) < 0.06;
-        if (seam) col = vec3(0.078, 0.086, 0.118);
-        if (v > 4.6 && v < 4.85) col = accent * 1.4;    // the guide stripe
-        // chevrons pointing the way you are going, sliding along the wall
-        if (v > 1.4 && v < 3.4) {
-          float uu = mod(u, 6.0);
-          float vv = (v - 2.4) * (up ? 1.0 : -1.0);
-          if (abs(uu - 3.0 - abs(vv) * 1.2) < 0.35) {
-            float k = mod(uTime * 3.0 - u * 0.3, 1.0) < 0.5 ? 1.0 : 0.35;
-            col = accent * k * 1.3;
-          }
-        }
-      }
-    } else {                                            // the plain tiled underpass
-      if (kind > 0.5) {
-        float lamp = step(mod(u, 8.0), 2.5) * step(abs(vUv.y - 0.5), 0.09);
-        col = lamp > 0.5 ? vec3(1.0, 0.77, 0.47) * 1.5 : vec3(0.17, 0.16, 0.21);
-      } else {
-        if (v > 4.55 && v < 4.85) col = vec3(0.0, 0.78, 1.0) * 1.4;
-        else if (v < 0.8) col = mod(u + v * 1.5, 1.2) < 0.6 ? vec3(0.75, 0.59, 0.12) : vec3(0.08, 0.07, 0.09);
-        else {
-          bool grout = mod(v, 1.0) < 0.08 || mod(u, 2.0) < 0.08;
-          col = grout ? vec3(0.14, 0.13, 0.17) : vec3(0.25, 0.235, 0.29);
-        }
-      }
+    if (mode > 2.5) {
+      bool ring = mod(w, 28.0) < 0.8;
+      bool seam = mod(w, 4.0) < 0.08 || mod(v, 1.5) < 0.05;
+      if (ring) col = vec3(80, 220, 255) * (ceiling ? 1.0 : 0.7 + 0.3 * sin(uTime * 8.0));
+      else if (ceiling) col = vec3(12, 14, 22);
+      else if (v > 3.1 && v < 3.25) col = vec3(40, 90, 160);
+      else col = seam ? vec3(8, 9, 14) : vec3(16, 18, 28);
+    } else if (ceiling) {
+      float across = abs(vUv.x - 0.5) * 16.4;
+      vec3 lamp = lift ? (up ? vec3(120, 255, 190) : vec3(255, 190, 110)) : vec3(255, 196, 120);
+      if (across < 0.6) col = mod(w, 8.0) < 2.5 ? lamp : vec3(30, 26, 36);
+      else if (mod(across, 2.5) < max(0.12, fwidth(across))) col = vec3(28, 26, 34);
+      else col = lift ? vec3(30, 32, 44) : vec3(44, 42, 54);
+    } else if (lift) {
+      bool seam = mod(w, 3.0) < 0.1 || mod(v, 1.6) < 0.06;
+      col = seam ? vec3(20, 22, 30) : vec3(34, 36, 48);
+      if (v > 4.6 && v < 4.85) col = lc;
+      if (v > 1.4 && v < 3.4 && abs(mod(w, 6.0) - 3.0 + abs(v - 2.4) * 1.2) < 0.35)
+        col = lc * (fract(uTime * 3.0 - w * 0.3) < 0.5 ? 1.0 : 0.35);
+    } else {
+      if (v > 4.55 && v < 4.85) col = vec3(0, 200, 255);
+      else if (v < 0.8) col = mod(w + v * 1.5, 1.2) < 0.6 ? vec3(190, 150, 30) : vec3(20, 18, 24);
+      else col = mod(v, 1.0) < 0.08 || mod(w, 2.0) < 0.08 ? vec3(36, 34, 44) : vec3(64, 60, 74);
     }
+    col /= 255.0;
     ${fogTail}
   }
 `;
@@ -215,7 +209,8 @@ const GLASS_FRAG = /* glsl */`
   varying vec3 vCol; varying vec4 vMeta; varying vec2 vUv; varying vec3 vWorld; varying vec3 vNL;
   uniform vec3 uFog, uCam; uniform float uFogNear, uFogFar, uTime;
   void main() {
-    float u = vUv.x * vMeta.z, v = vUv.y * vMeta.w;
+    bool ceiling = vMeta.y > 0.5;
+    float u = vMeta.z + (1.0 - (ceiling ? vUv.y : vUv.x)) * ${SEGL}.0, v = vUv.y * 6.5;
     vec3 col;
     if (mod(u, 6.0) < 0.35) col = vec3(0.27, 0.33, 0.39);               // steel ribs
     else if (v > 4.4 && v < 4.65) col = vec3(0.0, 0.86, 1.0) * 1.3;
@@ -231,14 +226,160 @@ const GLASS_FRAG = /* glsl */`
   }
 `;
 
+const TOWER_FRAG = /* glsl */`
+  precision highp float;
+  precision highp int;
+  ${integerHash}
+  varying vec3 vCol, vWorld, vNL;
+  varying vec4 vMeta;
+  varying vec2 vUv;
+  uniform vec3 uFog, uCam;
+  uniform float uFogNear, uFogFar;
+  out vec4 fragColor;
+  void main() {
+    float u = (1.0 - vUv.x) * vMeta.z + vMeta.x;
+    float v = vUv.y * vMeta.y;
+    vec3 col = vCol;
+    if (abs(vNL.y) < 0.5) {
+      vec2 grid = vec2(u / 2.2, v / 1.8);
+      vec2 cell = fract(grid);
+      if (vMeta.w < 0.5 && mod(v, 9.0) < 0.35) col = vec3(0, 200, 255) / 255.0;
+      else if (cell.x > 0.12 && cell.x < 0.88 && cell.y > 0.2 && cell.y < 0.8) {
+        ivec2 id = ivec2(floor(grid));
+        bool lit = hsh(id.x, id.y, 91) < 0.3;
+        vec3 window = hsh(id.x, id.y, 92) < 0.6 ? vec3(255, 200, 120) : vec3(120, 220, 255);
+        col = (lit ? window * 0.7 : vec3(14, 18, 30)) / 255.0;
+      }
+    }
+    float d = max(0.0, -(viewMatrix * vec4(vWorld, 1.0)).z);
+    fragColor = vec4(mix(col, uFog, smoothstep(uFogNear, uFogFar, d) * 0.97), 1.0);
+  }
+`;
+
+const CAR_FRAG = /* glsl */`
+  precision highp float;
+  varying vec3 vCol, vWorld, vNL;
+  varying vec4 vMeta;
+  varying vec2 vUv;
+  uniform vec3 uFog, uCam;
+  uniform float uFogNear, uFogFar;
+  vec3 unpackRGB(float rgb) {
+    return vec3(floor(rgb / 65536.0), floor(mod(rgb, 65536.0) / 256.0), mod(rgb, 256.0)) / 255.0;
+  }
+  void main() {
+    float u = vUv.x, v = vUv.y;
+    vec3 col = vCol;
+    bool rear = vNL.z < -0.5, front = vNL.z > 0.5;
+    if (rear || front) {
+      vec3 light = rear ? unpackRGB(vMeta.z) : vec3(230, 240, 255) / 255.0;
+      if (v < 0.13) col = (u < 0.2 || u > 0.8 ? vec3(6, 6, 8) : vec3(10, 10, 14)) / 255.0;
+      else if (v < 0.24) col = vCol * 0.55;
+      else if (v < 0.33 && u > 0.4 && u < 0.6) col = (rear ? vec3(170, 170, 150) : vec3(30, 30, 40)) / 255.0;
+      else if (v > 0.36 && v < 0.47) col = u < 0.28 || u > 0.72 ? light : rear ? light * 0.45 : vec3(20, 20, 28) / 255.0;
+      else if (v < 0.58) col = vCol * (v > 0.54 ? 1.7 : 1.0);
+      else if (v > 0.62 && v < 0.92 && u > 0.06 && u < 0.94)
+        col = (mod(u * 3.0 + v * 2.0 + 0.3, 1.0) < 0.14 ? vec3(70, 46, 100) : vec3(16, 18, 30)) / 255.0;
+      else col = vCol * 1.15;
+    } else if (abs(vNL.x) > 0.5) {
+      if (v < 0.13) col = vec3(6, 6, 8) / 255.0;
+      else if (v > 0.62 && v < 0.92 && u > 0.19 && u < 0.81 && abs(u - 0.5) > 0.045)
+        col = vec3(16, 18, 30) / 255.0;
+      else col *= 0.8;
+    }
+    ${fogTail}
+  }
+`;
+
+const WHEEL_FRAG = /* glsl */`
+  precision highp float;
+  varying vec3 vWorld;
+  varying vec4 vMeta;
+  varying vec2 vUv;
+  uniform float uTime, uFogNear, uFogFar;
+  uniform vec3 uFog;
+  const float TAU = 6.28318530718;
+  const vec3 NEON[6] = vec3[6](${NEON.map(c => 'vec3(' + c.join(', ') + ') / 255.0').join(', ')});
+  out vec4 fragColor;
+  void main() {
+    vec2 p = (vUv - 0.5) * 34.0;
+    float radius = length(p);
+    float angle = atan(p.y, p.x);
+    float spin = uTime * 0.12 + vMeta.x;
+    float width = max(0.04, fwidth(p.x) * 0.6);
+    vec3 color = vec3(80, 80, 110) / 255.0;
+    bool spoke = radius < 14.0 && abs(sin((angle - spin) * 8.0)) * radius < width;
+    bool rim = abs(radius - 14.0) < width;
+    if (rim) {
+      float phase = fract(angle / TAU);
+      bool on = mod(phase * 16.0 - uTime * 6.0, 3.0) < 1.0;
+      color = on ? NEON[int(phase * 6.0)] : vec3(90, 70, 110) / 255.0;
+    }
+    float cupSize = TAU / 12.0;
+    float cup = floor((angle - spin) / cupSize + 0.5);
+    float anchor = spin + cup * cupSize;
+    vec2 delta = p - vec2(cos(anchor), sin(anchor)) * 14.0;
+    bool gondola = abs(delta.x) < 0.9 && delta.y < -0.2 && delta.y > -1.6;
+    if (gondola) color = NEON[int(mod(cup, 6.0))];
+    if (!(gondola || rim || spoke)) discard;
+    float d = max(0.0, -(viewMatrix * vec4(vWorld, 1.0)).z);
+    fragColor = vec4(mix(color, uFog, smoothstep(uFogNear, uFogFar, d) * 0.97), 1.0);
+  }
+`;
+
+const SKYWALK_FRAG = /* glsl */`
+  precision highp float;
+  precision highp int;
+  ${integerHash}
+  varying vec3 vCol, vWorld, vNL;
+  varying vec4 vMeta;
+  varying vec2 vUv;
+  uniform float uTime, uFogNear, uFogFar;
+  uniform vec3 uFog;
+  out vec4 fragColor;
+  void main() {
+    float x = (vUv.x - 0.5) * ${2 * (RW + SW + 22)};
+    int row = int(floor(vUv.y * 6.0));
+    int seed = int(vMeta.x);
+    vec3 col;
+    if (vNL.y < -0.5) {
+      bool lamp = abs(vUv.y - 0.5) < 0.12 && mod(x, 4.0) < 0.5;
+      col = (lamp ? vec3(255, 210, 150) : vec3(22, 20, 30)) / 255.0;
+    } else if (vNL.y > 0.5) {
+      if (vUv.y < 0.1 || vUv.y > 0.9) col = vec3(120, 140, 160) / 255.0;
+      else if (vMeta.y < 0.5) {
+        float dir = row % 2 == 0 ? -1.0 : 1.0;
+        float h = hsh(int(floor((x + uTime * 1.1 * dir) / 0.8)), row, seed);
+        col = h < 0.04 ? vCol : (h < 0.3 ? vec3(16, 14, 20) : vec3(48, 46, 60)) / 255.0;
+      } else {
+        float dir = row < 3 ? 1.0 : -1.0;
+        float h = hsh(int(floor((x - uTime * 14.0 * dir) / 6.0)), row, seed);
+        vec3 light = dir > 0.0 ? vec3(255, 50, 60) : vec3(230, 235, 255);
+        col = (row == 3 && mod(x * 0.5, 2.0) < 1.0 ? vec3(150, 150, 160)
+               : h < 0.12 ? light : vec3(30, 28, 38)) / 255.0;
+      }
+    } else col = vUv.y < 0.15 ? vCol : vec3(38, 36, 50) / 255.0;
+    float distanceAhead = max(0.0, -(viewMatrix * vec4(vWorld, 1.0)).z);
+    fragColor = vec4(mix(col, uFog, smoothstep(uFogNear, uFogFar, distanceAhead) * 0.97), 1.0);
+  }
+`;
+
 export function makeMaterials(uniforms) {
   const mk = frag => new THREE.ShaderMaterial({ vertexShader: PROP_VERT, fragmentShader: frag, uniforms });
-  const two = frag => new THREE.ShaderMaterial({ vertexShader: PROP_VERT, fragmentShader: frag, uniforms, side: THREE.DoubleSide });
+  const two = (frag, vert = PROP_VERT) => new THREE.ShaderMaterial({ vertexShader: vert, fragmentShader: frag, uniforms, side: THREE.DoubleSide });
   return {
     sign: new THREE.ShaderMaterial({ vertexShader: PROP_VERT, fragmentShader: SIGN_FRAG, uniforms, glslVersion: THREE.GLSL3 }),
-    emit: two(EMIT_FRAG), metal: mk(METAL_FRAG),
+    emit: two(EMIT_FRAG), metal: mk(METAL_FRAG), car: mk(CAR_FRAG),
     foliage: mk(FOLIAGE_FRAG), cloth: two(CLOTH_FRAG), water: two(WATER_FRAG),
-    tunnel: two(TUNNEL_FRAG), glass: two(GLASS_FRAG), rail: two(RAIL_FRAG),
+    tunnel: two(TUNNEL_FRAG, TUNNEL_VERT), glass: two(GLASS_FRAG, TUNNEL_VERT), rail: two(RAIL_FRAG),
+    effect: makeEffectMaterial(uniforms),
+    track: two(METAL_FRAG, TUNNEL_VERT),
+    wheel: new THREE.ShaderMaterial({
+      vertexShader: PROP_VERT, fragmentShader: WHEEL_FRAG, uniforms, side: THREE.DoubleSide, glslVersion: THREE.GLSL3,
+    }),
+    tower: new THREE.ShaderMaterial({ vertexShader: PROP_VERT, fragmentShader: TOWER_FRAG, uniforms, glslVersion: THREE.GLSL3 }),
+    skywalk: new THREE.ShaderMaterial({
+      vertexShader: PROP_VERT, fragmentShader: SKYWALK_FRAG, uniforms, glslVersion: THREE.GLSL3,
+    }),
   };
 }
 
@@ -254,6 +395,7 @@ export const unitPlane = new THREE.PlaneGeometry(1, 1);
 // only applies yaw, so anything horizontal needs the tilt baked into the mesh
 export const unitPlaneFlat = new THREE.PlaneGeometry(1, 1).rotateX(-Math.PI / 2);
 export const unitCyl = new THREE.CylinderGeometry(0.5, 0.5, 1, 8).translate(0, 0.5, 0);
+export const unitDome = new THREE.SphereGeometry(0.5, 28, 12, 0, 2 * Math.PI, 0, Math.PI / 2);
 export const unitSphere = new THREE.SphereGeometry(0.5, 10, 7);
 export const unitTorus = new THREE.TorusGeometry(0.5, 0.035, 5, 28);
 export const unitCone = new THREE.ConeGeometry(0.5, 1, 8).translate(0, 0.5, 0);
@@ -287,8 +429,11 @@ export class Batch {
 }
 
 // ---------- build every prop in one chunk ----------
+const LAMPLESS = new Set([D.TUNNEL, D.VAC, D.TUBE, D.FERRY, D.SALT, D.BRIDGE, D.MARKET, D.GARDENS, D.SHRINE, D.HIGHWAY, D.RAMP]);
+
 export function buildProps(n0, n1, mats) {
   const signs = new Batch(unitBox);
+  const domes = new Batch(unitDome), coils = new Batch(unitSphere), arcs = new Batch(unitPlane);
   const emit = new Batch(unitBox), metal = new Batch(unitBox);
   const f = {};
 
@@ -332,31 +477,48 @@ export function buildProps(n0, n1, mats) {
       for (let i = 0; i < 6; i++)
         emit.add([rx + (i - 2.5) * 2.4, roofY + 2.2, rz], [0.4, 0.4, 0.4], 0, [255, 190, 110], [i, 0.25]);
     }
-    if (B.landmark) {                                     // antenna mast with an aviation light
-      const mh = 10 + hash(B.id, 1, 5) * 22;
+    if (B.style === D.BAZAAR || B.style === D.CITADEL) {
+      const at = wall + (B.style === D.BAZAAR ? 6 : 5);
+      const x = f.x + f.rx * sg * at, z = f.z + f.rz * sg * at;
+      if (B.style === D.BAZAAR) {
+        domes.add([x, roofY, z], [10, 11.5, 10], f.th, B.seed & 1 ? [210, 170, 70] : [50, 170, 170], [0, 0]);
+        metal.add([x, roofY + 5.75, z], [0.14, 2.25, 0.14], f.th, [220, 190, 90], [0, 0]);
+        emit.add([x, roofY + 8, z], [0.13, 0.13, 0.13], f.th, [255, 210, 120], [0, 0.4, 1.2, 40]);
+      } else {
+        metal.add([x, roofY, z], [1.2, 9, 1.2], f.th, [50, 54, 70], [0, 0]);
+        for (let i = 1; i < 6; i++) metal.add([x, roofY + i * 1.5, z], [1.8, 0.15, 1.8], f.th, [160, 120, 60], [0, 0]);
+        coils.add([x, roofY + 9.8, z], [3.2, 1.4, 3.2], f.th, [120, 130, 150], [0, 0]);
+        arcs.add([x, roofY + 9.8, z], [28, 14, 1], 0, [190, 220, 255], [2, B.id]);
+        emit.add([x, roofY + 10.45, z], [0.01, 0.01, 0.01], f.th, [150, 190, 255], [B.id, 0.25, 4, 52]);
+      }
+    } else if (B.landmark) {
+      const mh = Math.max(0, Math.min(10 + hash(B.id, 1, 5) * 22, LH[2] - 3 - B.h));
       metal.add([rx, roofY, rz], [0.6, mh, 0.6], f.th, [40, 38, 52], [0, 0]);
       emit.add([rx, roofY + mh, rz], [1.0, 1.0, 1.0], 0, [255, 50, 50], [B.id, 0.8]);
     }
   }
 
-  // --- street lamps down both kerbs, same spacing and colours as the original ---
+  // --- street lamps down both kerbs ---
   for (let n = n0; n < n1; n++) {
-    if (n % 6 !== 0) continue;
-    const d = district(n);
-    if (d === D.TUNNEL || d === D.VAC || d === D.TUBE) continue;
+    const d = district(n), transition = TRANS[TRANS_AT[n]];
+    const onCrown = LAYERED[n] && ELEV[n] > LH[1] + 5;
+    const lampEvery = onCrown && ![D.VOLCANO, D.CLOUDS, D.PONTOON].includes(d) ? 27 : 9;
+    if (n % lampEvery !== 0 || LAMPLESS.has(d) ||
+        (transition && n >= transition.s && n < transition.e)) continue;
     frameAt(n * SEGL, f);
     for (const sg of [-1, 1]) {
       const px = f.x + f.rx * sg * (RW + 0.6), pz = f.z + f.rz * sg * (RW + 0.6);
-      metal.add([px, f.y, pz], [0.28, 7, 0.28], f.th, [26, 22, 36], [0, 0]);
+      metal.add([px, f.y, pz], [0.18, 7, 0.18], f.th, [26, 22, 36], [0, 0]);
       const ax = f.x + f.rx * sg * (RW - 2), az = f.z + f.rz * sg * (RW - 2);
-      metal.add([(px + ax) / 2, f.y + 6.8, (pz + az) / 2], [2.9, 0.26, 0.26], f.th, [26, 22, 36], [0, 0]);
+      metal.add([(px + ax) / 2, f.y + 7, (pz + az) / 2], [2.7, 0.2, 0.2], f.th, [26, 22, 36], [0, 0]);
       const lc = d === D.DOCKS ? [255, 150, 60] : n % 18 === 0 ? [255, 70, 200] : [120, 240, 255];
-      emit.add([ax, f.y + 6.35, az], [0.55, 0.22, 0.55], f.th, lc, [n, 0.55]);
+      emit.add([ax, f.y + 6.78, az], [1, 0.22, 0.4], f.th, mix(lc, [255, 255, 255], 0.5), [n, 0]);
+      emit.add([ax, f.y + 6.79, az], [0.01, 0.01, 0.01], f.th, lc, [n, 0.55, 1.8, 28]);
     }
   }
 
   const out = [];
-  for (const [b, m] of [[signs, mats.sign], [emit, mats.emit], [metal, mats.metal]]) {
+  for (const [b, m] of [[signs, mats.sign], [emit, mats.emit], [metal, mats.metal], [domes, mats.metal], [coils, mats.metal], [arcs, mats.effect]]) {
     const mesh = b.build(m);
     if (mesh) out.push(mesh);
   }

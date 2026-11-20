@@ -7,6 +7,7 @@
 let T = 0;
 export function setTime(t) { T = t; }
 export function getTime() { return T; }
+export const coasterHeight = n => 20 + 12 * Math.sin(n * 0.09) + 6 * Math.sin(n * 0.23 + 1);
 
 const SEGL = 4, DRAW = 120;
 

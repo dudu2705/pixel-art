@@ -26,7 +26,7 @@ export class Glow {
       vertexShader: `
         attribute vec3 iCenter;
         attribute vec4 iLight;
-        attribute float iRadius;
+        attribute vec2 iRadius;
         uniform vec2 uSize, uFogRange;
         flat out vec2 vCenter;
         flat out vec4 vLight;
@@ -40,7 +40,7 @@ export class Glow {
           }
           vec4 clip = projectionMatrix * view;
           vCenter = floor((clip.xy / clip.w * 0.5 + 0.5) * uSize + 0.5);
-          vRadius = clamp(round(iRadius * projectionMatrix[1][1] * uSize.y * 0.5 / vDepth), 4.0, 60.0);
+          vRadius = clamp(round(iRadius.x * projectionMatrix[1][1] * uSize.y * 0.5 / vDepth), 4.0, iRadius.y);
           vLight = vec4(iLight.rgb, iLight.a * (1.0 - smoothstep(uFogRange.x, uFogRange.y, vDepth) * 0.97));
           vec2 p = vCenter + position.xy * vRadius;
           gl_Position = vec4(p / uSize * 2.0 - 1.0, 0.0, 1.0);
@@ -75,7 +75,7 @@ export class Glow {
   allocate(capacity) {
     this.center = new THREE.InstancedBufferAttribute(new Float32Array(capacity * 3), 3).setUsage(THREE.DynamicDrawUsage);
     this.light = new THREE.InstancedBufferAttribute(new Float32Array(capacity * 4), 4).setUsage(THREE.DynamicDrawUsage);
-    this.radius = new THREE.InstancedBufferAttribute(new Float32Array(capacity), 1).setUsage(THREE.DynamicDrawUsage);
+    this.radius = new THREE.InstancedBufferAttribute(new Float32Array(capacity * 2), 2).setUsage(THREE.DynamicDrawUsage);
     this.geometry.setAttribute('iCenter', this.center);
     this.geometry.setAttribute('iLight', this.light);
     this.geometry.setAttribute('iRadius', this.radius);
@@ -109,7 +109,8 @@ export class Glow {
         if (strength < 1 / 6) continue;
         this.center.setXYZ(count, iPos.getX(i), iPos.getY(i) + height / 2, iPos.getZ(i));
         this.light.setXYZW(count, iCol.getX(i), iCol.getY(i), iCol.getZ(i), strength);
-        this.radius.setX(count, sign ? 2.2 : Math.min(3.5, 4 * Math.max(iSize.getX(i), height, iSize.getZ(i))));
+        const radius = sign ? 2.2 : iMeta.getZ(i) || Math.min(3.5, 4 * Math.max(iSize.getX(i), height, iSize.getZ(i)));
+        this.radius.setXY(count, radius, sign ? 60 : iMeta.getW(i) || 60);
         count++;
       }
     }

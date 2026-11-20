@@ -3,7 +3,7 @@
 // streets are populated exactly as the original populated them.
 
 import * as THREE from './vendor/three.module.js';
-import { SEGL, NSEG, LEN, RW, SW, LH, D, district, train, airOk, LAYERED, ELEV, IX, IXZ, nextIx } from './world.js';
+import { SEGL, NSEG, LEN, RW, SW, LH, D, district, train, skyT, ST_H, ST_LAT, ST_LEN, TRANS_AT, zoneAt, hash, coasterHeight, NEON, airOk, LAYERED, ELEV, IX, IXZ, nextIx } from './world.js';
 import { CARS, PEDS, FLYERS, crossers, S } from './sim.js';
 import { frameAt } from './road.js';
 import { unitBox, unitSphere } from './props.js';
@@ -39,7 +39,7 @@ function push(p, pos, size, rot, col, meta) {
   p.a.iSize.array.set(size, i * 3);
   p.a.iRot.array[i] = rot;
   p.a.iCol.array.set([col[0] / 255, col[1] / 255, col[2] / 255], i * 3);
-  p.a.iMeta.array.set([meta[0], meta[1] || 0, 0, 0], i * 4);
+  p.a.iMeta.array.set([meta[0], meta[1] || 0, meta[2] || 0, meta[3] || 0], i * 4);
 }
 
 function flush(p) {
@@ -51,16 +51,30 @@ function flush(p) {
 // shortest signed distance from camZ to z around the loop
 function rel(z, camZ) { return ((z - camZ) % LEN + LEN * 1.5) % LEN - LEN / 2; }
 
+function makeCarBody() {
+  const geometry = new THREE.BoxGeometry(1, 1, 1, 1, 14, 1).translate(0, 0.5, 0);
+  const pos = geometry.getAttribute('position');
+  for (let i = 0; i < pos.count; i++) {
+    const v = pos.getY(i);
+    if (v <= 0.58) continue;
+    const t = (v - 0.58) / 0.42;
+    pos.setX(i, pos.getX(i) * (0.8 - 0.37 * t));
+    pos.setZ(i, pos.getZ(i) * (1 - 0.55 * t));
+  }
+  return geometry;
+}
+
 export class Traffic {
   constructor(scene, mats) {
     this.body = pool(unitBox, 420, mats.metal);
+    this.car = pool(makeCarBody(), 420, mats.car);
     this.glow = pool(unitBox, 2600, mats.emit);
     this.ped = pool(unitBox, 900, mats.metal);
     this.umb = pool(unitBox, 460, mats.emit);
     this.flyer = pool(unitBox, 420, mats.metal);
     this.lamp = pool(unitSphere, 300, mats.emit);
-    scene.add(this.body.mesh, this.glow.mesh, this.ped.mesh, this.umb.mesh, this.flyer.mesh, this.lamp.mesh);
-    this.pools = [this.body, this.glow, this.ped, this.umb, this.flyer, this.lamp];
+    scene.add(this.car.mesh, this.body.mesh, this.glow.mesh, this.ped.mesh, this.umb.mesh, this.flyer.mesh, this.lamp.mesh);
+    this.pools = [this.car, this.body, this.glow, this.ped, this.umb, this.flyer, this.lamp];
   }
 
   update(camZ, dt, time) {
@@ -77,20 +91,21 @@ export class Traffic {
       frameAt(c.z, f);
       const x = f.x + f.rx * c.x, z = f.z + f.rz * c.x;
       const yaw = f.th + (c.dir < 0 ? Math.PI : 0);
-      const len = 4.0, wid = 1.75, hgt = 1.15;
-      push(this.body, [x, f.y, z], [wid, hgt, len], yaw, c.body, [c.z]);
-      push(this.body, [x, f.y + hgt, z], [wid * 0.82, 0.62, len * 0.5], yaw, c.body, [c.z]);   // cabin
+      const len = 4, wid = 1.9, hgt = 1.35;
+      const tail = c.tail.map(Math.round);
+      const tailRGB = tail[0] * 65536 + tail[1] * 256 + tail[2];
+      push(this.car, [x, f.y, z], [wid, hgt, len], yaw, c.body, [c.z, 0, tailRGB]);
       const rx = Math.cos(yaw), rz = -Math.sin(yaw);
-      for (const sd of [-1, 1]) {
-        const hx = x + Math.sin(yaw) * (len / 2 - 0.1) + rx * sd * 0.55;
-        const hz = z + Math.cos(yaw) * (len / 2 - 0.1) + rz * sd * 0.55;
-        push(this.glow, [hx, f.y + 0.52, hz], [0.34, 0.18, 0.16], yaw, [255, 240, 205], [0, 0.9]);
-        const tx = x - Math.sin(yaw) * (len / 2 - 0.1) + rx * sd * 0.55;
-        const tz = z - Math.cos(yaw) * (len / 2 - 0.1) + rz * sd * 0.55;
-        // the tail lights flare when it brakes, exactly as the original did
-        push(this.glow, [tx, f.y + 0.55, tz], [0.3, 0.17, 0.14], yaw, c.tail, [0, c.brk ? 1.1 : 0.45]);
+      const fx = Math.sin(yaw) * (len / 2 + 0.02), fz = Math.cos(yaw) * (len / 2 + 0.02);
+      for (const side of [-1, 1]) {
+        const lx = rx * side * wid * 0.36, lz = rz * side * wid * 0.36;
+        push(this.glow, [x + fx + lx, f.y + hgt * 0.42, z + fz + lz],
+          [0.01, 0.01, 0.01], yaw, [230, 240, 255], [0, 0.85, wid * 0.9, 60]);
+        push(this.glow, [x - fx + lx, f.y + hgt * 0.42, z - fz + lz],
+          [0.01, 0.01, 0.01], yaw, c.tail, [0, c.brk ? 0.95 : 0.5, wid * (c.brk ? 0.7 : 0.45), 40]);
       }
-      if (c.neon) push(this.glow, [x, f.y + 0.06, z], [wid * 1.05, 0.07, len * 0.92], yaw, c.under, [0, 0.35]);
+      if (c.neon) push(this.glow, [x, f.y + 0.06, z - fz], [0.01, 0.01, 0.01],
+        yaw, c.under, [0, 0.4, wid * 0.75, 48]);
     }
 
     // ---------- people on the pavements ----------
@@ -132,7 +147,7 @@ export class Traffic {
     // ---------- the monorail train ----------
     const tr = rel(train.z, camZ);
     if (tr < 600 && tr > -220) {
-      const MLAT = RW + SW + 4;
+      const MLAT = -(RW + 1.4);
       for (let i = 0; i < 10; i++) {
         const zz = train.z + i * 6;
         const nn = ((Math.floor(zz / SEGL) % NSEG) + NSEG) % NSEG;
@@ -142,6 +157,43 @@ export class Traffic {
         const x = f.x + f.rx * MLAT, z2 = f.z + f.rz * MLAT;
         push(this.flyer, [x, f.y + 12.6, z2], [2.4, 3.0, 6.0], f.th, [60, 64, 86], [i]);
         push(this.glow, [x, f.y + 14.3, z2], [2.5, 0.8, 5.0], f.th, [255, 200, 140], [0, 0.5]);
+      }
+    }
+
+    const skyGap = rel(skyT.z, camZ);
+    if (skyGap > -ST_LEN - 70 && skyGap < 440) {
+      for (let z = 0; z < ST_LEN; z += 4) {
+        const distance = (skyT.z + z + 2) % LEN, n = Math.floor(distance / SEGL);
+        if (zoneAt(n)[4] || TRANS_AT[n] >= 0 || district(n) === D.RAMP || district(n) === D.TUNNEL) continue;
+        frameAt(distance, f);
+        const x = f.x + f.rx * ST_LAT, zz = f.z + f.rz * ST_LAT, y = f.y - f.elev + ST_H;
+        push(this.body, [x, y, zz], [2.2, 3.2, 4], f.th, [214, 218, 230], [z]);
+        push(this.glow, [x, y + 0.5, zz], [2.25, 0.2, 4], f.th, [0, 220, 255], [0, 0]);
+        const light = z === 0 || z + 4 >= ST_LEN ? [230, 245, 255]
+          : hash(z / 4, 1, 88) < 0.8 ? [255, 220, 170] : [40, 50, 70];
+        push(this.glow, [x, y + 1.3, zz], [2.25, 1.1, 3.2], f.th, light, [z, 0.25]);
+      }
+    }
+
+    const racer = camZ + 25 + Math.sin(time * 0.12) * 45;
+    for (let z = 0; z < 90; z += 6) {
+      const distance = (racer + z + 3 + LEN) % LEN, n = Math.floor(distance / SEGL);
+      if (district(n) !== D.HIGHWAY) continue;
+      frameAt(distance, f);
+      const lat = RW + SW + 6, x = f.x + f.rx * lat, zz = f.z + f.rz * lat;
+      push(this.body, [x, f.y + 0.4, zz], [2.5, 3.8, 6], f.th, [220, 226, 236], [z]);
+      push(this.glow, [x, f.y + 1.4, zz], [2.55, 0.2, 6], f.th, [0, 230, 255], [z, 0]);
+      push(this.glow, [x, f.y + 2, zz], [2.55, 1, 5], f.th, [255, 220, 170], [z, 0.3]);
+    }
+
+    const fair = zoneAt(Math.floor(camZ / SEGL));
+    if (fair[2] === D.FAIR) {
+      const start = fair[0] + Math.floor(time * 9 % (fair[1] - fair[0]));
+      for (let n = start; n < Math.min(start + 4, fair[1]); n++) {
+        frameAt(n * SEGL, f);
+        const lat = -(RW + SW + 6), y = f.y - f.elev + coasterHeight(n);
+        push(this.glow, [f.x + f.rx * lat, y, f.z + f.rz * lat], [1.8, 1.4, 3.5],
+          f.th, NEON[n % 6], [n, 0.4, 2, 36]);
       }
     }
 

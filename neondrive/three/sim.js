@@ -12,18 +12,8 @@ import {
   hash, hsl, clamp, smooth, mix, LIGHT_PERIOD, setTime,
 } from './world.js';
 
-// ---------- density ----------
-// The generator's pools are sized for the original's 480m draw distance: 380
-// cars over 185km is one every 488m. A 3D camera sees much further, so each
-// object is cloned along the loop to close the gaps. Cloning keeps every
-// object's own character — lane, speed, colour, underglow.
-const CAR_COPIES = 9, PED_COPIES = 7, FLY_COPIES = 6;
-const spread = (src, n) => src.flatMap(o =>
-  Array.from({ length: n }, (_, i) => i === 0 ? o : { ...o, z: (o.z + i * LEN / n) % LEN }));
-
-export const CARS = spread(cars, CAR_COPIES);
-export const PEDS = spread(peds, PED_COPIES);
-export const FLYERS = spread(flyers, FLY_COPIES);
+// The reference's traffic, pedestrian and flyer pools.
+export const CARS = cars, PEDS = peds, FLYERS = flyers;
 for (const c of CARS) c.cur = c.speed;     // a car queueing behind one not yet updated would read undefined
 
 // ---------- state ----------
@@ -273,6 +263,13 @@ export function update(dt, keys) {
   for (const f of FLYERS) f.z = ((f.z + f.dir * f.v * dt) % LEN + LEN) % LEN;
   train.z = ((train.z + train.v * dt) % LEN + LEN) % LEN;
   if (rel(train.z) > LEN - 90) train.z = (S.z + 500 + Math.random() * 300) % LEN;
+
+  skyT.z = (skyT.z + skyT.v * dt + LEN) % LEN;
+  const trainGap = (skyT.z - S.z + LEN * 1.5) % LEN - LEN / 2;
+  if (trainGap < -400 || trainGap > 1800) {
+    skyT.v = (Math.random() < 0.5 ? 1 : -1) * (40 + Math.random() * 25);
+    skyT.z = (S.z + (skyT.v > 0 ? -300 : 900 + Math.random() * 600) + LEN) % LEN;
+  }
 
   // ---------- theme, weather and the level system ----------
   const th = blendTheme(Math.floor(S.z / SEGL));

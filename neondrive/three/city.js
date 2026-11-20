@@ -85,9 +85,8 @@ export class City {
   // and 3 the original's deck is clear glass you see the city through.
   buildRoad(ci, wantElev) {
     const n0 = ci * CHUNK, n1 = Math.min(NSEG, n0 + CHUNK);
-    const KERB = 0.28;
-    const lats = [[-(RW + SW), KERB], [-RW, KERB], [-RW, 0], [-RW * 0.5, 0], [0, 0],
-                  [RW * 0.5, 0], [RW, 0], [RW, KERB], [RW + SW, KERB]];
+    const lats = [[-(RW + SW), 0], [-RW, 0], [-RW * 0.5, 0], [0, 0],
+                  [RW * 0.5, 0], [RW, 0], [RW + SW, 0]];
     if (!wantElev) {
       lats.unshift([-GROUND_WIDTH, -0.15]);
       lats.push([GROUND_WIDTH, -0.15]);
