@@ -26,6 +26,7 @@ const GRID_DISTRICTS = {
   'EMBER FOUNDRY': { av: D.FORGE, r0: D.STACK, r2: D.DOCKS, c0: D.BUILD, c1: D.FORGE, c2: D.DOCKS },
   'AURORA PASS': { av: D.GARDENS, r0: D.DOWNTOWN, r2: D.BUILD, c0: D.SPIRES, c1: D.TUNNEL, c2: D.GARDENS },
   'MONSOON TERRACES': { av: D.TERRACE, r0: D.SPIRES, r2: D.SHRINE, c0: D.TERRACE, c1: D.GARDENS, c2: D.TERRACE },
+  'MIRAGE BAZAAR': { av: D.BAZAAR, r0: D.CANYON, r2: D.BAZAAR, c0: D.BAZAAR, c1: D.SPIRES, c2: D.CANYON },
 };
 for (const c of GRID_CITIES) {
   const g = GRID_DISTRICTS[c.name], p = c.p;
@@ -64,19 +65,20 @@ export function buildMapDressing(mats) {
         }
       }
       // ---------- lantern market: strings of lanterns, and stalls on the sidewalks ----------
-      if (d === D.MARKET && i % 3 === 0) {
+      if ((d === D.MARKET || d === D.BAZAAR) && i % 3 === 0) {
         const L = RW + SW;
         put(0, 8, [L * 2, 0.07, 0.06], [14, 12, 20], B.metal);
         for (let k = 0, l = -L + 1.4; l < L; l += 2.4, k++) put(l, 7.45, [0.68, 0.78, 0.68], WARM[(n + k) % 4], B.lamp, [n + k, 0.5]);
       }
-      if (d === D.MARKET && i % 2 === 0) for (const sg of [-1, 1]) {
+      if ((d === D.MARKET || d === D.BAZAAR) && i % 2 === 0) for (const sg of [-1, 1]) {
         if (hash(n, sg + 5, 31) >= 0.45) continue;
         const lat = sg * (RW + SW * 0.55);
         put(lat, 0, [2.3, 1.0, 2.0], [60, 36, 30], B.metal);
         put(lat, 1.0, [2.1, 1.3, 1.8], [24, 16, 20], B.metal);
         put(lat, 1.05, [2.2, 0.12, 1.9], [255, 190, 110], B.emit, [n, 0.4]);
         steam(lat, 2.9, 1, 2.45, n);
-        B.cloth.add([f.x + f.rx * lat, gy + 2.6, f.z + f.rz * lat], [2.86, 0.6, 1], f.th, WARM[n % 4], [n, 1]);
+        const cloth = d === D.BAZAAR ? city.neon[n % 6] : WARM[n % 4];
+        B.cloth.add([f.x + f.rx * lat, gy + 2.6, f.z + f.rz * lat], [2.86, 0.6, 1], f.th, cloth, [n, 1]);
       }
       // ---------- arcade row: neon signs hung over the sidewalk ----------
       if (d === D.ARCADE && i % 4 === 1) for (const sg of [-1, 1]) {

@@ -124,6 +124,12 @@ const groundFragment = /* glsl */`
     return mix(mix(terrainHash(i), terrainHash(i + vec2(1, 0)), f.x),
       mix(terrainHash(i + vec2(0, 1)), terrainHash(i + vec2(1, 1)), f.x), f.y);
   }
+  vec3 saltFloor(vec2 p) {
+    float row = floor(p.x / 3.5);
+    vec2 tile = vec2(p.x / 3.5, p.y / 4.0 + mod(row, 2.0) * 0.5);
+    bool crack = max(fwidth(tile.x), fwidth(tile.y)) < 0.55 && min(fract(tile.x), fract(tile.y)) < 0.055;
+    return (crack ? vec3(150, 152, 165) : vec3(200, 204, 218)) + 12.0 * (terrainHash(floor(tile)) - 0.5);
+  }
   void main() {
     vec2 p = vWorld.xz;
     float r = length(p);
@@ -145,6 +151,7 @@ const groundFragment = /* glsl */`
     float clouds = terrainNoise(p * vec2(0.012, 0.035) + vec2(0, uTime * 0.04)) * 0.7
       + terrainNoise(p * vec2(0.04, 0.11) - vec2(uTime * 0.05, 0)) * 0.3;
     ${linkTerrain(D.CLOUDS, 'mix(vec3(40, 46, 80), vec3(210, 212, 240), smoothstep(0.3, 0.75, clouds))')}
+    ${linkTerrain(D.SALT, 'saltFloor(p)')}
     if (r < ${PLAZA_RADIUS - 5}.0) {
       vec2 tile = abs(fract(p / 2.5) - 0.5);
       bool grout = max(tile.x, tile.y) > 0.47;
@@ -392,7 +399,7 @@ export class MapCity extends City {
       }
       for (const { f, road, d } of cell.lamps) {
         if (road.tube && d > road.tube.from - 8 && d < road.tube.to + 8) continue;   // no street lamps inside the glass
-        if ([D.FERRY, D.VOLCANO, D.PONTOON].includes(road.link?.district)) continue;
+        if ([D.FERRY, D.VOLCANO, D.PONTOON, D.SALT].includes(road.link?.district)) continue;
         const put = (layer, lat, y, size, color, meta) => layer.add(
           [f.x + f.rx * lat, f.y + y, f.z + f.rz * lat], size, f.th, color, meta);
         const insideBore = road.bore && d >= road.bore.from && d <= road.bore.to;

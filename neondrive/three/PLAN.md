@@ -278,7 +278,10 @@ the map in this order, one commit each. Whoever picks this up: tick the box, add
   bollards and lantern boats. The city uses monsoon weather and its teal palette, with stepped cascades and
   shrine gates. Node out-and-back took 194 s with correct banners and monsoon on arrival, a 14.9 s longest
   rider stop, and zero crashes.
-- [ ] **19. Mirage Bazaar and the salt flats.**
+- [x] **19. Mirage Bazaar and the salt flats.** A straight run with cracked salt plates, reflective shoulders,
+  isolated lamp poles and the reference's heat shimmer. Mirage uses its warm clear palette, kites, and bright
+  bazaar awnings. Node out-and-back took 169 s with correct banners and clear weather, a 12.7 s longest
+  rider stop, and zero crashes.
 - [ ] **20. Sky Avenues and Crown for the grid cities.**
 
 ## Driving feel

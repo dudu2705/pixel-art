@@ -184,6 +184,12 @@ vec3 mapGround(float lx, float w, float pxw, out float reflectivity) {
         reflectivity = 0.1;
         return mod(w, 0.85) < 0.09 ? vec3(50, 29, 26) : vec3(90, 50, 34);
       }
+      if (uMapDistrict == ${D.SALT}) {
+        reflectivity = 0.85;
+        float row = floor(w / 3.5);
+        bool crack = pxw < 0.6 && (fract(lx / 4.0 + mod(row, 2.0) * 0.5) < 0.05 || fract(w / 3.5) < 0.05);
+        return crack ? vec3(150, 152, 165) : vec3(200, 204, 218);
+      }
       if (!ramp && !openEdge && a < uRW + 0.3) { reflectivity = 0.3; return vec3(0, 225, 255); }
       reflectivity = 0.25;
       bool tile = pxw < 0.5 && (mod(w, 1.6) < 0.12 || mod(a - uRW, 1.6) < 0.10);

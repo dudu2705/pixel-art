@@ -75,7 +75,21 @@ export function buildSetPieces(mats, groundMat) {
   for (const rim of VANTA_BAY.roads.filter(road => road.link?.district === D.VOLCANO)) out.push(...buildVolcano(rim, mats));
   for (const causeway of VANTA_BAY.roads.filter(road => road.link?.district === D.CLOUDS)) out.push(...buildCloudTowers(causeway, mats));
   for (const pontoon of VANTA_BAY.roads.filter(road => road.link?.district === D.PONTOON)) out.push(...buildPontoon(pontoon, mats));
+  for (const salt of VANTA_BAY.roads.filter(road => road.link?.district === D.SALT)) out.push(...buildSaltPoles(salt, mats));
   return out;
+}
+
+function buildSaltPoles(road, mats) {
+  const posts = new Batch(unitBox), lights = new Batch(unitBox);
+  const lat = road.halfWidth + SW + 2;
+  for (let d = 40; d < road.path.length - 30; d += 40) {
+    const f = frameOn(road.path, d);
+    const x = f.x + f.rx * lat, z = f.z + f.rz * lat;
+    posts.add([x, 0, z], [0.3, 9, 0.3], f.th, [50, 40, 36], [0, 0]);
+    posts.add([x - f.rx, 8.1, z - f.rz], [2.8, 0.3, 0.3], f.th, [50, 40, 36], [0, 0]);
+    lights.add([x - f.rx * 2, 8.0, z - f.rz * 2], [0.55, 0.2, 0.35], f.th, [255, 216, 154], [d, 0.4, 1.6, 40]);
+  }
+  return [posts.build(mats.metal), lights.build(mats.emit)].filter(Boolean);
 }
 
 function buildPontoon(road, mats) {
