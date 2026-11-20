@@ -23,38 +23,36 @@ a generic 3D city. Every step of this project is judged against the GPU version 
 
 Rule: port the look first, then add the city map. If a 3D shortcut looks worse than the GPU version, it's not done.
 
-### Remaining visual work that changes the render pipeline
+### Visual port and comparison
 
-The city renders at the reference pixel scale, and the wall, billboard and roof formulas run on the streamed
-meshes. The current finish uses a planar reflection and a brightness-based glow. The reference uses individual
-light sources and reflects the finished image at the horizon. Update the renderer in this order after approval.
+The three.js renderer uses the reference pixel grid, facade and roof formulas, stepped radial lights,
+horizon reflections, panoramic sky, and art-grid weather and cockpit layers. The reference rider and five
+shots are available alongside free flight for inspection. The district art sits in world space on streamed
+meshes. Side-by-side captures cover all 30 districts and connector types, plus desktop, portrait, and Retina
+ultrawide viewports. The geometry and animation can differ in small details between the two renderers.
 
-1. Accumulate the reference's stepped radial light for lamps, signs, vehicles and effects in an additive target.
-   Render a road reflectivity mask with scene depth so vehicles and props occlude it. Apply the reference's
-   horizon reflection, wetness and brightness weights to the combined color and light before banking the image.
-2. Render the sky on the art grid and sample it into the HD city pass. Port the panoramic skyline and the sky
-   effects using the reference's city palettes. Port the remaining district art onto the existing streamed
-   meshes. Composite the weather and cockpit at art-grid resolution after banking.
-3. Match the exterior light cycle and rider and the five reference shots. Correct the road-to-camera handedness
-   so the rider and traffic appear on the same side as the reference. Keep free flight available for inspecting
-   the city.
-4. Compare matched city, level, weather, time of day and camera fixtures at each pass. Include a wet street,
-   an Arcade Row facade, a crown rooftop view, a tunnel, and a Retina ultrawide frame at full lean.
+### First city map proposed for approval
 
-The road graph is a separate approval after the visual comparison passes. For the first city, describe the
-boulevard, plaza loop, surrounding streets and ramp as directed lane edges with connections at their junctions.
-Give traffic and autopilot the same lane graph. Keep the roadway and district art in reusable chunk builders,
-and stream the city by map position. Verify a loop around the plaza, crossing traffic at a junction, and a route
-from the boulevard to the sky-avenue deck before expanding the map.
+Use Vanta Bay as the first free-driving city. Lay out an east–west boulevard, a plaza loop, and four blocks
+connected by side streets. Put a tall holographic fountain at the center and leave a clear view across the
+plaza to the skyline. Add one graded ramp to a short sky-avenue deck at 35 metres, with a return connection.
+
+1. Describe the streets as directed lane edges with curved centerlines and named junctions. Connect the
+   boulevard, plaza loop, side streets, and ramp in a single graph.
+2. Make the rider, traffic, and autopilot share that graph. Traffic follows lanes through junctions, autopilot
+   chooses legal routes, and the rider can take turns at junctions while steering manually.
+3. Stream road meshes and city blocks by map position. Reuse the visual shaders and district assets for the
+   plaza, skyline, and elevated deck.
+4. Verify that the rider can circle a block, traffic crosses a junction, and autopilot can route from the
+   boulevard to the deck. Compare the plaza and skyline shots with the visual baseline.
 
 ## Why three.js, not the GPU version
 
 - The GPU version (`../neondrive-gpu.html`) draws one road with buildings on its two sides. It cannot show an open
   square with a view in every direction, however it is faked.
-- This build is already real 3D: real meshes, a free-fly camera, ~3,700 lines, 174 fps in a busy wet downtown.
-  Weather, traffic AI, autopilot, the three levels and the day-night cycle are already ported.
+- This build renders real meshes and includes a free-fly camera. Weather, traffic, autopilot, the three levels,
+  and the day-night cycle are already ported.
 - It still uses the old one-road generator (`world.js`). The plan is to replace that with a city map and keep the rest.
-- Its art is less polished than the GPU version today, so part of the work is bringing the look up to match.
 
 ## What a city map gives that a single road can't
 
@@ -93,4 +91,4 @@ from the boulevard to the sky-avenue deck before expanding the map.
 4. Make that one city truly wow before scaling up.
 5. Then add more cities and the links between them.
 
-Status: visual port in progress. The city map is pending visual parity and approval.
+Status: visual port implemented and compared. The city map is pending approval.
