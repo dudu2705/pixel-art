@@ -270,7 +270,10 @@ the map in this order, one commit each. Whoever picks this up: tick the box, add
   lights and low barriers. The link uses the reference's warm fog and ash. Furnace Avenue adds glowing
   grates, smoking stacks and nearby dock and construction props. Node out-and-back took 183 s, with correct
   banners and ash, a 13.5 s longest rider stop, and zero crashes.
-- [ ] **17. Aurora Pass and the cloud causeway.**
+- [x] **17. Aurora Pass and the cloud causeway.** A 42 m raised causeway over a moving cloud layer, with
+  lit tower tops and bluish fog. Aurora Pass brings back snow, mountains, aurora and garden lights from
+  its reference palette. Node out-and-back took 221 s, with the clear link giving way to snow on arrival,
+  correct banners, a 14.3 s longest rider stop, and zero crashes.
 - [ ] **18. Monsoon Terraces and the pontoon road.**
 - [ ] **19. Mirage Bazaar and the salt flats.**
 - [ ] **20. Sky Avenues and Crown for the grid cities.**

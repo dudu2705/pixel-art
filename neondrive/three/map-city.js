@@ -141,6 +141,9 @@ const groundFragment = /* glsl */`
     float lava = terrainNoise(p * vec2(0.06, 0.12) - vec2(uTime * 0.15, 0)) * 0.7
       + terrainNoise(p * vec2(0.2, 0.4)) * 0.3;
     ${linkTerrain(D.VOLCANO, 'lava > 0.52 ? vec3(200, 60, 10) + vec3(55, 120, 40) * smoothstep(0.52, 0.75, lava) : vec3(34, 16, 12)')}
+    float clouds = terrainNoise(p * vec2(0.012, 0.035) + vec2(0, uTime * 0.04)) * 0.7
+      + terrainNoise(p * vec2(0.04, 0.11) - vec2(uTime * 0.05, 0)) * 0.3;
+    ${linkTerrain(D.CLOUDS, 'mix(vec3(40, 46, 80), vec3(210, 212, 240), smoothstep(0.3, 0.75, clouds))')}
     if (r < ${PLAZA_RADIUS - 5}.0) {
       vec2 tile = abs(fract(p / 2.5) - 0.5);
       bool grout = max(tile.x, tile.y) > 0.47;
@@ -366,7 +369,7 @@ export class MapCity extends City {
             addPortal(road, frameOn(road.path, road.bore.from), true, metal, emit);
           if (road.bore.to >= from && road.bore.to < to)
             addPortal(road, frameOn(road.path, road.bore.to), false, metal, emit);
-        } else if (!(road.level >= 1 || road.helix || road.bridge)) continue;
+        } else if (!(road.level >= 1 || road.helix || road.bridge || road.link?.district === D.CLOUDS)) continue;
         const rows = Math.ceil((to - from) / 2.5);
         for (let i = 0; i < rows; i++) {
           const a = from + i / rows * (to - from), b = from + (i + 1) / rows * (to - from);
@@ -413,12 +416,12 @@ export class MapCity extends City {
             Math.hypot(other.x - x, other.z - z) < other.road.halfWidth + 2)) {
             put(metal, brace, -f.y, [1.2, f.y, 1.2], [34, 32, 44], [0, 0]);
           }
-          if (road.level >= 1 || road.helix || road.bridge) {
+          if (road.level >= 1 || road.helix || road.bridge || road.link?.district === D.CLOUDS) {
             put(metal, brace * 0.86, -1.0, [2.8, 1.0, 1.35], [35, 32, 47], [0, 0]);
             put(emit, brace * 0.87, -1.1, [0.85, 0.12, 1.7], [188, 167, 236], [0, 0, 0, 0]);
           }
         }
-        if ((road.level >= 1 || road.helix || road.bridge) && !rampOpening(road, d, DECK_COVER.x + 1))
+        if ((road.level >= 1 || road.helix || road.bridge || road.link?.district === D.CLOUDS) && !rampOpening(road, d, DECK_COVER.x + 1))
           put(metal, 0, -0.75, [2 * (road.halfWidth + SW), 0.75, 1.25], [28, 25, 39], [0, 0]);
       }
       for (const b of cell.buildings) {

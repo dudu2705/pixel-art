@@ -73,7 +73,24 @@ export function buildSetPieces(mats, groundMat) {
   for (const tube of VANTA_BAY.roads.filter(road => road.tube)) out.push(...buildTube(tube, mats));
   for (const ferry of VANTA_BAY.roads.filter(road => road.link?.district === D.FERRY)) out.push(...buildFerry(ferry, mats));
   for (const rim of VANTA_BAY.roads.filter(road => road.link?.district === D.VOLCANO)) out.push(...buildVolcano(rim, mats));
+  for (const causeway of VANTA_BAY.roads.filter(road => road.link?.district === D.CLOUDS)) out.push(...buildCloudTowers(causeway, mats));
   return out;
+}
+
+function buildCloudTowers(road, mats) {
+  const towers = new Batch(unitBox), lights = new Batch(unitBox), mist = new Batch(unitPlane);
+  const palette = CITIES.find(city => city.name === road.link.b).neon;
+  for (let d = 168; d < road.path.length - 168; d += 44) {
+    const f = frameOn(road.path, d), side = hash(d, 1, 95) < 0.5 ? -1 : 1;
+    const lat = side * (road.halfWidth + SW + 16 + hash(d, 2, 96) * 56);
+    const width = 10 + hash(d, 3, 97) * 12, height = f.y + 6 + hash(d, 4, 98) * 26;
+    const x = f.x + f.rx * lat, z = f.z + f.rz * lat, color = palette[(d / 4) % palette.length];
+    towers.add([x, -1, z], [width, height, width], f.th, [24, 26, 44], [d, height, width, 1]);
+    lights.add([x, height - 1.4, z], [width + 0.18, 0.35, width + 0.18], f.th, color, [d, 0.4, 2, 48]);
+    for (let phase = 0; phase < 4; phase++)
+      mist.add([x, f.y - 6, z], [width * 3.4, 4, 1], f.th, [180, 190, 220], [0, d + phase, phase / 4, 0.12]);
+  }
+  return [towers.build(mats.tower), lights.build(mats.emit), mist.build(mats.effect)].filter(Boolean);
 }
 
 function buildVolcano(road, mats) {

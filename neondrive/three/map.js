@@ -197,6 +197,9 @@ export const GRID_CITIES = [
   { name: 'EMBER FOUNDRY', p: 'ef', gate: 7850, x0: 8000, xm: 8150, x1: 8300, z0: -130, z1: 130,
     avenue: 'Furnace Avenue', rows: ['Slag Row', 'Container Row'], cols: ['Stack Street', 'Casting Street', 'Crane Street'],
     incoming: { id: 'volcano-rim', district: D.VOLCANO, speed: 140, lanes: 2, height: 10, bend: 96 } },
+  { name: 'AURORA PASS', p: 'ap', gate: 9800, x0: 9950, xm: 10100, x1: 10250, z0: -130, z1: 130,
+    avenue: 'Aurora Avenue', rows: ['Snow Row', 'Summit Row'], cols: ['Pine Street', 'Glacier Street', 'Beacon Street'],
+    incoming: { id: 'cloud-causeway', district: D.CLOUDS, speed: 180, lanes: 2, height: 42, ascent: 550, bend: -60 } },
 ];
 export const AURUM = GRID_CITIES[0];
 export const BRIDGE = { x0: 240, x1: AURUM.gate, top: 22, ramp: 350 };
@@ -243,7 +246,7 @@ for (const c of GRID_CITIES) {
   for (const link of LINKS.filter(link => link.from)) {
     const interior = [];
     if (link.height || link.bend) {
-      const span = link.x1 - link.x0, easeLength = Math.min(350, span / 3);
+      const span = link.x1 - link.x0, easeLength = Math.min(link.ascent ?? 350, span / 2);
       for (let x = link.x0 + 4; x <= link.x1 - 4; x += 4) {
         const t = Math.min(1, (x - link.x0) / easeLength, (link.x1 - x) / easeLength);
         interior.push({ x, y: (link.height ?? 0) * t * t * (3 - 2 * t),
