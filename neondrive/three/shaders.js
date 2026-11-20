@@ -41,6 +41,7 @@ export const roadFrag = /* glsl */`
   uniform float uFogNear, uFogFar;
   uniform float uRW, uTime;
   uniform float uMapMode, uMapLength;
+  uniform int uMapDistrict;
   uniform vec4 uMapDeck;
   uniform float uMapContinuous, uMapBikeHeight;
   uniform vec3 uMapFork;
@@ -171,6 +172,10 @@ vec3 mapGround(float lx, float w, float pxw, out float reflectivity) {
         return vec3(200, 200, 215);
       }
     } else {
+      if (uMapDistrict == ${D.FERRY}) {
+        reflectivity = 0.15;
+        return vec3(40, 70, 60);
+      }
       if (!ramp && !openEdge && a < uRW + 0.3) { reflectivity = 0.3; return vec3(0, 225, 255); }
       reflectivity = 0.25;
       bool tile = pxw < 0.5 && (mod(w, 1.6) < 0.12 || mod(a - uRW, 1.6) < 0.10);

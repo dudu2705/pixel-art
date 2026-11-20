@@ -22,6 +22,7 @@ const GRID_DISTRICTS = {
   GLACIA: { av: D.SPIRES, r0: D.MARKET, r2: D.DATA, c0: D.DOWNTOWN, c1: D.DATA, c2: D.SPIRES },
   'CORAL DEEP': { av: D.REEF, r0: D.CANALS, r2: D.GARDENS, c0: D.REEF, c1: D.GARDENS, c2: D.REEF },
   'BLACKOUT SECTOR': { av: D.STACK, r0: D.DOWNTOWN, r2: D.DATA, c0: D.STACK, c1: D.TUNNEL, c2: D.DATA },
+  'NEON LAGOON': { av: D.CANALS, r0: D.CANALS, r2: D.MARKET, c0: D.CANALS, c1: D.STACK, c2: D.CANALS },
 };
 for (const c of GRID_CITIES) {
   const g = GRID_DISTRICTS[c.name], p = c.p;

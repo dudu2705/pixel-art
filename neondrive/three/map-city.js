@@ -1,7 +1,7 @@
 import * as THREE from './vendor/three.module.js';
 import { City, ROAD_LAYER } from './city.js';
 import { Batch, unitBox, unitCyl, unitSphere, unitPlane, unitPlaneFlat } from './props.js';
-import { VANTA_BAY, frameOn, PLAZA_RADIUS, DECK_COVER, RAMP_BORE_HALF_WIDTH, CROWN_HELIX, BRIDGE, GRID_CITIES } from './map.js';
+import { VANTA_BAY, frameOn, PLAZA_RADIUS, DECK_COVER, RAMP_BORE_HALF_WIDTH, CROWN_HELIX, BRIDGE, GRID_CITIES, LINKS } from './map.js';
 import { FONT } from './cockpit.js';
 import { blocks, CITIES, zoneAt, D, SW, SEGL, mulberry, mix } from './world.js';
 
@@ -21,6 +21,12 @@ const roadSamples = roads.flatMap(road => Array.from({ length: Math.ceil(road.pa
   const distance = Math.min(i * 4, road.path.length);
   return { ...frameOn(road.path, distance), road, distance };
 }));
+const linkTerrain = (district, expression) => LINKS.filter(link => link.district === district).map(link => `
+    if (p.x > ${link.x0}.0 && p.x < ${link.x1}.0) {
+      vec3 terrain = ${expression};
+      color = mix(color, terrain, smoothstep(${link.x0}.0, ${link.x0 + 70}.0, p.x)
+        * (1.0 - smoothstep(${link.x1 - 70}.0, ${link.x1}.0, p.x)));
+    }`).join('');
 
 function makeBuildings() {
   const random = mulberry(41283);
@@ -124,6 +130,8 @@ const groundFragment = /* glsl */`
       float ripple = sin(p.x * 0.21 + p.y * 0.07 + uTime * 0.9) * sin(p.y * 0.17 - uTime * 0.6);
       color = vec3(6, 12, 28) + vec3(10, 18, 34) * max(0.0, ripple) * 0.6;
     }
+    float water = sin(p.x * 0.12 + p.y * 0.23 - uTime * 0.9) * sin(p.x * 0.31 - p.y * 0.13 + uTime * 0.6);
+    ${linkTerrain(D.FERRY, 'vec3(6, 12, 27) + vec3(17, 23, 39) * smoothstep(0.15, 0.95, water)')}
     if (r < ${PLAZA_RADIUS - 5}.0) {
       vec2 tile = abs(fract(p / 2.5) - 0.5);
       bool grout = max(tile.x, tile.y) > 0.47;
@@ -274,6 +282,7 @@ export class MapCity extends City {
         uRW: { value: road?.halfWidth ?? 7 },
         uMapMode: { value: road ? (road.oneWay ? 2 : 1) : 3 },
         uMapLength: { value: road?.path.length ?? 0 },
+        uMapDistrict: { value: road?.link?.district ?? -1 },
         uMapDeck: { value: new THREE.Vector4(DECK_COVER.x, DECK_COVER.halfWidth, DECK_COVER.south, DECK_COVER.north) },
         uMapContinuous: { value: road?.level >= 1 ? 1 : 0 },
         // where each end's zebra starts, measured from the junction centre: just outside its disc
@@ -370,6 +379,7 @@ export class MapCity extends City {
       }
       for (const { f, road, d } of cell.lamps) {
         if (road.tube && d > road.tube.from - 8 && d < road.tube.to + 8) continue;   // no street lamps inside the glass
+        if (road.link?.district === D.FERRY) continue;
         const put = (layer, lat, y, size, color, meta) => layer.add(
           [f.x + f.rx * lat, f.y + y, f.z + f.rz * lat], size, f.th, color, meta);
         const insideBore = road.bore && d >= road.bore.from && d <= road.bore.to;
@@ -377,8 +387,9 @@ export class MapCity extends City {
           const color = road.bore.mode === 1 ? [90, 255, 170] : [255, 170, 80];
           put(emit, 0, BORE_HEIGHT - 0.12, [0.01, 0.01, 0.01], color, [0, 0.35, 2.2, 40]);
         }
+        const pal = CITIES.find(c => c.name === (road.link?.b ?? road.city))?.neon ?? palette;
         for (const side of [-1, 1]) {
-          const edge = road.halfWidth + 0.9, color = Math.floor(d / 27) % 3 === 0 ? palette[0] : palette[1];
+          const edge = road.halfWidth + 0.9, color = Math.floor(d / 27) % 3 === 0 ? pal[0] : pal[1];
           const brace = side * (road.halfWidth + SW - 0.18);
           const x = f.x + f.rx * brace, z = f.z + f.rz * brace;
           if (road.bore ? d < 36 || road.path.length - d < 36 : rampOpening(road, d, x)) continue;

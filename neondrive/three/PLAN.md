@@ -262,7 +262,10 @@ the map in this order, one commit each. Whoever picks this up: tick the box, add
   local stops come from the grid spec. Traffic stays on its home grid so junction load does not grow as
   more cities are added. Node out-and-back took 154 s with correct banners, rain on arrival, shelter in the
   tube, a 12.5 s longest rider stop, and zero crashes.
-- [ ] **15. Neon Lagoon and the ferry.**
+- [x] **15. Neon Lagoon and the ferry.** Canal boats, market lanterns, and the city's clear teal palette. The
+  ferry road climbs onto a 4 m vehicle deck with the reference's striped hull, lit ports, red funnels, smoke,
+  and dark rippling water. The deck is a continuous route, matching the comparison loop's ferry crossing.
+  Node out-and-back took 189 s with correct banners and clear weather, a 16.3 s longest rider stop, and zero crashes.
 - [ ] **16. Ember Foundry and the volcano rim.**
 - [ ] **17. Aurora Pass and the cloud causeway.**
 - [ ] **18. Monsoon Terraces and the pontoon road.**

@@ -191,6 +191,9 @@ export const GRID_CITIES = [
   { name: 'BLACKOUT SECTOR', p: 'bs', gate: 5150, x0: 5300, xm: 5450, x1: 5600, z0: -130, z1: 130,
     avenue: 'Blackout Avenue', rows: ['Relay Row', 'Stack Row'], cols: ['Switch Street', 'Node Street', 'Failsafe Street'],
     incoming: { id: 'vactrain', district: D.VAC, speed: 450, lanes: 2 } },
+  { name: 'NEON LAGOON', p: 'nl', gate: 6400, x0: 6550, xm: 6700, x1: 6850, z0: -130, z1: 130,
+    avenue: 'Lagoon Avenue', rows: ['Canal Row', 'Market Row'], cols: ['Stilt Street', 'Stack Street', 'Marina Street'],
+    incoming: { id: 'ferry', district: D.FERRY, speed: 120, lanes: 2, height: 4 } },
 ];
 export const AURUM = GRID_CITIES[0];
 export const BRIDGE = { x0: 240, x1: AURUM.gate, top: 22, ramp: 350 };
@@ -235,7 +238,16 @@ for (const c of GRID_CITIES) {
   const tube = road('aqua-tube', 'Aqua Tube', 'gl-21', 'cd-gate', 2, { speed: 200, city: 'link' });
   tube.tube = { from: 32, to: tube.path.length - 32 }; tube.link = LINKS[2];
   for (const link of LINKS.filter(link => link.from)) {
-    const r = road(link.id, link.name, link.from, link.to, link.lanes, { speed: link.speed, city: 'link' });
+    const interior = [];
+    if (link.height || link.bend) {
+      const span = link.x1 - link.x0, easeLength = Math.min(350, span / 3);
+      for (let x = link.x0 + 4; x <= link.x1 - 4; x += 4) {
+        const t = Math.min(1, (x - link.x0) / easeLength, (link.x1 - x) / easeLength);
+        interior.push({ x, y: (link.height ?? 0) * t * t * (3 - 2 * t),
+          z: (link.bend ?? 0) * Math.sin(Math.PI * (x - link.x0) / span) ** 2 });
+      }
+    }
+    const r = road(link.id, link.name, link.from, link.to, link.lanes, { interior, speed: link.speed, city: 'link' });
     r.link = link;
     if (link.district === D.VAC) r.tube = { from: 32, to: r.path.length - 32, mode: 3 };
   }

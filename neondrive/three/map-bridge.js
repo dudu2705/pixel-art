@@ -4,8 +4,8 @@
 import * as THREE from './vendor/three.module.js';
 import { VANTA_BAY, frameOn, AURUM, BRIDGE } from './map.js';
 import { FONT } from './cockpit.js';
-import { CITIES, SW } from './world.js';
-import { Batch, unitBox, unitSphere, unitPlane, unitPlaneFlat } from './props.js';
+import { CITIES, D, SW } from './world.js';
+import { Batch, unitBox, unitCyl, unitSphere, unitPlane, unitPlaneFlat } from './props.js';
 
 export function buildSetPieces(mats, groundMat) {
   const out = [];
@@ -71,7 +71,34 @@ export function buildSetPieces(mats, groundMat) {
     if (mesh) out.push(mesh);
   }
   for (const tube of VANTA_BAY.roads.filter(road => road.tube)) out.push(...buildTube(tube, mats));
+  for (const ferry of VANTA_BAY.roads.filter(road => road.link?.district === D.FERRY)) out.push(...buildFerry(ferry, mats));
   return out;
+}
+
+function buildFerry(road, mats) {
+  const hull = new Batch(unitBox), stacks = new Batch(unitCyl), lights = new Batch(unitBox), smoke = new Batch(unitPlane);
+  const width = road.halfWidth + SW, length = road.path.length;
+  for (let d = 24; d < length - 24; d += 4) {
+    const f = frameOn(road.path, d);
+    const put = (batch, lat, y, size, color, meta = [0, 0]) => batch.add(
+      [f.x + f.rx * lat, f.y + y, f.z + f.rz * lat], size, f.th, color, meta);
+    put(hull, 0, -f.y - 0.25, [2 * width + 0.5, f.y, 4.1], [140, 29, 36]);
+    for (const side of [-1, 1]) {
+      const edge = side * (width + 0.15);
+      put(hull, edge, 0, [0.34, 1.65, 4.1], [160, 30, 36]);
+      put(hull, edge, 1.65, [0.35, 0.3, 4.1], [40, 40, 50]);
+      put(hull, edge, 1.95, [0.38, 0.3, 4.1], [230, 230, 235]);
+      if (d % 8 === 0) put(lights, edge, 0.64, [0.38, 0.5, 1.05], [255, 220, 150]);
+      if (d % 60 === 28) put(hull, edge, 2.25, [1.45, 1, 5], [255, 130, 30]);
+      if (d % 240 !== 120) continue;
+      const funnel = side * (width + 2);
+      put(stacks, funnel, -1, [4.4, 23, 4.4], [200, 40, 40]);
+      put(stacks, funnel, 19, [4.5, 3, 4.5], [20, 20, 26]);
+      put(stacks, funnel, 15.5, [4.5, 1.5, 4.5], [235, 235, 240]);
+      for (let i = 0; i < 5; i++) put(smoke, funnel, 22, [12, 10, 1], [90, 90, 100], [0, d + i, i / 5, 0.2]);
+    }
+  }
+  return [hull.build(mats.metal), stacks.build(mats.metal), lights.build(mats.emit), smoke.build(mats.effect)].filter(Boolean);
 }
 
 function buildTube(road, mats) {
