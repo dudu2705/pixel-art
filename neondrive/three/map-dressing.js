@@ -21,6 +21,7 @@ const GRID_DISTRICTS = {
   'AURUM HEIGHTS': { av: D.GARDENS, r0: D.BUILD, r2: D.DOWNTOWN, c0: D.DOWNTOWN, c1: D.SPIRES, c2: D.SPIRES },
   GLACIA: { av: D.SPIRES, r0: D.MARKET, r2: D.DATA, c0: D.DOWNTOWN, c1: D.DATA, c2: D.SPIRES },
   'CORAL DEEP': { av: D.REEF, r0: D.CANALS, r2: D.GARDENS, c0: D.REEF, c1: D.GARDENS, c2: D.REEF },
+  'BLACKOUT SECTOR': { av: D.STACK, r0: D.DOWNTOWN, r2: D.DATA, c0: D.STACK, c1: D.TUNNEL, c2: D.DATA },
 };
 for (const c of GRID_CITIES) {
   const g = GRID_DISTRICTS[c.name], p = c.p;
@@ -108,6 +109,11 @@ export function buildMapDressing(mats) {
       if (d === D.DATA && i % 11 === 0) {
         const sg = hash(n, 4, 4) < 0.5 ? -1 : 1, h = 30 + hash(n, 5, 5) * 20;
         put(sg * (RW + SW + 2), h, [120, 80, 1], [80, 255, 120], B.effect, [3, n]);
+      }
+      if (d === D.STACK && i % 5 === 2) for (const side of [-1, 1]) {
+        const lat = side * (RW + SW * 0.72), height = 2 + hash(n, side + 1, 12) * 5;
+        put(lat, 0, [1.8, height, 3.6], [26, 28, 38], B.metal);
+        put(lat - side * 0.92, height * 0.68, [0.05, 0.24, 2.8], city.neon[1], B.emit, [n, 0.38]);
       }
       // ---------- mega-highway: barriers along both edges, an overpass every 280 m ----------
       if (d === D.HIGHWAY) {

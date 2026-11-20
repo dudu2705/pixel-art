@@ -1,6 +1,6 @@
 // Vanta Bay's fixed street layout. A road owns its surface and has one or two
 // directed edges. Every driving route uses those edges and their lane offsets.
-import { SEGL, SW } from './world.js';
+import { D, LINK_NAMES, SEGL, SW } from './world.js';
 
 export const LANE_WIDTH = 3.5;
 export const PLAZA_RADIUS = 43;
@@ -188,6 +188,9 @@ export const GRID_CITIES = [
     avenue: 'Frost Avenue', rows: ['Rime Row', 'Aurora Row'], cols: ['Shard Street', 'Lattice Street', 'Beacon Street'] },
   { name: 'CORAL DEEP', p: 'cd', gate: 3700, x0: 3850, xm: 4000, x1: 4150, z0: -130, z1: 130,
     avenue: 'Tide Avenue', rows: ['Kelp Row', 'Pearl Row'], cols: ['Anemone Street', 'Current Street', 'Lantern Street'] },
+  { name: 'BLACKOUT SECTOR', p: 'bs', gate: 5150, x0: 5300, xm: 5450, x1: 5600, z0: -130, z1: 130,
+    avenue: 'Blackout Avenue', rows: ['Relay Row', 'Stack Row'], cols: ['Switch Street', 'Node Street', 'Failsafe Street'],
+    incoming: { id: 'vactrain', district: D.VAC, speed: 450, lanes: 2 } },
 ];
 export const AURUM = GRID_CITIES[0];
 export const BRIDGE = { x0: 240, x1: AURUM.gate, top: 22, ramp: 350 };
@@ -196,6 +199,12 @@ export const LINKS = [
   { id: 'skybridge', name: 'SKYBRIDGE', a: 'VANTA BAY', b: 'AURUM HEIGHTS', x0: BRIDGE.x0, x1: BRIDGE.x1 },
   { id: 'mega-highway', name: 'MEGA-HIGHWAY', a: 'AURUM HEIGHTS', b: 'GLACIA', x0: AURUM.x1, x1: GRID_CITIES[1].gate },
   { id: 'aqua-tube', name: 'AQUA TUBE', a: 'GLACIA', b: 'CORAL DEEP', x0: GRID_CITIES[1].x1, x1: GRID_CITIES[2].gate },
+  ...GRID_CITIES.flatMap((c, i) => {
+    if (!c.incoming) return [];
+    const previous = GRID_CITIES[i - 1];
+    return [{ ...c.incoming, name: LINK_NAMES[c.incoming.district], a: previous.name, b: c.name,
+      x0: previous.x1, x1: c.gate, from: previous.p + '-21', to: c.p + '-gate' }];
+  }),
 ];
 for (const c of GRID_CITIES) {
   const { p } = c, add = (id, x, z) => { nodes[id] = node(id, x, z); };
@@ -224,7 +233,12 @@ for (const c of GRID_CITIES) {
   hw.highway = true; hw.link = LINKS[1];
   // the aqua tube: a glass tunnel across the sea floor from Glacia's east end to Coral Deep, sheltered all the way
   const tube = road('aqua-tube', 'Aqua Tube', 'gl-21', 'cd-gate', 2, { speed: 200, city: 'link' });
-  tube.tube = { from: 30, to: tube.path.length - 30 }; tube.link = LINKS[2];
+  tube.tube = { from: 32, to: tube.path.length - 32 }; tube.link = LINKS[2];
+  for (const link of LINKS.filter(link => link.from)) {
+    const r = road(link.id, link.name, link.from, link.to, link.lanes, { speed: link.speed, city: 'link' });
+    r.link = link;
+    if (link.district === D.VAC) r.tube = { from: 32, to: r.path.length - 32, mode: 3 };
+  }
 }
 export function inTube(road, distance) { return Boolean(road.tube && distance >= road.tube.from && distance <= road.tube.to); }
 

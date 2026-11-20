@@ -66,35 +66,48 @@ export function buildSetPieces(mats, groundMat) {
     metal.add([E.x + s * 1.9, y, E.z], [2.2, 6, 2.2], 0, [60, 60, 80], [0, 0]);
     emit.add([E.x + s * 1.9, y + 3, E.z], [2.3, 0.4, 2.3], 0, [120, 220, 255], [y, 0.7, 6, 40]);
   }
-  // the aqua tube: glass walls and a glass ceiling along the sea floor, as the loop builds its sea tube (the glass
-  // shader draws the water and the fish outside), with a lit portal at each mouth
-  const glass = new Batch(unitPlane), glassCeil = new Batch(unitPlaneFlat);
-  const tube = VANTA_BAY.roads.find(r => r.id === 'aqua-tube'), TH = 6.5, TW = tube.halfWidth + SW;
-  for (let d = tube.tube.from; d < tube.tube.to; d += 4) {
-    const a = frameOn(tube.path, d), b = frameOn(tube.path, Math.min(tube.tube.to, d + 4));
+  for (const [batch, material] of [[metal, mats.metal], [emit, mats.emit], [lamp, mats.emit]]) {
+    const mesh = batch.build(material);
+    if (mesh) out.push(mesh);
+  }
+  for (const tube of VANTA_BAY.roads.filter(road => road.tube)) out.push(...buildTube(tube, mats));
+  return out;
+}
+
+function buildTube(road, mats) {
+  const walls = new Batch(unitPlane), ceiling = new Batch(unitPlaneFlat);
+  const metal = new Batch(unitBox), emit = new Batch(unitBox);
+  const { from, to, mode = 0 } = road.tube;
+  const height = 6.5, width = road.halfWidth + SW;
+  for (let d = from; d < to; d += 4) {
+    const a = frameOn(road.path, d), b = frameOn(road.path, d + 4);
     const slope = b.y - a.y, midY = (a.y + b.y) / 2;
     for (const side of [-1, 1]) {
-      const x0 = a.x + a.rx * side * TW, z0 = a.z + a.rz * side * TW, x1 = b.x + b.rx * side * TW, z1 = b.z + b.rz * side * TW;
-      glass.add([(x0 + x1) / 2, midY + TH / 2, (z0 + z1) / 2], [Math.hypot(x1 - x0, z1 - z0) + 0.06, TH + 0.06, 1],
-        Math.atan2(x1 - x0, z1 - z0) + Math.PI / 2, [255, 255, 255], [0, 0, d, slope]);
+      const x0 = a.x + a.rx * side * width, z0 = a.z + a.rz * side * width;
+      const x1 = b.x + b.rx * side * width, z1 = b.z + b.rz * side * width;
+      walls.add([(x0 + x1) / 2, midY + height / 2, (z0 + z1) / 2], [Math.hypot(x1 - x0, z1 - z0) + 0.06, height + 0.06, 1],
+        Math.atan2(x1 - x0, z1 - z0) + Math.PI / 2, [255, 255, 255], [mode, 0, d, slope]);
     }
-    glassCeil.add([(a.x + b.x) / 2, midY + TH, (a.z + b.z) / 2], [TW * 2 + 0.08, 1, Math.hypot(b.x - a.x, b.z - a.z) + 0.14],
-      Math.atan2(b.x - a.x, b.z - a.z), [255, 255, 255], [0, 1, d, slope]);
+    ceiling.add([(a.x + b.x) / 2, midY + height, (a.z + b.z) / 2], [width * 2 + 0.08, 1, Math.hypot(b.x - a.x, b.z - a.z) + 0.14],
+      Math.atan2(b.x - a.x, b.z - a.z), [255, 255, 255], [mode, 1, d, slope]);
+    if (mode && (d - from) % 28 === 0)
+      emit.add([a.x, a.y + height / 2, a.z], [0.01, 0.01, 0.01], a.th, [80, 210, 255], [d, 0.35, 5, 60]);
   }
-  const accent = [0, 230, 255];
-  for (const d of [tube.tube.from, tube.tube.to]) {
-    const f = frameOn(tube.path, d), put = (lat, up, size, col, batch) => batch.add([f.x + f.rx * lat, f.y + up, f.z + f.rz * lat], size, f.th, col, [0, 0]);
-    for (const side of [-1, 1]) put(side * (TW + 0.25), 0, [0.5, TH + 0.5, 0.35], accent, emit);
-    put(0, TH, [TW * 2, 0.5, 0.35], accent, emit);
-    put(0, TH + 0.5, [TW * 2 + 6, 4.2, 0.32], [24, 30, 44], metal);
-    const label = 'AQUA TUBE', width = 14, cw = width / (label.length * 4 + 2), ch = 2.4 / 7;
+  const accent = mode ? [90, 210, 255] : [0, 230, 255];
+  for (const [d, facing] of [[from, 1], [to, -1]]) {
+    const f = frameOn(road.path, d);
+    const put = (lat, up, size, col, batch) => batch.add(
+      [f.x + f.rx * lat * facing, f.y + up, f.z + f.rz * lat * facing], size, f.th, col, [0, 0]);
+    for (const side of [-1, 1]) put(side * (width + 0.25), 0, [0.5, height + 0.5, 0.35], accent, emit);
+    put(0, height, [width * 2, 0.5, 0.35], accent, emit);
+    put(0, height + 0.5, [width * 2 + 6, 4.2, 0.32], [24, 30, 44], metal);
+    const label = road.link.name, labelWidth = 14, cw = labelWidth / (label.length * 4 + 2), ch = 2.4 / 7;
     for (let i = 0; i < label.length; i++) {
       const glyph = FONT[label[i]] || FONT[' '];
       for (let bit = 0; bit < glyph.length; bit++) if (glyph[bit] === '1')
-        emit.add([f.x + f.rx * ((i * 4 + bit % 3 + 1.5) * cw - width / 2), f.y + TH + 1.2 + (5 - Math.floor(bit / 3)) * ch, f.z + f.rz * ((i * 4 + bit % 3 + 1.5) * cw - width / 2)],
-          [cw, ch, 0.5], f.th, accent, [0, 0]);
+        put((i * 4 + bit % 3 + 1.5) * cw - labelWidth / 2, height + 1.2 + (5 - Math.floor(bit / 3)) * ch, [cw, ch, 0.5], accent, emit);
     }
   }
-  for (const [b, m] of [[metal, mats.metal], [emit, mats.emit], [lamp, mats.emit], [glass, mats.glass], [glassCeil, mats.glass]]) { const mesh = b.build(m); if (mesh) out.push(mesh); }
-  return out;
+  const surface = mode ? mats.tunnel : mats.glass;
+  return [metal.build(mats.metal), emit.build(mats.emit), walls.build(surface), ceiling.build(surface)].filter(Boolean);
 }

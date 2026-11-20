@@ -256,8 +256,18 @@ the map in this order, one commit each. Whoever picks this up: tick the box, add
   rain / clear / fog / bubbles; tube fully sheltered; no stop over 20 s, no crashes. Screenshots: the tube interior,
   Coral Deep's avenue with bubbles and coral. Hold lines moved 1.5 m further back (bike nose was on the zebra).
   Gap: walkers also walk the tube's sidewalks.
-- [ ] Then: Sky Avenues and Crown for the grid cities, more cities and their links (each with its reference link type:
-  vactrain, ferry, volcano rim, cloud causeway, pontoon road, salt flats still to build).
+- [x] **14. Blackout Sector and the vactrain.** Use the template and Blackout's rain, dark palette, stack props
+  and data lasers. The 1 km tube reuses the reference's cyan tunnel ribs, lit portals and weather shelter.
+  Cruise keeps its four settings, with the reference's vactrain boost on the link. The route and its two
+  local stops come from the grid spec. Traffic stays on its home grid so junction load does not grow as
+  more cities are added. Node out-and-back took 154 s with correct banners, rain on arrival, shelter in the
+  tube, a 12.5 s longest rider stop, and zero crashes.
+- [ ] **15. Neon Lagoon and the ferry.**
+- [ ] **16. Ember Foundry and the volcano rim.**
+- [ ] **17. Aurora Pass and the cloud causeway.**
+- [ ] **18. Monsoon Terraces and the pontoon road.**
+- [ ] **19. Mirage Bazaar and the salt flats.**
+- [ ] **20. Sky Avenues and Crown for the grid cities.**
 
 ## Driving feel
 

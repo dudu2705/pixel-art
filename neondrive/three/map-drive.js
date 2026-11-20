@@ -1,9 +1,9 @@
 import { VANTA_BAY, frameOn, frameInLane, laneOffset, legalTurns, routeTo, turnAngle, turnPath,
-  inBore, inTube, underSkyDeck, LANE_WIDTH, SURFACES, onSurface, LEVEL_NAMES, LINKS, AURUM } from './map.js';
+  inBore, inTube, underSkyDeck, LANE_WIDTH, SURFACES, onSurface, LEVEL_NAMES, LINKS, AURUM, GRID_CITIES } from './map.js';
 import { S, blendCities, setAuto, updateClimate } from './sim.js';
 import { signalState, pedsOn, pedsOnOutbound, allCrossers } from './map-signals.js';
 import { walkersNear } from './map-people.js';
-import { CRUISE, cars, clamp, mulberry, smooth } from './world.js';
+import { CRUISE, D, cars, clamp, mulberry, smooth } from './world.js';
 
 const { nodes, edges } = VANTA_BAY;
 const groundStops = ['plaza-east', 'street-north', 'street-south'];
@@ -15,12 +15,7 @@ const itinerary = [
   { id: 'crown-outlook', level: null },               // up the helix to the Crown, then back down
   { id: 'sky-south', level: null },
   { id: 'street-south', level: null },
-  { id: 'au-22', level: null },                       // over the skybridge to Aurum Heights, round it, and back
-  { id: 'au-00', level: null },
-  { id: 'gl-22', level: null },                       // down the mega-highway to Glacia, round it, and home
-  { id: 'gl-00', level: null },
-  { id: 'cd-22', level: null },                       // through the aqua tube to Coral Deep, round it, and home
-  { id: 'cd-00', level: null },
+  ...GRID_CITIES.flatMap(({ p }) => [{ id: p + '-22', level: null }, { id: p + '-00', level: null }]),
 ];
 const rng = mulberry(2048);
 
@@ -42,7 +37,7 @@ export class MapDrive {
     this.waiting = new Map();
     this.history = [];
     const avenueIds = ['east-north', 'east-south', 'street-north-through', 'sky-deck'];
-    const localEdges = edges.filter(edge => edge.road.level === 0 && !edge.road.oneWay &&
+    const localEdges = edges.filter(edge => edge.road.city === 'VANTA BAY' && edge.road.level === 0 && !edge.road.oneWay &&
       !avenueIds.includes(edge.road.id) && edge.from !== nodes.gateway).filter((_, i) => i % 3 === 0);
     const avenueEdges = edges.filter(edge => avenueIds.includes(edge.road.id));
     this.traffic = [...localEdges, ...avenueEdges, ...edges.filter(edge => edge.road.bore)]
@@ -64,12 +59,16 @@ export class MapDrive {
         }
         return npc;
       });
-    for (const [i, e] of edges.filter(x => x.road.city !== 'VANTA BAY').entries()) {
-      if (i % 4) continue;                             // a small grid jams fast: about ten cars
-      const npc = vehicle(e, clamp(e.path.length * (0.3 + 0.4 * rng()), e.from.trim + 2, e.path.length - e.to.trim - 2), 0, 12);
-      npc.limit = 13 + rng() * 12;
-      npc.style = { ...cars[(i * 5 + 3) % cars.length] };
-      this.traffic.push(npc);
+    for (const city of GRID_CITIES) {
+      const street = edges.filter(edge => edge.road.city === city.name && edge.road.level === 0);
+      for (const [i, e] of street.entries()) {
+        if (i % 4) continue;
+        const npc = vehicle(e, clamp(e.path.length * (0.3 + 0.4 * rng()), e.from.trim + 2, e.path.length - e.to.trim - 2), 0, 12);
+        npc.limit = 13 + rng() * 12;
+        npc.style = { ...cars[(i * 5 + 3) % cars.length] };
+        npc.home = city.name;
+        this.traffic.push(npc);
+      }
     }
     for (const [i, e] of edges.filter(x => x.road.id === 'crown-way').entries()) {
       const npc = vehicle(e, e.path.length * (0.3 + 0.3 * i), 0, 18);
@@ -119,7 +118,9 @@ export class MapDrive {
   selectExit(current, isPlayer) {
     if (isPlayer) return S.auto ? this.autoExit(current) : this.manualExit(current);
     if (current.itinerary) return this.autoExit(current);
-    const choices = legalTurns(current.edge);
+    const turns = legalTurns(current.edge);
+    const choices = current.home ? turns.filter(edge => edge.road.city === current.home && edge.road.level === 0) : turns;
+    if (!choices.length) return current.edge.to.exits.find(edge => edge.road === current.edge.road);
     return choices[Math.floor(rng() * choices.length)];
   }
 
@@ -277,7 +278,8 @@ export class MapDrive {
     }
     if (!current.turn && remaining < Math.max(64, current.speed ** 2 / 14 + 20)) current.exit ??= this.selectExit(current, isPlayer);
 
-    let limit = Math.min(current.edge.road.speed, isPlayer ? CRUISE[S.cruise] : current.limit);
+    const boost = current.edge.road.link?.district === D.VAC ? 1.6 : 1;
+    let limit = Math.min(current.edge.road.speed, isPlayer ? CRUISE[S.cruise] * boost : current.limit);
     if (isPlayer && !S.auto) limit = current.edge.road.speed;
     if (current.turn) limit = Math.min(limit, current.turn.speed);
     else {
@@ -349,25 +351,21 @@ export class MapDrive {
     // the sky, fog and weather of the city you're in, blending along each link as the reference does: the cities
     // and links run west to east, so the rider's x says where you are
     const x = p.pose.x;
-    let th = blendCities(LINKS[0].a, LINKS[0].a, 0);
+    let active = null, fraction = 0;
     for (const [k, L] of LINKS.entries()) {
       if (x < L.x0) break;
-      const t = clamp((x - L.x0) / (L.x1 - L.x0), 0, 1);
-      th = blendCities(L.a, L.b, smooth(0.25, 0.85, t));
-      if (k === 0 && x < L.x1) th.TH.elevator = Math.max(th.TH.elevator, 0.6 * smooth(0, 0.3, t));   // seen across the bay
+      active = L;
+      fraction = clamp((x - L.x0) / (L.x1 - L.x0), 0, 1);
     }
+    const road = this.free ? this.free.surface.road : p.edge.road;
+    const kind = road?.tube && !road.tube.mode ? D.TUBE : road?.link?.district;
+    const distance = active ? (x - active.x0) : 0, span = active ? active.x1 - active.x0 : 0;
+    const strength = smooth(0, 72, distance) * smooth(0, 72, span - distance);
+    const th = active ? blendCities(active.a, active.b, smooth(0.25, 0.85, fraction), kind, strength)
+      : blendCities(LINKS[0].a, LINKS[0].a, 0);
+    if (active === LINKS[0] && fraction < 1) th.TH.elevator = Math.max(th.TH.elevator, 0.6 * smooth(0, 0.3, fraction));
     // Aurum's space elevator: far off, the sky paints it (fog would hide the real one); in the city the real one
     if (x > AURUM.gate - 150 && x < AURUM.x1 + 150) th.TH.elevator = 0;
-    // inside the aqua tube the world outside the glass is sea: teal fog and sky, nothing falling, as in the reference
-    const road = this.free ? this.free.surface.road : p.edge.road;
-    if (road?.tube) {
-      const along = clamp((x - road.a.x) / (road.b.x - road.a.x), 0, 1) * road.path.length;   // the tube runs straight east
-      const uw = smooth(road.tube.from - 10, road.tube.from + 20, along) * (1 - smooth(road.tube.to - 20, road.tube.to + 10, along));
-      th.FOG = th.FOG.map((c, i) => c + ([6, 34, 58][i] - c) * uw);
-      th.SKY = th.SKY.map(col => col.map((c, i) => c + ([4, 30, 52][i] - c) * uw));
-      th.TH.water = uw;
-      if (uw > 0.5) th.wx = 'none';
-    }
     updateClimate(dt, th, deck || bore);
     const here = (this.free ? this.free.surface.road : p.turn ? null : p.edge.road);
     if (here && here.city !== this.cityNow) {
