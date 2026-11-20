@@ -6,38 +6,51 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no">
 <style>
   :root { color-scheme: dark; }
-  * { margin: 0; padding: 0; box-sizing: border-box; }
-  html, body { height: 100%; background: #05060c; overflow: hidden; }
-  canvas { display: block; width: 100vw; height: 100vh; image-rendering: pixelated; touch-action: none; cursor: grab; }
-  canvas:active { cursor: grabbing; }
-  #ui { position: fixed; inset: 0; pointer-events: none; font: 12px/1.5 ui-monospace, "SF Mono", Menlo, monospace;
-        color: #cfe8ff; text-shadow: 0 1px 0 #000; letter-spacing: .04em; }
-  #tl { position: absolute; top: 12px; left: 14px; }
-  #tr { position: absolute; top: 12px; right: 14px; text-align: right; }
-  #bl { position: absolute; bottom: 12px; left: 14px; opacity: .72; line-height: 1.7; }
-  body.hints #bl { display: none; }
-  #mode { color: #6ff; font-weight: 600; }
-  #place { color: #ff7ad1; }
-  #kmh { font-size: 20px; color: #fff; }
-  #fps { color: #8fb; }
-  #banner { position: absolute; top: 18%; left: 0; right: 0; text-align: center; font-size: 18px;
-            letter-spacing: .22em; color: #fff; opacity: 0; transition: opacity .35s;
-            text-shadow: 0 0 12px #000, 0 2px 0 #000; }
-  #lvl { font-size: 14px; font-weight: 600; }
-  kbd { background: #1a2130; border: 1px solid #2d3a52; border-radius: 3px; padding: 0 4px; color: #9fd; }
+  html, body { margin: 0; height: 100%; overflow: hidden; background: #05030a; user-select: none; }
+  canvas { display: block; image-rendering: pixelated; touch-action: none; }
+  .tag { position: fixed; padding: 5px 10px; border: 1px solid #1d4f5a; background: rgba(10, 4, 14, 0.66);
+         font: 12px ui-monospace, Menlo, monospace; color: #9ff4ff; letter-spacing: 1px; pointer-events: none; }
+  #banner, #hint { left: 50%; transform: translateX(-50%); text-align: center; width: max-content; max-width: 86vw; }
+  #banner { top: 58px; font-size: 16px; letter-spacing: clamp(2px, 0.6vw, 6px); opacity: 0; transition: opacity 1.2s; }
+  #hint { top: 14px; display: none; color: #ff9ce6; border-color: #5a1d4f; }
+  body.hints #hint { display: block; }
+  #debug { display: none; left: 12px; top: 12px; font-size: 11px; }
+  body.showfps #debug { display: block; }
+  #fpsz { position: fixed; inset: 0 auto auto 0; width: 44px; height: 44px; border: 0; background: transparent; }
+  #pad { display: none; }
+  @media (pointer: coarse) {
+    #pad { display: block; }
+    .drive, .actions { display: flex; position: fixed; gap: 8px; pointer-events: none; }
+    .drive { left: 12px; right: 12px; bottom: 16px; }
+    .actions { right: 12px; top: 104px; flex-direction: column; }
+    .drive button:nth-child(3) { margin-left: auto; }
+    .btn { min-width: 58px; min-height: 46px; border: 1px solid #b2478e; border-radius: 10px;
+           color: #ffb6ef; background: rgba(20, 8, 30, 0.67); font: bold 13px ui-monospace, Menlo, monospace;
+           pointer-events: auto; touch-action: none; }
+    .drive button { height: 62px; }
+    .btn.on, .btn:active { background: rgba(255, 60, 190, 0.45); }
+  }
 </style>
 </head>
 <body>
 <canvas id="c"></canvas>
-<div id="ui">
-  <div id="tl"><div id="mode">COCKPIT</div><div id="place">—</div></div>
-  <div id="tr"><div id="kmh">0 KM/H</div><div id="lvl">L1</div><div id="fps">— FPS</div></div>
-  <div id="banner"></div>
-  <div id="bl">
-    <div><kbd>&larr;</kbd><kbd>&rarr;</kbd> steer · <kbd>&uarr;</kbd> gas · <kbd>&darr;</kbd> brake · <kbd>A</kbd> autopilot · <kbd>V</kbd> cruise</div>
-    <div><kbd>R</kbd> weather · <kbd>L</kbd> headlight · <kbd>C</kbd> camera · <kbd>H</kbd> hints</div>
-    <div><kbd>1</kbd> cockpit <kbd>2</kbd> chase <kbd>3</kbd> drone <kbd>4</kbd> trackside <kbd>5</kbd> alongside</div>
-    <div><kbd>6</kbd> orbit <kbd>7</kbd> free · drag to look, wheel to zoom</div>
+<div id="banner" class="tag" role="status"></div>
+<div id="hint" class="tag">← → steer · ↑ gas · ↓ brake · A autopilot · W weather · C camera · V cruise · L headlight · 6 orbit · 7 free · H hide</div>
+<div id="debug" class="tag"><div id="mode"></div><div id="place"></div><div id="kmh"></div><div id="fps"></div></div>
+<button id="fpsz" type="button" aria-label="Toggle driving diagnostics"></button>
+<div id="pad">
+  <div class="drive">
+    <button class="btn" type="button" data-drive="left" aria-label="Steer left">◀</button>
+    <button class="btn" type="button" data-drive="right" aria-label="Steer right">▶</button>
+    <button class="btn" type="button" data-drive="brake">BRK</button>
+    <button class="btn" type="button" data-drive="gas">GAS</button>
+  </div>
+  <div class="actions">
+    <button class="btn on" type="button" data-control="a">AUTO</button>
+    <button class="btn on" type="button" data-control="w">WX</button>
+    <button class="btn" type="button" data-control="v">CRZ</button>
+    <button class="btn on" type="button" data-control="l">LIGHT</button>
+    <button class="btn" type="button" data-control="c">CAM</button>
   </div>
 </div>
 <script type="module" src="./main.js"></script>

@@ -1,50 +1,42 @@
 # Neon Drive 3D
 
-A real-3D rebuild of `../neondrive.html` on three.js (WebGL, r160, vendored in
-`vendor/` so it runs offline). The original is untouched and still playable.
+A real-3D build of Neon Drive using the vendored three.js r160 renderer.
+[`../neondrive-gpu.html`](../neondrive-gpu.html) is the visual reference.
 
-## Why
-
-The original is a software rasterizer: every pixel is computed in JavaScript on
-one thread. Measured on the old build: **61ms a frame (~16fps)** at 342x256,
-45% of it inside `drawWall`, which called a procedural texture function once per
-wall pixel — 280,000 calls a frame. It also could not do a real side view: it
-rastered one forward image and reprojected it, which is why the side camera
-looked wrong.
-
-This build puts the same city on the GPU. Measured here: **2.07ms a frame
-(~483fps)** at 1024x768 full res, 1.55ms in pixel mode.
+From the repository root, run `python3 -m http.server` and open
+`http://localhost:8000/neondrive/three/index.html`.
 
 ## Layout
 
-| file | what it does |
+| File | Role |
 |---|---|
-| `world.js` | the original city generator, lifted verbatim. Pure data, no DOM. 46,290 segments, 185km of road, 7,885 buildings |
-| `road.js` | integrates `curve`/`hill` into a world-space centreline and gives you a frame at any distance |
-| `city.js` | streams the world into GPU meshes a chunk at a time (64 segments each, ~28 live) |
-| `shaders.js` | the facade and road shaders — the old `wallTex()` logic moved to the fragment stage |
-| `camera.js` | the camera rig: five modes, mouse orbit, free flight |
-| `main.js` | loop, driving, theme, HUD, the pixel-art downsample pass |
+| `world.js`, `road.js` | Generate the city data and give the renderer a world-space road frame at any distance |
+| `city.js` | Stream the road, buildings, and district art in 64-segment chunks |
+| `facade.glsl.js`, `shaders.js` | Paint the building walls, billboards, roofs, street surfaces, and glass decks |
+| `dressing.js`, `props.js`, `effects.js` | Place and shade district landmarks, structures, lights, and animated props |
+| `sim.js`, `traffic.js`, `signals.js` | Update driving, weather state, traffic, pedestrians, and signals |
+| `camera.js`, `cycle.js`, `cockpit.js` | Render the reference shots, exterior rider, and cockpit artwork |
+| `sky.js`, `weather.js`, `overlay.js` | Draw the panorama, sky effects, and weather on the art grid |
+| `main.js`, `glow.js` | Render the city and the depth-aware road surface and glow passes, then compose the banked scene and foreground |
 
 ## Controls
-
-The original's bindings, unchanged:
 
 `←` `→` steer · `↑` gas · `↓` brake · `A` autopilot · `V` cruise speed ·
 `R` or `W` weather · `L` headlight · `C` camera · `H` hints
 
-Added for the free camera only: `1`–`5` pick a camera directly (cockpit, chase,
-top, orbit, free), drag to look, wheel to zoom, and `B` to toggle glow.
-In the free camera, `WASD` / `QE` move.
+`C` cycles Cockpit, Chase, Drone, Trackside, and Alongside. Keys `1`–`5`
+select those shots directly. Use `6` for orbit or `7` for free flight.
+Drag to look and use the wheel to zoom in orbit. Use `WASD` and `QE` to move
+in free flight. `F` shows diagnostics and `B` toggles glow for comparison.
 
-The art grid is sized from the shorter side of the screen and each art pixel
-spans a whole number of physical pixels. The city always renders at twice
-the art grid resolution with nearest-neighbour sampling.
+The shorter side of the screen determines the art grid. Each art pixel spans
+a whole number of physical pixels and the city always renders at twice the
+art resolution with nearest-neighbour sampling.
 
 ## What is in
 
-Everything is driven by the generator's own data, so it is the same city in the
-same order with the same contents.
+The renderer uses the reference generator’s data for city palettes, districts,
+links, and building details.
 
 **Structures** — tunnels and the level-change bores (tiled lining, cyan guide
 stripe, hazard skirting, ceiling lamp panels); the aqua tube with sea, ribs and
@@ -72,19 +64,19 @@ lanes, and the monorail train.
 **Intersections** — cross streets, zebra crossings and signal masts running the
 original's cycle (16s green, 3s amber, then red; the ruin's just blink amber).
 
-**Sky and weather** — nine weather types as real particles, twinkling stars that
-thicken as you climb, aurora curtains, a mountain ridge, heat shimmer, and
-fireworks over the festival cities.
+**Sky and weather** — an art-grid panorama with stars, aurora, mountains, heat
+shimmer, lightning, and fireworks. The weather streaks and windshield
+droplets are drawn over the banked scene.
 
-**Wet road** — a planar mirror of every glowing thing, so neon smears down the
-tarmac when it rains, as the original's reflection buffer did.
+**Wet road** — the finish pass mirrors the combined scene and glow across the
+horizon, using the road mask, wetness, and brightness to weight the result.
 
-**Cockpit** — the light cycle's handlebars, dome rim, smoked glass and the ring
-of light floating inside, on camera 1.
+**Cockpit** — the light cycle’s handlebars, dome rim, smoked glass, floating
+ring, and projected readout on camera 1.
 
 ## The game (sim.js)
 
-Ported from the original's `update()`, not reinvented:
+Driving and weather use the reference game’s `update()` formulas.
 
 - **Steering physics** — lateral speed limit that scales with pace, the road's
   curvature pushing you outward, and the lean angle whose tangent is sideways
@@ -109,23 +101,8 @@ Ported from the original's `update()`, not reinvented:
 - **Day-night cycle** — one hour per cycle, shifting the sky through dusk, deep
   night and a pre-dawn glow, each city's palette tinted by the hour.
 
-The car AI is the one place the port departs from the original: it compared
-every car with every other (380² a frame). At the density a 3D view needs that
-is 12 million pairs, so cars are binned by position and each only checks the
-bins it can reach.
+Car AI uses position bins so each car checks the bins it can reach.
 
-## Performance
-
-A wet downtown block with rain, reflections, bloom, full traffic and crowds:
-
-| | old build | this |
-|---|---|---|
-| frame | 61.4ms | **5.7ms** |
-| fps | 16 | **174** |
-
-An empty tunnel runs at 751fps. All 30 districts render without error.
-
-One trap worth knowing if you extend this: every instanced chunk borrows its
-position/normal/uv/index from a shared unit mesh, so `dropChunk` detaches those
-before disposing. Disposing them frees the buffers every other chunk is still
-drawing from, and the frame cost climbs from 3ms to 25ms as you drive.
+Each instanced chunk borrows its position, normal, UV, and index buffers
+from a shared unit mesh. `dropChunk` detaches those attributes before
+disposing the chunk geometry so the other meshes can continue drawing.

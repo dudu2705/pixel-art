@@ -1,5 +1,5 @@
 import * as THREE from './vendor/three.module.js';
-import { SEGL, DRAW, NSEG, CITIES, ZONE_NAMES, LINK_NAMES, LH,
+import { SEGL, DRAW, NSEG, CITIES, ZONE_NAMES, LINK_NAMES, LH, TRANS_AT, ELEV, LAYER,
          zoneAt, district, setTime, D } from './world.js';
 import { frameAt } from './road.js';
 import { City, ROAD_LAYER } from './city.js';
@@ -7,7 +7,7 @@ import { Traffic } from './traffic.js';
 import { Weather } from './weather.js';
 import { Sky } from './sky.js';
 import { ArtOverlay } from './overlay.js';
-import { drawCockpit } from './cockpit.js';
+import { drawCockpit, drawRideReadout } from './cockpit.js';
 import { makeLightCycle } from './cycle.js';
 import { Signals } from './signals.js';
 import { S, update as simUpdate, setAuto, setCruise, cruiseKmh } from './sim.js';
@@ -143,29 +143,65 @@ const bike = { dist: 0, lat: 1.75, speed: 42, roll: 0, auto: true };
 {
   for (let t = 0; t < 200; t++) {
     const n = Math.floor(Math.random() * NSEG), d = district(n);
-    if (d !== D.TUNNEL && d !== D.RAMP && d !== D.TUBE) { S.z = n * SEGL; break; }
+    if (!zoneAt(n)[4] && d !== D.TUNNEL && d !== D.RAMP && TRANS_AT[n] < 0 && ELEV[n] === LH[LAYER[n]]) {
+      S.z = n * SEGL;
+      break;
+    }
   }
 }
 
 // the original's bindings, unchanged: arrows drive, A autopilot, R/W weather,
 // V cruise, L lights, C camera, H hints
-const keys = {};
 const simKeys = { left: false, right: false, gas: false, brake: false };
 const KEYMAP = { ArrowLeft: 'left', ArrowRight: 'right', ArrowUp: 'gas', ArrowDown: 'brake' };
-addEventListener('keydown', e => {
-  if (KEYMAP[e.key]) { simKeys[KEYMAP[e.key]] = true; if (S.auto) setAuto(false); e.preventDefault(); return; }
-  const k = e.key.toLowerCase();
-  if (k === 'a') { setAuto(!S.auto); banner2('AUTOPILOT · ' + (S.auto ? 'ON' : 'OFF')); }
-  else if (k === 'r' || k === 'w') { S.rainOn = !S.rainOn; banner2('WEATHER · ' + (S.rainOn ? 'ON' : 'OFF')); }
-  else if (k === 'v') { setCruise(S.cruise + 1); hud(); banner2('CRUISE · ' + cruiseKmh() + ' KMH' + (S.auto ? '' : ' (AUTOPILOT)')); }
-  else if (k === 'l') { lightOn = !lightOn; banner2('HEADLIGHT · ' + (lightOn ? 'ON' : 'OFF')); }
-  else if (k === 'c') { rig.cycleShot(); banner2('CAMERA · ' + MODES[rig.mode]); }
-  else if (k === 'h') document.body.classList.toggle('hints');
-  else if (k === 'b') { BLOOM = !BLOOM; banner2('GLOW · ' + (BLOOM ? 'ON' : 'OFF')); }
-  else if (/^[1-7]$/.test(e.key)) { rig.setMode(+e.key - 1); banner2('CAMERA · ' + MODES[rig.mode]); }
-});
-addEventListener('keyup', e => { if (KEYMAP[e.key]) simKeys[KEYMAP[e.key]] = false; });
 let lightOn = true;
+
+function setDriveKey(key, down) {
+  simKeys[key] = down;
+  if (down && S.auto) setAuto(false);
+}
+
+function handleControl(key) {
+  if (key === 'a') { setAuto(!S.auto); banner2('AUTOPILOT · ' + (S.auto ? 'ON' : 'OFF')); }
+  else if (key === 'r' || key === 'w') { S.rainOn = !S.rainOn; banner2('WEATHER · ' + (S.rainOn ? 'ON' : 'OFF')); }
+  else if (key === 'v') { setCruise(S.cruise + 1); banner2('CRUISE · ' + cruiseKmh() + ' KMH' + (S.auto ? '' : ' (AUTOPILOT)')); }
+  else if (key === 'l') { lightOn = !lightOn; banner2('HEADLIGHT · ' + (lightOn ? 'ON' : 'OFF')); }
+  else if (key === 'c') { rig.cycleShot(); banner2('CAMERA · ' + MODES[rig.mode]); }
+  else if (key === 'h') document.body.classList.toggle('hints');
+  else if (key === 'f') document.body.classList.toggle('showfps');
+  else if (key === 'b') { BLOOM = !BLOOM; banner2('GLOW · ' + (BLOOM ? 'ON' : 'OFF')); }
+  else if (/^[1-7]$/.test(key)) { rig.setMode(+key - 1); banner2('CAMERA · ' + MODES[rig.mode]); }
+  hud();
+}
+
+addEventListener('keydown', event => {
+  const driveKey = KEYMAP[event.key];
+  if (driveKey) {
+    setDriveKey(driveKey, true);
+    event.preventDefault();
+  } else if (!event.repeat) handleControl(event.key.toLowerCase());
+});
+addEventListener('keyup', event => {
+  if (KEYMAP[event.key]) setDriveKey(KEYMAP[event.key], false);
+});
+addEventListener('blur', () => {
+  for (const key of Object.keys(simKeys)) setDriveKey(key, false);
+});
+document.getElementById('fpsz').addEventListener('click', () => handleControl('f'));
+for (const button of document.querySelectorAll('[data-drive]')) {
+  button.addEventListener('pointerdown', event => {
+    event.preventDefault();
+    button.setPointerCapture(event.pointerId);
+    setDriveKey(button.dataset.drive, true);
+    hud();
+  });
+  for (const action of ['pointerup', 'pointercancel', 'lostpointercapture']) {
+    button.addEventListener(action, () => setDriveKey(button.dataset.drive, false));
+  }
+}
+for (const button of document.querySelectorAll('[data-control]')) {
+  button.addEventListener('click', () => handleControl(button.dataset.control));
+}
 function banner2(text) { S.zoneText = text; S.zoneT = 2.5; }
 
 function drive(dt) {
@@ -192,15 +228,20 @@ const el = {
   mode: document.getElementById('mode'), place: document.getElementById('place'),
   kmh: document.getElementById('kmh'), fps: document.getElementById('fps'),
 };
+const autoButton = document.querySelector('[data-control="a"]');
+const weatherButton = document.querySelector('[data-control="w"]');
+const lightButton = document.querySelector('[data-control="l"]');
 rig.onMode = () => hud();
 function hud() {
   const z = zoneAt(Math.floor(S.z / SEGL) % NSEG);
   el.mode.textContent = MODES[rig.mode]
     + (S.auto ? '  ·  AUTO ' + cruiseKmh() : '  ·  MANUAL') + (S.rainOn ? '' : '  ·  DRY');
   el.place.textContent = CITIES[z[3]].name + '  /  ' + (z[4] ? (LINK_NAMES[z[2]] || 'LINK') : ZONE_NAMES[z[2]]);
+  autoButton.classList.toggle('on', S.auto);
+  weatherButton.classList.toggle('on', S.rainOn);
+  lightButton.classList.toggle('on', lightOn);
 }
 const banner = document.getElementById('banner');
-const lvl = document.getElementById('lvl');
 
 // ---------- loop ----------
 let last = performance.now(), fpsAcc = 0, fpsN = 0, T = 0;
@@ -258,20 +299,19 @@ function frame(now) {
   overlay.clear();
   weather.draw(overlay, S, cockpit);
   if (cockpit) drawCockpit(overlay, S);
+  else drawRideReadout(overlay, S);
   overlay.upload();
   renderer.setRenderTarget(null);
   renderer.render(quadScene, quadCam);
 
-  // the announcement board and the level readout
-  banner.textContent = S.zoneText;
-  banner.style.opacity = S.zoneT > 0 ? Math.min(1, S.zoneT) : 0;
-  lvl.textContent = 'L' + ((S.layer ?? 0) + 1) + (S.waitLight ? '  ·  RED' : '');
-  lvl.style.color = ['#ff9638', '#00ebff', '#ff3cbe'][S.layer ?? 0];
+  if (banner.textContent !== S.zoneText) banner.textContent = S.zoneText;
+  banner.style.opacity = S.zoneT > 0 ? 1 : 0;
 
   fpsAcc += dt; fpsN++;
   if (fpsAcc > 0.5) {
     el.fps.textContent = Math.round(fpsN / fpsAcc) + ' FPS';
     el.kmh.textContent = Math.round(S.speed * 3.6) + ' KM/H';
+    hud();
     fpsAcc = 0; fpsN = 0;
   }
   requestAnimationFrame(frame);

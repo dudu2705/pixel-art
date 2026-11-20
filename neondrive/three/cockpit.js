@@ -147,3 +147,22 @@ export function drawCockpit(overlay, state) {
   for (let k = 0; k < 4; k++) for (const [x, y, dx, dy] of [[bx0, by0, 1, 0], [bx0, by0, 0, 1], [bx1, by0, -1, 0], [bx1, by0, 0, 1], [bx0, by1, 1, 0], [bx0, by1, 0, -1], [bx1, by1, -1, 0], [bx1, by1, 0, -1]])
     overlay.add(x + dx * k, y + dy * k, hc, 0.3 * a);
 }
+
+
+export function drawRideReadout(overlay, state) {
+  const level = state.layer ?? 0, y = overlay.height - 9;
+  const status = state.waitLight ? 'RED' : state.auto ? 'AUTO' : 'MANUAL';
+  const color = state.waitLight ? [255, 60, 60] : state.auto ? [80, 255, 150] : [255, 150, 60];
+  const draw = (label, x, ink) => {
+    for (const ch of label) {
+      const glyph = FONT[ch] || FONT[' '];
+      for (let i = 0; i < glyph.length; i++) {
+        if (glyph[i] === '1') overlay.tint(x + i % 3, y + Math.floor(i / 3), ink, 0);
+      }
+      x += 4;
+    }
+  };
+  draw(String(Math.round(state.speed * 3.6)), 4, [150, 230, 255]);
+  draw('L' + (level + 1), 22, LVC[level]);
+  draw(status, 34, color);
+}
