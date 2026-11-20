@@ -136,22 +136,128 @@ the map in this order, one commit each. Whoever picks this up: tick the box, add
   from the line, as the reference. Headless 4-min autopilot run: 169 junction entries, 0 on red, autopilot held
   at red 6 times (longest 11.8 s), no gridlock. Masts render over the boulevard with lit heads.
   Next: item 2. Stop lines sit at each node's `trim`; put the zebra between the stop line and the junction disc.
-- [x] **2. Zebra crossings and pedestrians crossing on red.** (zebra paint still missing, see below) Painted crossings on each signalled approach;
+- [x] **2. Zebra crossings and pedestrians crossing on red.** Painted crossings on each signalled approach;
   people cross while their road is red, as `crossersRaw` does in the reference (umbrellas in rain). Traffic waits
   for them; hitting one stops the rider dead.
   Done in `map-signals.js` (`crossers`, `pedsOn`, `allCrossers`), `map-drive.js` (traffic waits in `canEnter`, the
   manual rider stops dead within 0.9 m), `traffic.js` (`updateMap` draws them with the loop's body, head and glowing
   umbrella). People set off in the first 3.4 s of red and late ones finish into the green, which holds traffic.
   Headless: 175 junction entries with 0 on red, longest hold 14.3 s, no gridlock, rider hit stops at 0 km/h.
-  **Known gaps:** (a) the zebra bars built in `buildMapSignals` don't show, because map roads are drawn in their own
-  later pass (`renderSurfaces`) over them; paint the zebra in the map road shader instead (the loop does it in
-  `shaders.js` with the `zebra` flag), at `ZEBRA` = 1.6 m past each signalled approach's stop line, full road width.
-  (b) Cars turning in from a green approach drive through people on the crossing of the road they enter; only the
-  manual rider collides. Fix later with a yield check on the exit edge's crossing in `canEnter`.
-- [ ] **3. Sidewalk pedestrians** walking the map's sidewalks and skywalks (the loop's crowd art).
-- [ ] **4. Hover cars and air-lane gates** over the map's main avenues.
-- [ ] **5. Monorail / skytrain** on a fixed loop over Vanta Bay.
-- [ ] Then: Crown level and lift (see "Later build" above), district looks per neighbourhood, more cities.
+  Follow-up, now fixed: the road shader paints every road-end zebra just outside its junction disc
+  (`uMapZebra`, from each node's `discR` in `map.js`), and signalled approaches have a hold line 4.9 m short of the
+  old stop point (`holdBack`), so the order along an approach is hold line, zebra, junction. Masts stand at the hold
+  line. `mayPass` covers the light and people on the zebra of the vehicle's own road and of the road it turns into;
+  `canEnter` re-checks the turn-in zebra at the junction. Headless 2-4 min: 0 red runs over 79-174 hold-line passes,
+  no gridlock. Remaining minor gap: a few sampled frames (11 in 2 min) where a car passes within 1 m of a sidewalk
+  walker, likely where a ramp or deck edge meets another road's sidewalk; not traced yet.
+- [x] **3. Sidewalk pedestrians** walking the map's sidewalks and skywalks (the loop's crowd art).
+  Done in `map-people.js`: 504 walkers, one per ~9 m of sidewalk each side on every road except the ramps (street,
+  plaza ring and Sky Avenue deck), generated as the loop's `peds` (lane inside the sidewalk, 0.9-1.7 m/s either way,
+  70% umbrellas). Each wraps along its own stretch between the junction trims. `map-drive.js` adds those within
+  180 m of the rider to the people list (~230-340, inside the 450-body pool); the manual rider riding the sidewalk
+  stops dead on hitting one. Headless: hit confirmed; chase-view screenshot shows the crowd and umbrellas.
+  Gap: walkers pop at the ends of their stretch (junction corners) instead of turning the corner.
+- [x] **4. Hover cars and air-lane gates** over the map's main avenues.
+  Done in `map-air.js`: two straight air lanes, Vanta Boulevard (x -330..250, z 0) and Sky Avenue Street
+  (x 128, z -300..320), 36 hover cars each at the loop's two heights (17 m, 57 m), both directions, drawn by
+  `traffic.updateMap` exactly as the loop's flyers. Low traffic over the boulevard climbs 22 m over Prism Plaza's
+  fountain. Gate rings every 60 m at both heights in Vanta Bay's neon (`buildGates`). Screenshot: drone view shows
+  the gates over the boulevard. Gap: hover cars wrap from one end of their lane to the other (pop at the far ends).
+- [x] **5. Monorail** on a fixed loop over Vanta Bay.
+  Done in `map-rail.js`: a rounded rectangle over the inner sidewalk of the downtown ring streets (x ±128,
+  z ±109; the east side sits further in because Sky Avenue Street is two lanes each way), beam at 12.6 m, pylons
+  every 26 m except within a junction disc + 3 m, one ten-car train at 26 m/s drawn as the loop's monorail.
+  Free-flight screenshot shows beam, pylons and the lit train. Not done: the 40 m skytrain (it would need a route
+  clear of the 35 m Sky Avenue deck); pylons are not walls for the free rider.
+- [x] **6. Crown level.** `map.js`: `LEVEL_Y` [0, 35, 100] and `LEVEL_NAMES`; `crown-helix`, a two-way road
+  winding 3 turns (r 70 m) round a 280 m tower from the north end of the Sky Avenues (`sky-north`) up to
+  `crown-arrival` directly above it: 1,321 m for the 65 m climb, 5.7% peak grade (~20 m of road per metre), open to
+  the sky with rails and deck undersides; `crown-way` at 100 m, north then one 120 m-radius bend west to
+  `crown-outlook`, limit 120 km/h. `map-city.js`: the helix tower and ~30 towers of 150-250 m lining Crown Way; the
+  deck details, glass and rails that were keyed to level 1 now apply to every raised level and the helix.
+  `nearestOnPath`/`onSurface` take the rider's height, because the helix's passes overlap in plan view.
+  `map-drive.js`: banners for all three levels ("▲ LEVEL 3 · CROWN LEVEL"), the autopilot tour now climbs to the
+  Crown outlook and back, two quiet Crown cars (level-restricted cars now U-turn at a dead end rather than leave
+  their level). The hands-off assist now follows the road's own turn rate and eases back from the edge.
+  Verified in node (fast, no browser): hands-off manual climb of the whole helix at 90 km/h with no wall contact,
+  onto Crown Way at 120 km/h to the outlook; 10 min autopilot: 81 s on the Crown, all four level banners, no
+  crashes, no stop over 20 s, Crown cars never left the Crown. Sim cost ~0.2-1.2 ms a step.
+  Testing tip: drive `MapDrive` directly in node (`new MapDrive()`, `update(1/60, keys)`); the headless browser
+  with SwiftShader is far too slow for long simulated runs now that the Crown towers are in.
+- [ ] **7. Lift** (drive-on tower elevator between levels).
+- [x] **8. District looks per street.** `map-dressing.js`: each Vanta Bay street is one of the city's reference
+  districts (`STREET_DISTRICT`: boulevard west = downtown, east = glass spires, Lantern/Market rows and Marina west
+  = lantern market, Arcade street/row and Foundry east = arcade row, harbour end = docklands) and gets that
+  district's props by the loop's `dressing.js` rules every 4 m: downtown overhead cables, market lantern strings and
+  stalls with awnings and steam, arcade neon hanging signs, vent steam (downtown, spires, docks), dock container
+  stacks and a gantry crane, plus the "VANTA BAY" gantry over the boulevard where you ride in. Screenshots confirm
+  the market and docks. Gap: stalls and signs on the sidewalk are not walls for the free rider.
+- [x] **9. Sound effects.** `audio.js`, all synthesised with Web Audio, no files, no music: engine (saw + square
+  sub + octave sine, pitch and filter follow speed), wind (band-passed noise, rises with speed and height), rain on
+  the visor (hiss plus random drop taps, heavier in monsoon and at speed), whoosh when a car crosses from ahead to
+  behind within 7 m (doppler sweep, louder with closing speed), thunder after each lightning flash (delayed
+  0.4-2.9 s), soft thump on a crash, and in the bores a lowpass plus short echo. Starts on the first key or tap
+  (browser rule); `M` mutes. Verified headlessly: context running, engine 116 Hz at 134 km/h, wind and rain gains
+  follow, thunder/crash fire without errors, mute works. Levels are untuned by ear; adjust gains in `update()`.
+  Works in `?loop` too (speed only, no whooshes).
+- [x] **10. Second city: Aurum Heights, and the skybridge.** `map.js`: `AURUM` (a 3x3 street grid at x 1300-1600,
+  z -130..130: Sun Avenue, 3 lanes each way, through the middle; Ember/Halo rows; Gilt/Spire/Tether streets) and
+  `BRIDGE`, a 911 m two-way skybridge from Vanta Boulevard's harbour end (`east-end`), 22 m over the bay, eased
+  ramps, 7.1% peak grade. Every road now carries `city` ('VANTA BAY', 'AURUM HEIGHTS' or 'link'). `map-city.js`:
+  Aurum's own building templates and palette (`templatesFor`), its blocks filled on a 30 m grid with spires to the
+  east, a skyline ring, the bay drawn as water by the ground shader. `map-bridge.js`: open water, two bridge towers
+  (92 m) with main cables and hangers, lantern boats, and the space elevator tether with glow bands and pods.
+  `map-dressing.js`: Aurum districts (holo-garden trees on Sun Avenue, construction cones on Ember Row, downtown
+  cables, spires steam) and an "AURUM HEIGHTS" gantry. `sim.js`: `blendCities(a, b, t)` (the link blend, by name).
+  `map-drive.js`: sky, fog and weather blend across the bridge (Vanta rain to Aurum clear, fireworks fade in); far
+  off the sky paints the elevator, near it the real one shows; banners `SKYBRIDGE → AURUM HEIGHTS`,
+  `AURUM HEIGHTS · SUN AVENUE` and back; the autopilot tour crosses to Aurum, rounds it and returns; ~10 Aurum cars
+  wander. Verified in node: autopilot from the harbour end crosses, tours Aurum for ~3 min and returns over the
+  bridge, no stop over 20 s (20 cars jammed the small grid; one car per junction at a time), clear weather in
+  Aurum. Screenshots: Sun Avenue's holo trees under the gold sky; the bridge over dark water.
+  Junction fixes found while testing the longer tour: a turning car now waits only for people in the lanes it will
+  drive into (`pedsOnOutbound`), and junctions serve first come, first served (`this.waiting`): the first car refused
+  only because the junction is busy goes next, so heavy cross traffic can't starve a turn (it starved Arcade Row's
+  turn onto the harbour end once the bridge drew traffic). Remaining: one or two waits of 20-30 s per 10 min at busy
+  junctions, mostly a turn held by people crossing; junctions still pass one car at a time (`owners`), the
+  throughput limit to lift if traffic grows.
+  Gaps: Aurum has only street level (no Sky Avenues or Crown yet); the full tour is now long (Vanta's three levels
+  then Aurum), about 15+ min a lap; bridge cables are boxes stepped along the sag.
+- [x] **11. City template, third city: Glacia, and the mega-highway.** `map.js`: `GRID_CITIES` is now the city
+  template (gate road, central avenue 3 lanes each way, 3x3 street grid; per city: prefix, position, street names,
+  optional landmark) and `LINKS` lists every link west to east (`a`, `b`, `x0`, `x1`). Aurum moved onto it (road ids
+  now `au-av`, `au-av-mid`, `au-av-east`); Glacia (`gl-*`, x 2600-2900) added, joined to Aurum's east end by an 850 m
+  straight mega-highway (3 lanes each way, 300 km/h, `road.highway`). `map-city.js`: lots for every grid city from its
+  own templates and palette (`cityLook`). `map-dressing.js`: `GRID_DISTRICTS` per city by street role (Glacia: spires
+  avenue, market and data-canyon rows, downtown/data/spires columns), data-canyon lasers, highway barriers and an
+  overpass every 280 m, a gantry per city. `map-drive.js`: the theme blend walks `LINKS` by the rider's x, link
+  banners read from `road.link` ("MEGA-HIGHWAY → GLACIA"), `placeNow` drives the HUD place name, the tour continues to
+  Glacia and back. Verified in node: autopilot runs Aurum → highway → Glacia (fog, fogK 0.42) → back to Aurum, all
+  banners right, no crashes. Screenshots: the highway and Glacia's blue streets.
+  **Adding a city now:** add a spec to `GRID_CITIES` (east of the last), a link to `LINKS` and its road in the link
+  block of `map.js`, a `GRID_DISTRICTS` entry, and its two tour stops in `map-drive.js` `itinerary`.
+- [x] **12. Junction waits fixed.** Benchmark (`waits` test: 10 min of autopilot from three starts, counting stops
+  over 20 s): rider 0/3/5 such waits, longest 137 s, other cars 95/67/57 → rider 0/0/0, longest 10-17 s (a red
+  light), other cars 4/3/4, no gridlock. Changes in `map-drive.js` / `map-signals.js`:
+  (a) a car crosses its hold line only when `canEnter` says it can go all the way through, so nobody waits out a red
+  inside the junction; (b) people step off the kerb 1.5-4.5 s into the red, once the junction has cleared;
+  (c) `owners` is a set per junction and `junctionFree` lets every car with the same green axis share a signalled
+  junction (unsignalled ones stay one at a time); (d) a car won't start a turn into an exit lane another car is
+  already turning into, and equal positions on an edge are tie-broken, which fixed a two-car deadlock that (c)
+  exposed; (e) the first-come priority (`waiting`) ignores both a busy junction and a busy merge lane, which fixed
+  the down ramp starving behind street through-traffic at `street-down`.
+- [x] **13. Fourth city: Coral Deep, and the aqua tube.** Coral Deep (`cd-*`, x 3850-4150) on the city template, its
+  reference districts (reef coral and holo-garden trees, stilt-canal lantern boats); the aqua tube (`aqua-tube`, 800 m
+  from Glacia's east end, `road.tube` = the glassed stretch) built in `map-bridge.js` as the loop builds its sea tube:
+  glass walls and ceiling in the glass material (water and caustics outside), lit portals with "AQUA TUBE"; the
+  ground shader paints a teal sea floor round it; inside it counts as `enclosed` (sheltered, muffled sound, low
+  camera) and `map-drive.js` tints fog and sky to the reference's sea colours with `TH.water`. Coral Deep is on the
+  tour. Verified in node: autopilot Glacia → tube → Coral Deep → all the way home to Vanta in 7 min; weather by place
+  rain / clear / fog / bubbles; tube fully sheltered; no stop over 20 s, no crashes. Screenshots: the tube interior,
+  Coral Deep's avenue with bubbles and coral. Hold lines moved 1.5 m further back (bike nose was on the zebra).
+  Gap: walkers also walk the tube's sidewalks.
+- [ ] Then: Sky Avenues and Crown for the grid cities, more cities and their links (each with its reference link type:
+  vactrain, ferry, volcano rim, cloud causeway, pontoon road, salt flats still to build).
 
 ## Driving feel
 

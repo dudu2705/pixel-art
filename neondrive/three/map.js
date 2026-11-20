@@ -7,11 +7,16 @@ export const PLAZA_RADIUS = 43;
 export const RAMP_BORE_HALF_WIDTH = 5.1;
 const R = PLAZA_RADIUS;
 const SKY_HEIGHT = 35;
+export const LEVEL_Y = [0, SKY_HEIGHT, 100];          // street, Sky Avenues, Crown
+export const LEVEL_NAMES = ['STREET', 'SKY AVENUES', 'CROWN'];
 const DECK_X = 128;
 const DECK_SOUTH = -305;
 const DECK_NORTH = 325;
+// the Crown helix: from the north end of the Sky Avenues, 3 turns round a 280 m tower, out heading north above
+// where it began
+export const CROWN_HELIX = { cx: DECK_X - 70, cz: DECK_NORTH, r: 70, turns: 3 };
 
-const node = (id, x, z, level = 0) => ({ id, x, y: level * SKY_HEIGHT, z, level, exits: [] });
+const node = (id, x, z, level = 0) => ({ id, x, y: LEVEL_Y[level], z, level, exits: [] });
 const nodes = Object.fromEntries([
   node('plaza-west', -R, 0), node('plaza-north', 0, R),
   node('plaza-east', R, 0), node('plaza-south', 0, -R),
@@ -23,6 +28,7 @@ const nodes = Object.fromEntries([
   node('street-north', DECK_X, 300), node('street-south', DECK_X, -285),
   node('sky-arrival', DECK_X, 272, 1), node('sky-departure', DECK_X, -145, 1),
   node('sky-north', DECK_X, DECK_NORTH, 1), node('sky-south', DECK_X, DECK_SOUTH, 1),
+  node('crown-arrival', DECK_X, DECK_NORTH, 2), node('crown-outlook', -262, 480, 2),
 ].map(n => [n.id, n]));
 
 function path(points) {
@@ -65,10 +71,10 @@ export function frameOn(path, distance, out = {}) {
 const roads = [], edges = [];
 function road(id, name, start, end, lanes, options = {}) {
   const a = nodes[start], b = nodes[end];
-  const { interior = [], oneWay = false, speed = 140 } = options;
+  const { interior = [], oneWay = false, speed = 140, city = 'VANTA BAY' } = options;
   const points = [a, ...interior, b];
   const r = {
-    id, name, a, b, lanes, oneWay, speed: speed / 3.6,
+    id, name, a, b, lanes, oneWay, speed: speed / 3.6, city,
     level: a.level === b.level ? a.level : null,
     halfWidth: (oneWay ? lanes * 0.5 : lanes) * LANE_WIDTH,
     path: path(points), edges: [],
@@ -145,16 +151,88 @@ function spiralRamp(id, name, start, end) {
   ramp.bore = { from: 56, to: Math.floor((ramp.path.length - 56) / SEGL) * SEGL, mode: a.level < b.level ? 1 : 2 };
 }
 
+// two-way, open to the sky, ~990 m for the 65 m climb (about 15 m of road per metre, as the reference)
+function crownHelix() {
+  const { cx, cz, r, turns } = CROWN_HELIX, a = nodes['sky-north'], b = nodes['crown-arrival'];
+  const samples = Math.round(turns * 64), end = turns * 2 * Math.PI, flat = 0.04;
+  const points = [];
+  for (let i = 1; i < samples; i++) {
+    const t = i / samples, phi = t * end;
+    // a steady grade, eased over the first and last 6% of the climb
+    const k = Math.min(1, Math.max(0, (t - flat) / (1 - 2 * flat))), e = 0.06;
+    const rise = k < e ? k * k / (2 * e * (1 - e)) : k > 1 - e ? 1 - (1 - k) ** 2 / (2 * e * (1 - e)) : (k - e / 2) / (1 - e);
+    points.push({ x: cx + r * Math.cos(phi), y: a.y + (b.y - a.y) * rise, z: cz + r * Math.sin(phi) });
+  }
+  const helix = road('crown-helix', 'Crown Helix', 'sky-north', 'crown-arrival', 1, { interior: points, speed: 90 });
+  helix.helix = true;
+}
 road('sky-south-through', 'Sky Avenues', 'sky-south', 'sky-departure', 2, { speed: 100 });
 road('sky-deck', 'Sky Avenues', 'sky-departure', 'sky-arrival', 2, { speed: 110 });
 road('sky-north-through', 'Sky Avenues', 'sky-arrival', 'sky-north', 2, { speed: 100 });
 spiralRamp('sky-up', 'Sky Ramp Up', 'street-up', 'sky-arrival');
 spiralRamp('sky-down', 'Sky Ramp Down', 'sky-departure', 'street-down');
+crownHelix();
+// north off the helix, one wide 120 m bend (holdable at the 120 km/h limit), then west between the Crown towers
+road('crown-way', 'Crown Way', 'crown-arrival', 'crown-outlook', 2, { speed: 120, interior:
+  Array.from({ length: 16 }, (_, i) => { const a = (i + 0.5) / 16 * Math.PI / 2;
+    return { x: DECK_X - 120 + 120 * Math.cos(a), y: 100, z: 360 + 120 * Math.sin(a) }; }) });
+
+// ---------- the grid cities beyond Vanta Bay, and the links that join them ----------
+// Each is the same template: a gate road off the incoming link onto a central avenue (3 lanes each way) through a
+// 3x3 grid of streets (rows at z0/z1, columns at x0/xm/x1). Only names, districts and landmarks differ.
+export const GRID_CITIES = [
+  { name: 'AURUM HEIGHTS', p: 'au', gate: 1150, x0: 1300, xm: 1450, x1: 1600, z0: -130, z1: 130,
+    avenue: 'Sun Avenue', rows: ['Ember Row', 'Halo Row'], cols: ['Gilt Street', 'Spire Street', 'Tether Street'],
+    elevator: { x: 1525, z: 65 } },
+  { name: 'GLACIA', p: 'gl', gate: 2450, x0: 2600, xm: 2750, x1: 2900, z0: -130, z1: 130,
+    avenue: 'Frost Avenue', rows: ['Rime Row', 'Aurora Row'], cols: ['Shard Street', 'Lattice Street', 'Beacon Street'] },
+  { name: 'CORAL DEEP', p: 'cd', gate: 3700, x0: 3850, xm: 4000, x1: 4150, z0: -130, z1: 130,
+    avenue: 'Tide Avenue', rows: ['Kelp Row', 'Pearl Row'], cols: ['Anemone Street', 'Current Street', 'Lantern Street'] },
+];
+export const AURUM = GRID_CITIES[0];
+export const BRIDGE = { x0: 240, x1: AURUM.gate, top: 22, ramp: 350 };
+// along the map, west to east: each link joins city a (west) to city b (east) between x0 and x1
+export const LINKS = [
+  { id: 'skybridge', name: 'SKYBRIDGE', a: 'VANTA BAY', b: 'AURUM HEIGHTS', x0: BRIDGE.x0, x1: BRIDGE.x1 },
+  { id: 'mega-highway', name: 'MEGA-HIGHWAY', a: 'AURUM HEIGHTS', b: 'GLACIA', x0: AURUM.x1, x1: GRID_CITIES[1].gate },
+  { id: 'aqua-tube', name: 'AQUA TUBE', a: 'GLACIA', b: 'CORAL DEEP', x0: GRID_CITIES[1].x1, x1: GRID_CITIES[2].gate },
+];
+for (const c of GRID_CITIES) {
+  const { p } = c, add = (id, x, z) => { nodes[id] = node(id, x, z); };
+  add(p + '-gate', c.gate, 0);
+  for (const [i, x] of [c.x0, c.xm, c.x1].entries()) for (const [j, z] of [c.z0, 0, c.z1].entries()) add(p + '-' + i + j, x, z);
+  const A = { city: c.name };
+  road(p + '-av', c.avenue, p + '-gate', p + '-01', 3, { ...A, speed: 140 });
+  road(p + '-av-mid', c.avenue, p + '-01', p + '-11', 3, { ...A, speed: 140 });
+  road(p + '-av-east', c.avenue, p + '-11', p + '-21', 3, { ...A, speed: 140 });
+  for (const j of [0, 2]) for (const i of [0, 1]) road(p + '-r' + j + i, c.rows[j / 2], p + '-' + i + j, p + '-' + (i + 1) + j, 1, { ...A, speed: 80 });
+  for (const i of [0, 1, 2]) for (const j of [0, 1]) road(p + '-c' + i + j, c.cols[i], p + '-' + i + j, p + '-' + i + (j + 1), 1, { ...A, speed: 80 });
+}
+{
+  // the skybridge: up off Vanta Boulevard's harbour end, 22 m over the water, and down onto Sun Avenue; ~16 m of road
+  // per metre at the ends, eased like the helix
+  const { x0, x1, top, ramp } = BRIDGE, pts = [];
+  for (let x = x0 + 8; x < x1 - 7; x += 8) {
+    const r = Math.min(x - x0, x1 - x, ramp) / ramp, e = 0.12;
+    const k = r < e ? r * r / (2 * e * (1 - e)) : r > 1 - e ? 1 - (1 - r) ** 2 / (2 * e * (1 - e)) : (r - e / 2) / (1 - e);
+    pts.push({ x, y: top * Math.min(1, k), z: 0 });
+  }
+  const br = road('skybridge', 'Skybridge', 'east-end', 'au-gate', 2, { interior: pts, speed: 180, city: 'link' });
+  br.bridge = true; br.link = LINKS[0];
+  // the mega-highway: straight and fast from the east end of Sun Avenue to Glacia's gate, barriers and overpasses
+  const hw = road('mega-highway', 'Mega-Highway', 'au-21', 'gl-gate', 3, { speed: 300, city: 'link' });
+  hw.highway = true; hw.link = LINKS[1];
+  // the aqua tube: a glass tunnel across the sea floor from Glacia's east end to Coral Deep, sheltered all the way
+  const tube = road('aqua-tube', 'Aqua Tube', 'gl-21', 'cd-gate', 2, { speed: 200, city: 'link' });
+  tube.tube = { from: 30, to: tube.path.length - 30 }; tube.link = LINKS[2];
+}
+export function inTube(road, distance) { return Boolean(road.tube && distance >= road.tube.from && distance <= road.tube.to); }
 
 for (const n of Object.values(nodes)) {
   n.halfWidth = Math.max(...roads.filter(r => r.a === n || r.b === n).map(r => r.halfWidth));
   n.ramp = roads.find(r => r.bore && (r.a === n || r.b === n));
   n.trim = n.ramp ? 24 : n.id.startsWith('plaza-') ? 8 : n.halfWidth + 3;
+  n.discR = n.ramp ? 0 : Math.max(n.trim + 1, n.halfWidth + 3.5);   // the junction disc map-city draws
 }
 
 export const VANTA_BAY = { nodes, roads, edges };
@@ -170,14 +248,17 @@ export function underSkyDeck({ x, y, z }) {
 
 // the closest point of a path to (x, z) in plan view: distance along it, signed sideways offset (+ is the
 // rider's right, as laneOffset), height and heading there, and whether the point lies past either end
-export function nearestOnPath(path, x, z, out = {}) {
-  let best = Infinity;
+export function nearestOnPath(path, x, z, out = {}, y = null) {
+  let best = Infinity, bestPlan = 0;
   for (const g of path.segments) {
     const len2 = g.dx * g.dx + g.dz * g.dz;
     const t = len2 > 0 ? Math.max(0, Math.min(1, ((x - g.start.x) * g.dx + (z - g.start.z) * g.dz) / len2)) : 0;
     const px = g.start.x + g.dx * t, pz = g.start.z + g.dz * t, d2 = (x - px) ** 2 + (z - pz) ** 2;
-    if (d2 < best) { best = d2; out.s = g.at + g.size * t; }
+    // with a height, a pass of the road far above or below doesn't count as near
+    const score = y === null ? d2 : d2 + 25 * (g.start.y + g.dy * t - y) ** 2;
+    if (score < best) { best = score; bestPlan = d2; out.s = g.at + g.size * t; }
   }
+  best = bestPlan;
   frameOn(path, out.s, out);
   out.lat = (x - out.x) * out.rx + (z - out.z) * out.rz;
   out.dist = Math.sqrt(best);
@@ -192,7 +273,7 @@ export const SURFACES = (() => {
   for (const road of roads) list.push({ kind: 'road', road, half: road.halfWidth + SW, nodes: [road.a, road.b], level: road.level });
   for (const n of Object.values(nodes)) {
     if (n.ramp) continue;
-    list.push({ kind: 'node', node: n, radius: Math.max(n.trim + 1, n.halfWidth + 3.5), nodes: [n], level: n.level });
+    list.push({ kind: 'node', node: n, radius: n.discR, nodes: [n], level: n.level });
   }
   for (const s of list) {
     s.next = list.filter(o => o !== s && o.nodes.some(n => s.nodes.includes(n)));
@@ -202,14 +283,14 @@ export const SURFACES = (() => {
 })();
 
 // where (x, z) lies on a surface: null if outside it, else its height, heading and how deep inside (0 at the edge)
-export function onSurface(surface, x, z, out = {}) {
+export function onSurface(surface, x, z, out = {}, y = null) {
   if (surface.kind === 'node') {
     const n = surface.node, d = Math.hypot(x - n.x, z - n.z);
     if (d > surface.radius) return null;
     out.y = n.y; out.th = null; out.depth = surface.radius - d; out.s = 0; out.lat = 0;
     return out;
   }
-  nearestOnPath(surface.road.path, x, z, out);
+  nearestOnPath(surface.road.path, x, z, out, y);
   const off = out.end ? out.dist : Math.abs(out.lat);
   if (off > surface.half) return null;
   out.depth = surface.half - off;

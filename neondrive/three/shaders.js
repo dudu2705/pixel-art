@@ -44,6 +44,7 @@ export const roadFrag = /* glsl */`
   uniform vec4 uMapDeck;
   uniform float uMapContinuous, uMapBikeHeight;
   uniform vec3 uMapFork;
+  uniform vec2 uMapZebra;
   uniform vec3 uCam;
   uniform sampler2D uSectors;
   uniform sampler2D uSceneDepth;
@@ -155,7 +156,8 @@ vec3 mapGround(float lx, float w, float pxw, out float reflectivity) {
   reflectivity = 0.5;
   if (uMapMode < 2.5) {
     if (a < uRW) {
-      if (!byFork && endDist > 8.0 && endDist < 10.5 && uMapLength > 45.0 && mod(a + 0.45, 1.0) < 0.55) {
+      float zs = w < uMapLength - w ? uMapZebra.x : uMapZebra.y;
+      if (!byFork && endDist > zs && endDist < zs + 2.5 && uMapLength > 2.0 * zs + 20.0 && mod(a + 0.45, 1.0) < 0.55) {
         reflectivity = 0.15;
         return vec3(215, 215, 225);
       }

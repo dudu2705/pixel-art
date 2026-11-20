@@ -95,7 +95,19 @@ export class Traffic {
     this.pools = [this.car, this.body, this.glow, this.ped, this.umb, this.flyer, this.lamp];
   }
 
-  updateMap(vehicles, people = [], time = 0) {
+  updateMap(vehicles, people = [], time = 0, flyers = [], rail = []) {
+    for (const c of rail) {                           // the monorail train's cars, as the loop draws them
+      push(this.flyer, [c.x, c.y, c.z], [2.4, 3.0, 6.0], c.th, [60, 64, 86], [c.i]);
+      push(this.glow, [c.x, c.y + 1.7, c.z], [2.5, 0.8, 5.0], c.th, [255, 200, 140], [0, 0.5]);
+    }
+    for (const fl of flyers) {                        // hover cars, as the loop draws them
+      const { x, y, z, yaw } = fl;
+      push(this.flyer, [x, y, z], [2.0, 0.7, 4.6], yaw, fl.body, [fl.bob]);
+      push(this.glow, [x, y + 0.72, z], [1.5, 0.3, 2.2], yaw, fl.body, [0, 0]);
+      push(this.glow, [x, y - 0.12, z], [1.7, 0.1, 3.6], yaw, fl.glow, [0, 0.4]);
+      const lc = fl.dir < 0 ? [230, 240, 255] : [255, 40, 70];
+      push(this.glow, [x + Math.sin(yaw) * 2.3, y + 0.3, z + Math.cos(yaw) * 2.3], [1.2, 0.2, 0.2], yaw, lc, [0, 0.8]);
+    }
     for (const c of people) {                         // people on the crossings, as the loop draws its crossers
       const bob = Math.abs(Math.sin(time * 6 + c.ph)) * 0.09;
       push(this.ped, [c.x, c.y + bob, c.z], [0.5, 1.5, 0.38], c.th, c.coat, [c.ph]);

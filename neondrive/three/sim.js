@@ -106,6 +106,16 @@ export function blendTheme(seg) {
   const z = zoneAt(seg), a = CITIES[z[3]];
   let b = a, t = 0;
   if (z[4]) { b = CITIES[(z[3] + 1) % CITIES.length]; t = smooth(0.25, 0.85, (seg - z[0]) / (z[1] - z[0])); }
+  return finishTheme(a, b, t, z);
+}
+
+// the city map's blend: from one named city to another, t 0..1 (crossing a link between them)
+export function blendCities(nameA, nameB, t) {
+  const a = CITIES.find(c => c.name === nameA), b = CITIES.find(c => c.name === nameB) ?? a;
+  return finishTheme(a, b, t, null);
+}
+
+function finishTheme(a, b, t, z) {
   let FOG = mix(a.fog, b.fog, t);
   let SKY = [0, 1, 2].map(i => mix(a.sky[i], b.sky[i], t));
   const TWC = [0, 1].map(i => mix(a.tw[i], b.tw[i], t));
@@ -113,17 +123,17 @@ export function blendTheme(seg) {
   for (const k of ['aurora', 'mountains', 'elevator', 'fireworks', 'dark', 'deep', 'kites', 'shimmer'])
     TH[k] = (a[k] || 0) * (1 - t) + (b[k] || 0) * t;
   TH.water = 0;
-  const tint = LINK_TINT[z[2]];
-  if (z[4] && (tint || z[2] === D.SALT)) {
+  const tint = z && LINK_TINT[z[2]];
+  if (z && z[4] && (tint || z[2] === D.SALT)) {
     const L = z[1] - z[0], l = seg - z[0], uw = smooth(0, 18, l) * smooth(0, 18, L - l);
     if (tint) { FOG = mix(FOG, tint.fog, uw); SKY = SKY.map((c, i) => mix(c, tint.sky[i], uw)); }
     else TH.shimmer = Math.max(TH.shimmer, uw);
   }
-  if (z[2] === D.TUBE) {
+  if (z && z[2] === D.TUBE) {
     const L = z[1] - z[0], l = seg - z[0], uw = smooth(0, 18, l) * smooth(0, 18, L - l);
     FOG = mix(FOG, [6, 34, 58], uw); SKY = SKY.map(c => mix(c, [4, 30, 52], uw)); TH.water = uw;
   }
-  const wx = TH.water > 0.5 ? 'none' : (z[4] && LINK_WX[z[2]]) ? LINK_WX[z[2]] : (t > 0.5 ? b.weather : a.weather);
+  const wx = TH.water > 0.5 ? 'none' : (z && z[4] && LINK_WX[z[2]]) ? LINK_WX[z[2]] : (t > 0.5 ? b.weather : a.weather);
 
   // the hour: dusk, deep night, a pre-dawn glow, back to dusk
   const p = ((S.T + DAY0) / DAY) % 1, sea = 1 - TH.deep * 0.7;

@@ -14,6 +14,12 @@ import { drawCockpit, drawRideReadout } from './cockpit.js';
 import { makeLightCycle } from './cycle.js';
 import { Signals } from './signals.js';
 import { MapSignals } from './map-signals.js';
+import { flyersNow, buildGates } from './map-air.js';
+import { trainNow, buildRail } from './map-rail.js';
+import { buildMapDressing } from './map-dressing.js';
+import { buildSetPieces } from './map-bridge.js';
+import { Audio } from './audio.js';
+const audio = new Audio();
 import { S, update as simUpdate, setAuto, setCruise, cruiseKmh } from './sim.js';
 import { Rig, MODES } from './camera.js';
 import { Glow } from './glow.js';
@@ -142,6 +148,8 @@ scene.add(cycle);
 const traffic = new Traffic(scene, city.mats);
 const weather = new Weather();
 const signals = comparisonLoop ? new Signals(scene, city.mats) : new MapSignals(scene, city.mats);
+if (!comparisonLoop) for (const mesh of [buildGates(city.mats), buildRail(city.mats), ...buildMapDressing(city.mats), ...buildSetPieces(city.mats, city.groundMat)]) if (mesh) scene.add(mesh);
+const mapFlyers = [], mapTrain = [];
 const rig = new Rig(camera, canvas, mapDrive ? {
   frameAt: sampleFrame, enclosed: mapDrive.enclosed.bind(mapDrive), boreHalfWidth: RAMP_BORE_HALF_WIDTH, period: 0,
 } : undefined);
@@ -174,6 +182,7 @@ function setDriveKey(key, down) {
 }
 
 function handleControl(key) {
+  if (key === 'm') { banner2('SOUND · ' + (audio.toggleMute() ? 'OFF' : 'ON')); return; }
   if (key === 'a') {
     setAuto(!S.auto);
     if (mapDrive && !mapDrive.player.turn) mapDrive.player.exit = null;
@@ -190,6 +199,8 @@ function handleControl(key) {
   hud();
 }
 
+addEventListener('keydown', () => audio.start());
+addEventListener('pointerdown', () => audio.start());
 addEventListener('keydown', event => {
   const driveKey = KEYMAP[event.key];
   if (driveKey) {
@@ -225,6 +236,9 @@ function banner2(text) { S.zoneText = text; S.zoneT = 2.5; }
 function drive(dt) {
   if (mapDrive) mapDrive.update(dt, simKeys);
   else simUpdate(dt, simKeys);
+  audio.update(dt, S, mapDrive
+    ? { speed: S.speed, height: S.elevation, enclosed: mapDrive.enclosed(mapDrive.player.traveled), rider: mapDrive.player.pose, cars: mapDrive.traffic }
+    : { speed: S.speed, height: 0, enclosed: false });
   bike.dist = S.z;
   bike.lat = mapDrive ? 0 : S.px;
   bike.laneOffset = S.px;
@@ -258,7 +272,7 @@ function hud() {
   const z = comparisonLoop ? zoneAt(Math.floor(S.z / SEGL) % NSEG) : null;
   el.mode.textContent = MODES[rig.mode]
     + (S.auto ? '  ·  AUTO ' + cruiseKmh() : '  ·  MANUAL') + (S.rainOn ? '' : '  ·  DRY');
-  el.place.textContent = mapDrive ? 'VANTA BAY  /  ' + mapDrive.player.edge.road.name.toUpperCase()
+  el.place.textContent = mapDrive ? (mapDrive.placeNow ?? 'VANTA BAY') + '  /  ' + mapDrive.player.edge.road.name.toUpperCase()
     : CITIES[z[3]].name + '  /  ' + (z[4] ? (LINK_NAMES[z[2]] || 'LINK') : ZONE_NAMES[z[2]]);
   autoButton.classList.toggle('on', S.auto);
   weatherButton.classList.toggle('on', S.rainOn);
@@ -310,7 +324,7 @@ function frame(now) {
     focal, f.elev, crown, [lightGrade / tint.x, lightGrade / tint.y, lightGrade / tint.z]);
 
   city.update(bike.dist, camera.position, T);
-  if (mapDrive) { traffic.updateMap(mapDrive.traffic, mapDrive.crossers, T); signals.update(S.T); }
+  if (mapDrive) { traffic.updateMap(mapDrive.traffic, mapDrive.crossers, T, flyersNow(S.T, mapFlyers), trainNow(S.T, mapTrain)); signals.update(S.T); }
   else {
     traffic.update(bike.dist, dt, T);
     signals.update(bike.dist);
@@ -349,7 +363,7 @@ hud();
 requestAnimationFrame(frame);
 
 // a handle for debugging and for driving the loop by hand from the console
-window.__nd = { renderer, scene, camera, city, traffic, weather, rig, bike, S, frame, THREE, mapDrive,
+window.__nd = { renderer, scene, camera, city, traffic, weather, rig, bike, S, frame, THREE, mapDrive, audio,
                 step: (n = 1, dt = 1 / 60) => {   // advance a virtual clock, so dt is real
                   for (let i = 0; i < n; i++) { last = __clock; __clock += dt * 1000; frame(__clock); }
                 } };

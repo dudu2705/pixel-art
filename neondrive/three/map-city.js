@@ -1,7 +1,7 @@
 import * as THREE from './vendor/three.module.js';
 import { City, ROAD_LAYER } from './city.js';
 import { Batch, unitBox, unitCyl, unitSphere, unitPlane, unitPlaneFlat } from './props.js';
-import { VANTA_BAY, frameOn, PLAZA_RADIUS, DECK_COVER, RAMP_BORE_HALF_WIDTH } from './map.js';
+import { VANTA_BAY, frameOn, PLAZA_RADIUS, DECK_COVER, RAMP_BORE_HALF_WIDTH, CROWN_HELIX, BRIDGE, GRID_CITIES } from './map.js';
 import { FONT } from './cockpit.js';
 import { blocks, CITIES, zoneAt, D, SW, SEGL, mulberry, mix } from './world.js';
 
@@ -11,7 +11,10 @@ const { roads, nodes } = VANTA_BAY;
 const district = CITIES.findIndex(city => city.name === 'VANTA BAY');
 const palette = CITIES[district].neon;
 const styles = [D.DOWNTOWN, D.SPIRES, D.ARCADE, D.MARKET, D.STACK];
-const templates = styles.map(style => blocks.filter(b => b.style === style && zoneAt(b.start)[3] === district));
+const templatesFor = name => { const ci = CITIES.findIndex(c => c.name === name);
+  return styles.map(style => blocks.filter(b => b.style === style && zoneAt(b.start)[3] === ci)); };
+const templates = templatesFor('VANTA BAY'), cityTemplates = new Map();
+const cityLook = name => { if (!cityTemplates.has(name)) cityTemplates.set(name, { set: templatesFor(name), pal: CITIES.find(c => c.name === name).neon }); return cityTemplates.get(name); };
 const cellKey = (x, z) => Math.floor(x / CELL) + '/' + Math.floor(z / CELL);
 const BORE_HEIGHT = 6.5;
 const roadSamples = roads.flatMap(road => Array.from({ length: Math.ceil(road.path.length / 4) + 1 }, (_, i) => {
@@ -22,19 +25,20 @@ const roadSamples = roads.flatMap(road => Array.from({ length: Math.ceil(road.pa
 function makeBuildings() {
   const random = mulberry(41283);
   const models = [];
-  const lot = (x, z, sx, sz, h, style, rot = 0) => {
-    const collection = templates[style] ?? templates[0];
+  const lot = (x, z, sx, sz, h, style, rot = 0, cityName = null) => {
+    const { set, pal } = cityName ? cityLook(cityName) : { set: templates, pal: palette };
+    const collection = set[style]?.length ? set[style] : templates[style] ?? templates[0];
     const fallback = collection.length ? collection : blocks.filter(b => b.style === styles[style]);
     const source = fallback[Math.floor(random() * fallback.length)];
     const clearance = Math.hypot(sx, sz) / 2;
-    if (roadSamples.some(f => (f.road.bore || f.road.id.startsWith('street-')) &&
+    if (roadSamples.some(f => (f.road.bore || f.road.id.startsWith('street-') || f.road.helix || f.road.level === 2 || f.road.city !== 'VANTA BAY') &&
       Math.hypot(f.x - x, f.z - z) < clearance + f.road.halfWidth + SW + 2)) return;
     const ratio = sz / (source.len * SEGL);
     const bbs = source.bbs.filter(b => b.v1 < h).map(b => ({ ...b, u0: b.u0 * ratio, u1: b.u1 * ratio }));
     if (style === 2 && h > 27) bbs.push({ u0: 2, u1: Math.min(sz - 2, 21), v0: 13, v1: 24, kind: 4,
-      seed: Math.floor(random() * 100000), c1: palette[1], c2: palette[0] });
+      seed: Math.floor(random() * 100000), c1: pal[1], c2: pal[0] });
     models.push({ ...source, id: models.length, start: models.length * 19, len: sz / SEGL, h, bbs, x, z, sx, sz, rot,
-      crown: h > 54 ? palette[models.length % palette.length] : source.crown });
+      crown: h > 54 ? pal[models.length % pal.length] : source.crown });
   };
 
   // Four blocks around the open plaza. Keep the lots closest to the plaza low.
@@ -71,6 +75,30 @@ function makeBuildings() {
   lot(164, 291, 25, 29, 69, 1);
   lot(191, 319, 30, 27, 81, 1);
   lot(164, -282, 24, 27, 73, 1);
+  // the Crown: the helix winds round one 280 m tower, and Crown Way runs between the upper storeys of a band of
+  // 150-250 m towers north of the city (the road clears them by the same margin every lot keeps)
+  lot(CROWN_HELIX.cx, CROWN_HELIX.cz, 58, 58, 280, 1);
+  for (let x = -250; x <= 40; x += 31) for (const side of [-1, 1])
+    lot(x + random() * 6, 480 + side * (30 + random() * 6), 22 + random() * 6, 22 + random() * 6, 150 + random() * 100, x % 2 ? 1 : 0);
+  for (let z = 360; z <= 450; z += 32) for (const side of [-1, 1])
+    lot(128 + side * (31 + random() * 5), z, 22, 22 + random() * 6, 150 + random() * 90, 1);
+  // the grid cities: blocks filled on a 30 m grid (lots too near a street drop out by the clearance rule), low along
+  // the avenue, spires toward the east, a landmark block where there is one, and a skyline ring round each
+  for (const c of GRID_CITIES) {
+    const E = c.elevator;
+    for (let x = c.x0 - 40; x <= c.x1 + 40; x += 30) for (let z = c.z0 - 40; z <= c.z1 + 40; z += 30) {
+      if (E && Math.hypot(x - E.x, z - E.z) < 42) continue;
+      const east = (x - c.x0) / (c.x1 - c.x0), nearAvenue = Math.abs(z) < 45;
+      const h = nearAvenue ? 22 + random() * 20 : 34 + random() * 50 + east * 70;
+      lot(x + (random() - 0.5) * 4, z + (random() - 0.5) * 4, 19 + random() * 5, 19 + random() * 5, h, east > 0.6 ? 1 : random() < 0.5 ? 0 : 2, 0, c.name);
+    }
+    if (E) lot(E.x, E.z, 36, 36, 64, 1, 0, c.name);
+    for (let i = 0; i < 48; i++) {
+      const a = i * 2 * Math.PI / 48, r = 260 + random() * 110, x = c.xm + Math.cos(a) * r, z = Math.sin(a) * r;
+      if (Math.abs(z) < 60 && (x < c.x0 || x > c.x1)) continue;       // keep the roads in and out clear
+      lot(x, z, 18 + random() * 16, 18 + random() * 16, 60 + random() * 120, 1, -a, c.name);
+    }
+  }
   return models;
 }
 
@@ -83,11 +111,19 @@ const groundVertex = /* glsl */`
 const groundFragment = /* glsl */`
   varying vec3 vWorld;
   uniform vec3 uFog;
-  uniform float uFogNear, uFogFar;
+  uniform float uFogNear, uFogFar, uTime;
   void main() {
     vec2 p = vWorld.xz;
     float r = length(p);
     vec3 color = vec3(16, 13, 24);
+    if (p.x > ${GRID_CITIES[1].x1 + 60}.0 && p.x < ${GRID_CITIES[2].gate - 40}.0) {   // the sea floor round the aqua tube
+      float caustic = sin(p.x * 0.31 + uTime * 1.3) * sin(p.y * 0.27 - uTime * 1.1);
+      color = vec3(18, 46, 52) + vec3(20, 60, 60) * max(0.0, caustic) * 0.5;
+    }
+    if (p.x > ${BRIDGE.x0 + 40}.0 && p.x < ${BRIDGE.x1 - 40}.0) {          // the bay under the skybridge
+      float ripple = sin(p.x * 0.21 + p.y * 0.07 + uTime * 0.9) * sin(p.y * 0.17 - uTime * 0.6);
+      color = vec3(6, 12, 28) + vec3(10, 18, 34) * max(0.0, ripple) * 0.6;
+    }
     if (r < ${PLAZA_RADIUS - 5}.0) {
       vec2 tile = abs(fract(p / 2.5) - 0.5);
       bool grout = max(tile.x, tile.y) > 0.47;
@@ -232,14 +268,16 @@ export class MapCity extends City {
   roadMaterial(road) {
     const key = road?.id ?? 'junction';
     if (!this.materials.has(key)) {
-      const base = road?.level === 1 ? this.glassMat : this.roadMat;
+      const base = road?.level >= 1 ? this.glassMat : this.roadMat;
       const material = base.clone();
       material.uniforms = { ...base.uniforms,
         uRW: { value: road?.halfWidth ?? 7 },
         uMapMode: { value: road ? (road.oneWay ? 2 : 1) : 3 },
         uMapLength: { value: road?.path.length ?? 0 },
         uMapDeck: { value: new THREE.Vector4(DECK_COVER.x, DECK_COVER.halfWidth, DECK_COVER.south, DECK_COVER.north) },
-        uMapContinuous: { value: road?.level === 1 ? 1 : 0 },
+        uMapContinuous: { value: road?.level >= 1 ? 1 : 0 },
+        // where each end's zebra starts, measured from the junction centre: just outside its disc
+        uMapZebra: { value: new THREE.Vector2(road?.a.discR ? road.a.discR + 0.3 : 8, road?.b.discR ? road.b.discR + 0.3 : 8) },
         uMapFork: { value: new THREE.Vector3(Number(Boolean(road?.a.ramp)), Number(Boolean(road?.b.ramp)), Number(Boolean(road?.bore))) },
       };
       this.materials.set(key, material);
@@ -268,12 +306,12 @@ export class MapCity extends City {
     for (const { road, from, to } of cell?.roads ?? []) {
       const mesh = new THREE.Mesh(roadGeometry(road, from, to, road.bore ? 0.018 : 0), this.roadMaterial(road));
       mesh.layers.set(ROAD_LAYER);
-      if (road.level === 1) mesh.renderOrder = 2;
+      if (road.level >= 1) mesh.renderOrder = 2;
       group.add(mesh);
     }
     for (const node of cell?.junctions ?? []) {
       if (node.ramp) continue;
-      const g = new THREE.CircleGeometry(Math.max(node.trim + 1, node.halfWidth + 3.5), 32).rotateX(-Math.PI / 2);
+      const g = new THREE.CircleGeometry(node.discR, 32).rotateX(-Math.PI / 2);
       const p = g.getAttribute('position');
       const lat = new Float32Array(p.count), uv = new Float32Array(p.count * 2);
       for (let i = 0; i < p.count; i++) {
@@ -310,7 +348,7 @@ export class MapCity extends City {
             addPortal(road, frameOn(road.path, road.bore.from), true, metal, emit);
           if (road.bore.to >= from && road.bore.to < to)
             addPortal(road, frameOn(road.path, road.bore.to), false, metal, emit);
-        } else if (road.level !== 1) continue;
+        } else if (!(road.level >= 1 || road.helix || road.bridge)) continue;
         const rows = Math.ceil((to - from) / 2.5);
         for (let i = 0; i < rows; i++) {
           const a = from + i / rows * (to - from), b = from + (i + 1) / rows * (to - from);
@@ -331,6 +369,7 @@ export class MapCity extends City {
         }
       }
       for (const { f, road, d } of cell.lamps) {
+        if (road.tube && d > road.tube.from - 8 && d < road.tube.to + 8) continue;   // no street lamps inside the glass
         const put = (layer, lat, y, size, color, meta) => layer.add(
           [f.x + f.rx * lat, f.y + y, f.z + f.rz * lat], size, f.th, color, meta);
         const insideBore = road.bore && d >= road.bore.from && d <= road.bore.to;
@@ -354,12 +393,12 @@ export class MapCity extends City {
             Math.hypot(other.x - x, other.z - z) < other.road.halfWidth + 2)) {
             put(metal, brace, -f.y, [1.2, f.y, 1.2], [34, 32, 44], [0, 0]);
           }
-          if (road.level === 1) {
+          if (road.level >= 1 || road.helix || road.bridge) {
             put(metal, brace * 0.86, -1.0, [2.8, 1.0, 1.35], [35, 32, 47], [0, 0]);
             put(emit, brace * 0.87, -1.1, [0.85, 0.12, 1.7], [188, 167, 236], [0, 0, 0, 0]);
           }
         }
-        if (road.level === 1 && !rampOpening(road, d, DECK_COVER.x + 1))
+        if ((road.level >= 1 || road.helix || road.bridge) && !rampOpening(road, d, DECK_COVER.x + 1))
           put(metal, 0, -0.75, [2 * (road.halfWidth + SW), 0.75, 1.25], [28, 25, 39], [0, 0]);
       }
       for (const b of cell.buildings) {

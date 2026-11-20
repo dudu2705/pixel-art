@@ -16,7 +16,13 @@ SIGNALLED.forEach((n, i) => { n.signal = { offset: hash(i, 7, 3) * LIGHT_PERIOD 
 
 // each approach belongs to an axis (east-west or north-south by its heading at the stop line); the axes alternate
 const APPROACHES = edges.filter(e => e.to.signal);
-APPROACHES.forEach((e, i) => { e.index = i; });
+APPROACHES.forEach((e, i) => {
+  e.index = i;
+  // in order along the approach: the hold line, the zebra (painted by the road shader just outside the junction
+  // disc), then the junction; cars on a light hold before the zebra, holdBack metres short of the usual trim
+  e.zebraS = e.path.length - e.to.discR - 1.55;
+  e.holdBack = e.to.discR + 5.4 - e.to.trim;                // 2.6 m short of the zebra, so the bike's nose stays off it
+});
 for (const e of APPROACHES) {
   const f = frameInLane(e, e.path.length - e.to.trim, 0);
   e.axis = Math.abs(Math.sin(f.th)) > Math.abs(Math.cos(f.th)) ? 0 : 1;
@@ -32,7 +38,6 @@ export function signalState(edge, T) {
 
 // people crossing each signalled approach while its traffic is held: they set off in the first seconds of red and
 // walk the full width at their own pace, as crossersRaw does in the reference; late ones finish into the green
-const ZEBRA = 1.6;                                      // the crossing's centre, past the stop line toward the junction
 export function crossers(e, T, out = []) {
   out.length = 0;
   const s0 = e.to.signal;
@@ -41,17 +46,20 @@ export function crossers(e, T, out = []) {
   const t = p >= GREEN + AMBER ? p - GREEN - AMBER : p + LIGHT_PERIOD - GREEN - AMBER;
   const id = e.index, n = 3 + Math.floor(hash(id, 9, 9) * 5), L = e.road.halfWidth + SW * 0.6;
   for (let j = 0; j < n; j++) {
-    const ts = 0.4 + hash(j, id, 71) * 3, v = 2.1 + hash(j, id, 72) * 0.5, dir = hash(j, id, 73) < 0.5 ? 1 : -1;
+    // off the kerb once the junction has had a moment to clear
+    const ts = 1.5 + hash(j, id, 71) * 3, v = 2.1 + hash(j, id, 72) * 0.5, dir = hash(j, id, 73) < 0.5 ? 1 : -1;
     if (t < ts) continue;
     const x = -dir * L + dir * v * (t - ts);
     if (Math.abs(x) > L) continue;
-    out.push({ lat: x, s: e.path.length - e.to.trim + ZEBRA + (hash(j, id, 74) - 0.5) * 1.6, dir, ph: j * 1.7,
+    out.push({ lat: x, s: e.zebraS + (hash(j, id, 74) - 0.5) * 1.6, dir, ph: j * 1.7,
       umb: hash(j, id, 75) < 0.6 ? NEON[(hash(j, id, 76) * 6) | 0] : null, coat: hsl(hash(j, id, 77) * 360, 0.25, 0.18) });
   }
   return out;
 }
 const scratch = [];
 export function pedsOn(e, T) { return crossers(e, T, scratch).some(c => Math.abs(c.lat) < e.road.halfWidth + 0.6); }
+// a car turning into road e leaves on its outbound lanes, the other side of e's centre line (lat < 0)
+export function pedsOnOutbound(e, T) { return crossers(e, T, scratch).some(c => c.lat < 0.6 && c.lat > -e.road.halfWidth - 0.6); }
 
 // every crosser in world space, for drawing and for the rider's collisions
 export function allCrossers(T) {
@@ -63,12 +71,12 @@ export function allCrossers(T) {
   return out;
 }
 
-// a mast on the kerb at each stop line, its arm over the lanes, plus the far-side pole, as in the loop
+// a mast on the kerb at each hold line, its arm over the lanes, as in the loop
+const holdS = e => e.path.length - e.to.trim - e.holdBack;
 export function buildMapSignals(mats) {
-  const metal = new Batch(unitBox), paint = new Batch(unitBox);
+  const metal = new Batch(unitBox);
   for (const e of APPROACHES) {
-    const mast = e.road.halfWidth + SW * 0.4, s = e.path.length - e.to.trim;
-    const f = frameInLane(e, s, 0);
+    const mast = e.road.halfWidth + SW * 0.4, f = frameInLane(e, holdS(e), 0);
     const put = (lat, up, size, color) =>
       metal.add([f.x + f.rx * lat, f.y + up, f.z + f.rz * lat], size, f.th, color, [0, 0]);
     const pole = [30, 30, 40], head = [16, 16, 22];
@@ -76,12 +84,9 @@ export function buildMapSignals(mats) {
     put((mast + 3) / 2, 5.95, [mast - 3, 0.25, 0.24], pole);
     put(3, 4.55, [0.5, 1.4, 0.34], head);
     put(mast - 0.4, 2.5, [0.44, 0.6, 0.28], [12, 12, 16]);
-    // the zebra: white bars across the full width, between the stop line and the junction
-    const z = frameInLane(e, s + ZEBRA, 0), L = e.road.halfWidth + SW * 0.5;
-    for (let a = -L + 0.5; a < L - 0.2; a += 1.0)
-      paint.add([z.x + z.rx * a, z.y + 0.015, z.z + z.rz * a], [0.55, 0.02, 3.0], z.th, [150, 150, 165], [0, 0, 0, 0]);
   }
-  return [metal.build(mats.metal), paint.build(mats.emit)].filter(Boolean);
+  const mesh = metal.build(mats.metal);
+  return mesh ? [mesh] : [];
 }
 
 export class MapSignals {
@@ -105,7 +110,7 @@ export class MapSignals {
     this.mesh.frustumCulled = false;
     this.mesh.layers.enable(EMITTER_LAYER);
     scene.add(this.mesh);
-    this.frames = APPROACHES.map(e => ({ e, f: frameInLane(e, e.path.length - e.to.trim, 0), mast: e.road.halfWidth + SW * 0.4 }));
+    this.frames = APPROACHES.map(e => ({ e, f: frameInLane(e, holdS(e), 0), mast: e.road.halfWidth + SW * 0.4 }));
   }
 
   update(T) {
