@@ -1,438 +1,497 @@
-// facade.glsl.js — wallTex, ported.
-//
-// The original's buildings are not walls with windows: wallTex is a per-district
-// program run for every wall pixel, drawing shopfronts, awnings, balconies,
-// stacked signage, lattice screens and so on. That density is most of what the
-// game looks like, so this is a near line-for-line port of it to the fragment
-// stage, including the metres-per-pixel level of detail (taken from fwidth here
-// rather than passed in).
+// The GPU reference's wallTex, billboard and roofTex formulas evaluated on
+// the streamed three.js building meshes.
+import * as THREE from './vendor/three.module.js';
+import { blocks, D, LH, SEGL } from './world.js';
+import { integerHash } from './shaders.js';
+
+const BUILDING_TEXELS = 18;
+const BUILDINGS_PER_ROW = 64;
+
+export function makeBuildingTexture() {
+  const width = BUILDINGS_PER_ROW * BUILDING_TEXELS;
+  const height = Math.ceil(blocks.length / BUILDINGS_PER_ROW);
+  const data = new Float32Array(width * height * 4);
+  for (const building of blocks) {
+    const offset = building.id * BUILDING_TEXELS * 4;
+    const put = (index, values) => data.set(values, offset + index * 4);
+    const { style, h, seed, id, winP, dark, crown, bbs } = building;
+    put(0, [style, h, seed, id]);
+    put(1, [winP, dark, Number(Boolean(crown)), Math.min(2, bbs.length)]);
+    put(2, building.base);
+    if (crown) put(3, crown);
+    put(4, building.lobby);
+    put(5, building.avg);
+    building.shop.forEach((color, index) => put(6 + index, color));
+    put(9, [building.len, building.roofKind, building.roof, building.start]);
+    bbs.slice(0, 2).forEach((board, index) => {
+      const slot = 10 + index * 4;
+      put(slot, [board.u0, board.u1, board.v0, board.v1]);
+      put(slot + 1, [board.kind, board.seed, board.seed % (2 * Math.PI), board.seed % 4]);
+      put(slot + 2, board.c1);
+      put(slot + 3, board.c2);
+    });
+  }
+  const texture = new THREE.DataTexture(data, width, height, THREE.RGBAFormat, THREE.FloatType);
+  texture.needsUpdate = true;
+  return texture;
+}
 
 export const facadeVert = /* glsl */`
-  attribute vec3 iPos;
-  attribute vec3 iSize;
+  attribute vec3 iPos, iSize;
   attribute float iRot;
-  attribute vec3 iBase;
-  attribute vec3 iCrown;
-  attribute vec4 iMeta;     // seed, winP, uOffset, height
-  attribute vec4 iExtra;    // style, dark, id, lobby (packed rgb)
-  attribute vec4 iShop;     // shop0, shop1, shop2, avg (packed rgb)
+  attribute vec3 iWall; // building id, distance along the wall, side of the road
 
-  varying vec3 vBase, vCrown;
-  varying vec4 vMeta, vExtra, vShop;
-  varying vec3 vLocal, vWorld, vNormalW, vNormalL;
+  flat out int vBuilding;
+  varying vec3 vWorld, vLocal, vNormalL;
+  varying vec2 vWall;
 
   void main() {
-    vBase = iBase; vCrown = iCrown; vMeta = iMeta; vExtra = iExtra; vShop = iShop;
+    vBuilding = int(iWall.x);
     vNormalL = normal;
     vLocal = position * iSize;
+    vWall = vec2((iWall.z * position.x + 0.5) * iSize.x, vLocal.z + iWall.y);
     float c = cos(iRot), s = sin(iRot);
-    vec3 r = vec3(c * vLocal.x + s * vLocal.z, vLocal.y, -s * vLocal.x + c * vLocal.z);
-    vWorld = r + iPos;
-    vNormalW = vec3(c * normal.x + s * normal.z, normal.y, -s * normal.x + c * normal.z);
+    vec3 p = vLocal;
+    vWorld = vec3(c * p.x + s * p.z, p.y, -s * p.x + c * p.z) + iPos;
     gl_Position = projectionMatrix * viewMatrix * vec4(vWorld, 1.0);
   }
 `;
 
 export const facadeFrag = /* glsl */`
-  precision highp float;
-  varying vec3 vBase, vCrown;
-  varying vec4 vMeta, vExtra, vShop;
-  varying vec3 vLocal, vWorld, vNormalW, vNormalL;
+precision highp float;
+precision highp int;
+uniform highp sampler2D uBuildings;
+uniform vec3 uFog;
+uniform float uFogNear, uFogFar, uTime, uFlash;
+flat in int vBuilding;
+varying vec3 vWorld, vLocal, vNormalL;
+varying vec2 vWall;
+out vec4 fragColor;
 
-  uniform vec3 uFog, uCam;
-  uniform float uFogNear, uFogFar, uTime, uFlash;
-
-  // the generator's own integer hash, so the buildings come out the same
-  float hash3(float x, float y, float s) {
-    vec3 p = vec3(x, y, s);
-    float h = dot(p, vec3(374.761393, 668.265263, 1442.695041));
-    h = fract(sin(h) * 43758.5453123);
-    return h;
+bool gHole;                                          // set by wallTex where the facade is see-through (the JavaScript's TR = -1)
+float gMpp;                                          // the real size of the pixel on the wall (wallTex itself gets 0: full detail)
+const vec3 WIN_[6] = vec3[6](vec3(255, 200, 120), vec3(255, 170, 90), vec3(120, 220, 255), vec3(255, 120, 200), vec3(200, 190, 255), vec3(255, 236, 190));
+const vec3 COOL_[4] = vec3[4](vec3(180, 210, 255), vec3(140, 200, 255), vec3(210, 230, 255), vec3(120, 180, 240));
+const vec3 STK_[6] = vec3[6](vec3(110, 50, 30), vec3(40, 90, 90), vec3(40, 70, 130), vec3(90, 60, 40), vec3(70, 70, 80), vec3(50, 80, 40));
+const float LH1 = ${LH[1]}.0, LH2 = ${LH[2]}.0;
+float jm(float a, float b) { return a - b * trunc(a / b); }                   // JavaScript's %, sign of the dividend
+${integerHash}
+float vns(float x, float y, int s) {
+  float fx0 = floor(x), fy0 = floor(y); int ix = int(fx0), iy = int(fy0); float fx = x - fx0, fy = y - fy0;
+  float a = hsh(ix, iy, s), b = hsh(ix + 1, iy, s), c = hsh(ix, iy + 1, s), d = hsh(ix + 1, iy + 1, s);
+  float ux = fx * fx * (3.0 - 2.0 * fx), uy = fy * fy * (3.0 - 2.0 * fy);
+  return a + (b - a) * ux + (c - a) * uy + (a - b - c + d) * ux * uy;
+}
+// one building: 18 texels per row (see bldPack)
+int bI; int bStyle, bSeed, bId, bDark, bNbb; float bH, bWinP; bool bHasCrown; vec3 bBase, bCrown, bLobby, bAvg, bShop0, bShop1, bShop2;
+vec4 bt(int i) {
+  return texelFetch(uBuildings, ivec2((bI % ${BUILDINGS_PER_ROW}) * ${BUILDING_TEXELS} + i, bI / ${BUILDINGS_PER_ROW}), 0);
+}
+void loadB(int bi) {
+  bI = bi; vec4 t0 = bt(0), t1 = bt(1);
+  bStyle = int(t0.x); bH = t0.y; bSeed = int(t0.z); bId = int(t0.w);
+  bWinP = t1.x; bDark = int(t1.y); bHasCrown = t1.z > 0.5; bNbb = int(t1.w);
+  bBase = bt(2).rgb; bCrown = bt(3).rgb; bLobby = bt(4).rgb; bAvg = bt(5).rgb; bShop0 = bt(6).rgb; bShop1 = bt(7).rgb; bShop2 = bt(8).rgb;
+}
+vec3 shop(int i) { return i == 0 ? bShop0 : i == 1 ? bShop1 : bShop2; }
+// billboard b: texels 10+4b .. 13+4b = (u0,u1,v0,v1), (kind, seed, seed mod 2pi, seed mod 4), c1, c2
+vec3 billboard(int b, float uu, float vv) {
+  if (uu < 0.04 || uu > 0.96 || vv < 0.07 || vv > 0.93) return vec3(34, 30, 44);
+  vec4 k = bt(11 + 4 * b); vec3 c1 = bt(12 + 4 * b).rgb, c2 = bt(13 + 4 * b).rgb;
+  int kind = int(k.x), seed = int(k.y); float sp = k.z, s4 = k.w;
+  float qu = floor(uu * 24.0) / 24.0, qv = floor(vv * 12.0) / 12.0;
+  vec3 c;
+  if (kind == 0) {
+    float t = jm(qv * 2.0 + qu * 0.5 + uTime * 0.4, 1.0);
+    c = mix(c1, c2, t < 0.5 ? t * 2.0 : 2.0 - t * 2.0);
+  } else if (kind == 1) {
+    int gx = int(floor((uu - 0.1) / 0.8 * 7.0)), gy = int(floor((vv - 0.15) / 0.7 * 5.0));
+    bool on = gx >= 0 && gx < 7 && gy >= 0 && gy < 5 && hsh(gx % 7 < 4 ? gx : 6 - gx, gy, seed) < 0.55;
+    c = on ? c1 : mix(c2, vec3(0), 0.78);
+    if (hsh(int(floor(uTime * 4.0)), seed, 2) < 0.08) c = mix(c, vec3(255), 0.5);
+  } else if (kind == 3) {
+    float hgt = 0.5 + 0.45 * sin(uTime * 5.0 + floor(uu * 16.0) * 0.9 + sp);
+    c = (1.0 - vv) < hgt ? mix(c1, c2, 1.0 - vv) : mix(c2, vec3(0), 0.8);
+  } else if (kind == 4) {
+    float ex = abs(qu - 0.5) - 0.18, ey = qv - 0.4;
+    bool eyes = ex * ex * 9.0 + ey * ey * 30.0 < 0.4 && jm(uTime * 0.7 + s4, 4.0) > 0.2;
+    c = eyes || (abs(qv - 0.72) < 0.05 && abs(qu - 0.5) < 0.22) ? c1 : mix(c2, vec3(0), 0.65);
+  } else {
+    float d = length(vec2((qu - 0.5) * 2.2, (qv - 0.5) * 1.6)), r = 0.45 + sin(uTime * 3.0 + sp) * 0.12;
+    c = d < r * 0.45 ? vec3(10, 10, 20) : d < r ? c1 : mix(c2, vec3(0), 0.7);
   }
-  float vnoise(vec2 p, float s) {
-    vec2 i = floor(p), f = fract(p);
-    float a = hash3(i.x, i.y, s), b = hash3(i.x + 1.0, i.y, s);
-    float c = hash3(i.x, i.y + 1.0, s), d = hash3(i.x + 1.0, i.y + 1.0, s);
-    vec2 u = f * f * (3.0 - 2.0 * f);
-    return mix(mix(a, b, u.x), mix(c, d, u.x), u.y);
+  float scan = (int(floor(vv * 24.0)) & 1) == 1 ? 0.82 : 1.0;
+  return c * scan;
+}
+const int DIGITS[10] = int[10](31599, 29850, 29671, 31207, 18925, 31183, 31695, 18727, 31727, 31215);
+bool fontBit(int digit, int i) { return ((DIGITS[digit] >> i) & 1) == 1; }
+vec3 wallTex(float u, float v, bool front, float mpp) {
+  if (bHasCrown && v > bH - 0.6 && bStyle != 2) return bCrown;
+  if (bStyle != 11) for (int q = 1; q < 3; q++) {
+    float lv = v - (q == 1 ? LH1 : LH2);
+    if (lv > -0.7 && lv < 3.4 && bH > (q == 1 ? LH1 : LH2) + 5.0) {
+      if (lv < -0.25) return bLobby * (bDark == 1 ? 0.3 : 1.0);
+      if (lv > 3.0 || jm(u, 3.0) < 0.18) return vec3(34, 30, 44);
+      float k = (0.5 + 0.25 * lv / 3.0) * (bDark == 1 ? 0.25 : 1.0);
+      if (mpp > 0.9) return vec3(230, 190, 150) * k;
+      float cf = floor(u / 1.3); int cell = int(cf); float fu = u / 1.3 - cf;
+      if (mpp < 0.35 && lv < 1.8 && fu > 0.4 && fu < 0.65 && hsh(cell, q, bSeed) < 0.2 && (lv < 1.45 || fu > 0.45 && fu < 0.6)) return vec3(16, 12, 22);
+      return vec3(255, 205, 160) * k;
+    }
   }
-  vec3 unpack(float c) {
-    float r = floor(c / 65536.0);
-    float g = floor(mod(c, 65536.0) / 256.0);
-    return vec3(r, g, mod(c, 256.0)) / 255.0;
+  if (!front) for (int b = 0; b < 2; b++) {
+    if (b >= bNbb) break;
+    vec4 r = bt(10 + 4 * b);
+    if (u >= r.x && u < r.y && v >= r.z && v < r.w) return billboard(b, (u - r.x) / (r.y - r.x), 1.0 - (v - r.z) / (r.w - r.z));
   }
-  vec3 WINC(float i) {
-    i = floor(mod(i, 6.0));
-    if (i < 0.5) return vec3(1.0, 0.784, 0.471);
-    if (i < 1.5) return vec3(1.0, 0.667, 0.353);
-    if (i < 2.5) return vec3(0.471, 0.863, 1.0);
-    if (i < 3.5) return vec3(1.0, 0.471, 0.784);
-    if (i < 4.5) return vec3(0.784, 0.745, 1.0);
-    return vec3(1.0, 0.925, 0.745);
+  vec3 bc = bBase;
+  if (bStyle == 2) {
+    float bf = floor(u / 1.8); int bayN = int(bf); float fu = u / 1.8 - bf;
+    if (bayN % 4 == 0 && fu < 0.12 && v > 5.0) {
+      float run = jm(jm(v * 0.35 - mod(uTime * 4.0, 6.0) + float(bayN) * 0.37 + float(bSeed % 6), 6.0) + 6.0, 6.0);
+      return bCrown * (run < 1.2 ? 1.0 : 0.28);
+    }
+    if (mpp > 1.2) return bAvg;
+    if (v < 5.0) {
+      bool m = jm(u, 3.0) < 0.15 || v > 4.6;
+      if (m) return bc * 0.7;
+      return vec3(200, 190, 170) * (0.3 + 0.15 * (v / 5.0));
+    }
+    float ff = floor(v / 3.6); int fl = int(ff); float fv = v / 3.6 - ff;
+    if (fv > 0.12 && fv < 0.92 && fu > 0.06 && fu < 0.94) {
+      if (hsh(bayN, fl, bSeed) < bWinP) {
+        vec3 c = COOL_[int(hsh(bayN, fl, bSeed + 1) * 4.0)]; float k = 0.45 + 0.4 * hsh(bayN, fl, bSeed + 2);
+        return c * k;
+      }
+      return vec3(18.0 + fv * 22.0, 26.0 + fv * 22.0, 46.0 + fv * 30.0);
+    }
+    return bc * 1.3;
   }
-  vec3 COOLC(float i) {
-    i = floor(mod(i, 4.0));
-    if (i < 0.5) return vec3(0.706, 0.824, 1.0);
-    if (i < 1.5) return vec3(0.549, 0.784, 1.0);
-    if (i < 2.5) return vec3(0.824, 0.902, 1.0);
-    return vec3(0.471, 0.706, 0.941);
+  if (bStyle == 4 && v < 16.0) {
+    if (bHasCrown && v > bH - 2.2 && v < bH - 1.4) return bCrown;
+    float cf = floor(u / 9.0); int cell = int(cf); float cu = u - cf * 9.0;
+    if (v < 5.5 && cu > 1.5 && cu < 7.5) {
+      if (hsh(cell, bId, 9) < 0.35) return vec3(255, 170, 90) * (0.45 + 0.2 * (v / 5.5));
+      bool sl = jm(v, 0.5) < 0.08; return bc * (sl ? 0.6 : 1.1);
+    }
+    float rib = mpp < 0.3 && jm(u, 0.7) < 0.15 ? 0.75 : 1.0;
+    return bc * rib;
   }
-  vec3 STKC(float i) {
-    i = floor(mod(i, 6.0));
-    if (i < 0.5) return vec3(0.431, 0.196, 0.118);
-    if (i < 1.5) return vec3(0.157, 0.353, 0.353);
-    if (i < 2.5) return vec3(0.157, 0.275, 0.510);
-    if (i < 3.5) return vec3(0.353, 0.235, 0.157);
-    if (i < 4.5) return vec3(0.275, 0.275, 0.314);
-    return vec3(0.196, 0.314, 0.157);
+  if (bStyle == 6 && v >= 3.8) {
+    float ff = floor(v / 3.2); int fl = int(ff); float fv = v / 3.2 - ff;
+    if (fv < 0.2 && mpp < 0.9) {
+      float hh = hsh(int(floor(u * 2.5)), fl, bSeed);
+      vec3 c = hh < 0.35 ? vec3(50, 200, 120) : hh < 0.5 ? vec3(200, 80, 230) : hh < 0.62 ? vec3(60, 220, 230) : vec3(70, 64, 80);
+      return c * (hh < 0.62 ? 0.8 : 1.0);
+    }
+  }
+  if (bStyle == 7 && v >= 3.8) {
+    float cf = floor(u / 10.0); int cell = int(cf); float cu = u - cf * 10.0, top = min(bH - 2.5, 32.0);
+    if (cu > 0.6 && cu < 9.4 && v > 5.0 && v < top) {
+      vec3 c1 = shop(cell % 3), c2 = shop((cell + 1) % 3);
+      if (mpp > 1.0) return c1 * 0.45;
+      float uu = (cu - 0.6) / 8.8, vv = 1.0 - (v - 5.0) / (top - 5.0); int kind = int(hsh(cell, bId, 7) * 4.0);
+      vec3 c = vec3(8, 8, 14);
+      if (kind == 0) {
+        int num = 99 - (int(floor(uTime * 2.0 + float(cell * 7))) % 100), gx = int(floor(uu * 9.0)) - 1, gy = int(floor(vv * 7.0)) - 1;
+        if (gx >= 0 && gx < 7 && gx != 3 && gy >= 0 && gy < 5) {
+          int dg = gx < 3 ? num / 10 : num % 10;
+          if (fontBit(dg, gy * 3 + (gx < 3 ? gx : gx - 4))) c = c1;
+        }
+      } else if (kind == 1) {
+        float bar = floor(uu * 12.0), hgt = 0.5 + 0.5 * sin(uTime * 4.0 + bar * 1.3 + float(cell));
+        if ((1.0 - vv) < hgt * 0.9 && jm(uu * 12.0, 1.0) < 0.8) c = mix(c1, c2, 1.0 - vv);
+      } else if (kind == 2) { float t = jm(jm(uu * 3.0 + vv * 2.0 - uTime * 0.8, 1.0) + 1.0, 1.0); c = mix(c1, c2, t < 0.5 ? t * 2.0 : 2.0 - t * 2.0); }
+      else { float dd = length(vec2((uu - 0.5) * 2.0, (vv - 0.5) * 1.6)), r = 0.4 + sin(uTime * 3.0 + float(cell)) * 0.12; c = dd < r * 0.4 ? vec3(255) : dd < r ? c1 : mix(c2, vec3(0), 0.75); }
+      float scan = (int(floor(vv * 30.0)) & 1) == 1 ? 0.8 : 1.0;
+      return c * scan;
+    }
+    if (v < top + 0.8 && (cu <= 0.6 || cu >= 9.4 || v >= top)) return vec3(26, 24, 34);
+  }
+  if (bStyle == 9) {
+    if (mpp > 0.8) return bAvg;
+    float ff = floor(v / 2.6); int fl = int(ff); float fv = v / 2.6 - ff, uo = u + hsh(fl, 1, bSeed) * 2.4, cf = floor(uo / 2.4); int cell = int(cf); float fu = uo / 2.4 - cf;
+    if (fu < 0.06 || fv < 0.07) return vec3(14, 11, 12);
+    float hh = hsh(cell, fl, bSeed);
+    if (hh < 0.08) return vec3(6, 5, 8);
+    if (fu > 0.32 && fu < 0.68 && fv > 0.3 && fv < 0.72) {
+      if (hsh(cell, fl, bSeed + 3) < bWinP) return WIN_[int(hh * 6.0)] * 0.8;
+      return vec3(16, 14, 22);
+    }
+    if (fv > 0.76 && fu > 0.08 && fu < 0.3 && hh > 0.7) return vec3(110, 110, 116);
+    return STK_[int(hsh(cell, fl, bSeed + 1) * 6.0)] * (0.45 + 0.35 * hh);
+  }
+  if (bStyle == 10) {
+    float scanV = jm(uTime * 4.0 + float(bSeed % 50), bH);
+    if (abs(v - scanV) < max(0.15, gMpp * 0.6)) return vec3(120, 255, 140);   // the real pixel size: the scan line stays a line far away
+    if (mpp < 0.45) {
+      float cxf = floor(u / 0.5), cyf = floor(v / 0.5); int cx_ = int(cxf), cy_ = int(cyf); float hh = hsh(cx_, cy_, bSeed);
+      float fu = u / 0.5 - cxf, fv = v / 0.5 - cyf;
+      if (hh < 0.06 && fu > 0.3 && fu < 0.7 && fv > 0.35 && fv < 0.65) {
+        bool on = hsh(cx_, cy_, int(floor(uTime * (2.0 + hh * 30.0)))) < 0.6;
+        vec3 c = hh < 0.035 ? vec3(60, 255, 120) : vec3(70, 160, 255);
+        return on ? c : c * 0.15;
+      }
+    }
+    bool pnl = mpp < 0.6 && jm(u, 3.0) < 0.08;
+    return pnl ? vec3(24, 28, 34) : vec3(10, 12, 16);
+  }
+  if (bStyle == 11) {                                // construction: open steel skeleton, tarps, hoarding
+    if (v < 3.6) {
+      if (v > 2.2 && v < 2.6) { bool st = jm(u + v, 1.2) < 0.6; return st ? vec3(220, 170, 30) : vec3(20, 18, 16); }
+      if (v < 2.6) return vec3(90, 78, 58);
+    }
+    float ff = floor(v / 3.6); int fl = int(ff); float fv = v / 3.6 - ff, bf = floor(u / 4.0); int bayN = int(bf); float fu = u / 4.0 - bf;
+    float thick_ = max(0.1, gMpp * 0.25);
+    if (fv < 0.1 + thick_ * 0.3 || fu < 0.09 + thick_ * 0.3) return vec3(150, 82, 30);
+    if (hsh(bayN, fl, bSeed) < 0.3 && v < bH - 6.0) { vec3 tc = hsh(bayN, fl, bSeed + 1) < 0.5 ? vec3(40, 80, 160) : vec3(150, 150, 160); return tc * (0.8 + 0.2 * sin(u * 3.0 + uTime * 2.0)); }
+    if (abs(fu - fv) < 0.05 + thick_ * 0.2 && hsh(bayN, fl, bSeed + 2) < 0.5) return vec3(130, 70, 26);
+    if (fu < 0.2 && fv < 0.25 && hsh(bayN, fl, bSeed + 4) < 0.08 && jm(uTime * 2.0 + float(bayN), 1.0) < 0.5) return vec3(255, 150, 40);
+    gHole = true; return vec3(0);
+  }
+  if (bStyle == 12) {
+    if (v > bH - 1.2) { bool e = v > bH - 0.3; return e ? vec3(70, 52, 50) : vec3(28, 22, 26); }
+    if (v < 3.8) {
+      if (v > 2.0 && v < 2.8 && jm(u, 4.0) > 0.5 && jm(u, 4.0) < 3.5) { vec3 c = hsh(int(floor(u / 4.0)), 1, bSeed) < 0.5 ? vec3(170, 30, 30) : vec3(30, 40, 110); float sl = jm(u, 0.8) < 0.08 ? 0.6 : 1.0; return c * sl; }
+      if (v > 0.2 && v < 2.0) { bool lat = jm(u, 0.5) < 0.06 || jm(v, 0.6) < 0.06; return lat ? vec3(60, 40, 30) : vec3(200, 160, 110); }
+    }
+    if (mpp < 0.8) {
+      float ff = floor(v / 3.0); int fl = int(ff); float fv = v / 3.0 - ff, bf = floor(u / 2.4); int bayN = int(bf); float fu = u / 2.4 - bf;
+      if (fu > 0.2 && fu < 0.8 && fv > 0.3 && fv < 0.75) {
+        if (jm(fu * 2.4, 0.4) < 0.05 || jm(fv * 3.0, 0.4) < 0.05) return vec3(50, 34, 26);
+        bool lit = hsh(bayN, fl, bSeed) < 0.6; return lit ? vec3(230, 170, 110) : vec3(60, 44, 34);
+      }
+      float pk = jm(v, 0.5) < 0.05 ? 0.7 : 1.0; return bc * pk;
+    }
+    return vec3(bc.r * 1.2, bc.g * 1.1, bc.b);
+  }
+  if (bStyle == 14) {                                // stilt canals: houses on poles above the water
+    if (v < 3.4) {
+      if (v > 3.0) { bool lt = jm(u, 1.5) < 0.2 && mpp < 0.6; return lt ? vec3(255, 210, 140) : vec3(60, 48, 40); }
+      if (jm(u, 4.0) < 0.5) return vec3(40, 34, 40);
+      gHole = true; return vec3(0);
+    }
+    v -= 3.4;
+  }
+  if (bStyle == 15) {
+    if (v > bH - 0.8) return vec3(bc.r * 1.35, bc.g * 1.3, bc.b * 1.2);
+    float band = vns(u * 0.03, v * 0.35, bSeed % 997) * 0.7 + vns(u * 0.2, v * 1.2, 7) * 0.3;
+    if (mpp < 0.8) {
+      float ff = floor(v / 4.0); int fl = int(ff); float fv = v / 4.0 - ff, bf = floor(u / 5.0); int bayN = int(bf); float fu = u / 5.0 - bf;
+      if (fu > 0.3 && fu < 0.6 && fv > 0.35 && fv < 0.7 && hsh(bayN, fl, bSeed) < 0.12) { vec3 c = WIN_[int(hsh(bayN, fl, 2) * 6.0)]; return vec3(c.r * 0.8, c.g * 0.75, c.b * 0.6); }
+    }
+    return bc * (0.65 + band * 0.7);
+  }
+  if (bStyle == ${D.FORGE}) {
+    if (v < 3.8) {
+      float cf = floor(u / 6.0); int cell = int(cf); float cu = u - cf * 6.0;
+      if (cu > 1.0 && cu < 5.0 && v < 3.0 && hsh(cell, bId, 13) < 0.6) return vec3(255, 120, 40) * (0.6 + 0.4 * sin(uTime * 5.0 + float(cell)));
+    } else {
+      if (mpp > 1.0) return bAvg;
+      float ff = floor(v / 5.0); int fl = int(ff); float fv = v / 5.0 - ff; int bay = int(floor(u / 3.0));
+      if (fv > 0.45 && fv < 0.6 && hsh(bay, fl, bSeed) < bWinP) return vec3(255, 110, 30) * (0.7 + 0.3 * sin(uTime * 7.0 + float(bay) * 1.7 + float(fl)));
+      if (jm(u, 7.0) < 0.6 && mpp < 0.8) return vec3(62, 40, 34);
+    }
+    float seam = mpp < 0.6 && jm(v, 2.5) < 0.12 ? 0.6 : 1.0;
+    return bc * seam;
+  }
+  if (bStyle == ${D.TERRACE}) {
+    float ff = floor(v / 5.0); int fl = int(ff); float fv = v / 5.0 - ff;
+    if (fl > 0 && fv < 0.18) {
+      if (mpp > 0.9) return vec3(40, 90, 50);
+      int row = int(floor(u * 2.5)) & 1; float sh = 0.8 + 0.2 * sin(u * 0.7 + uTime * 1.2 + float(fl));
+      return (row == 1 ? vec3(70, 150, 70) : vec3(30, 90, 80)) * sh;
+    }
+    if (fl > 0 && fv < 0.22) return vec3(20, 24, 20);
+    if (mpp < 0.8 && v > 3.8) {
+      float bf = floor(u / 3.0); int bay = int(bf); float fu = u / 3.0 - bf;
+      if (fu > 0.25 && fu < 0.75 && fv > 0.35 && fv < 0.8) {
+        if (hsh(bay, fl, bSeed) < bWinP) { vec3 c = WIN_[int(hsh(bay, fl, 4) * 6.0)]; return vec3(c.r * 0.8, c.g * 0.8, c.b * 0.7); }
+        return vec3(14, 18, 16);
+      }
+    }
+    if (v >= 3.8 || mpp >= 0.8) {
+      float st = mpp < 0.5 && (jm(u + float(fl & 1) * 0.6, 1.2) < 0.06 || jm(v, 1.0) < 0.05) ? 0.7 : 1.0;
+      return bc * st;
+    }
+  }
+  if (bStyle == ${D.REEF}) {
+    if (mpp > 1.1) return bAvg;
+    float kelp = jm(jm(u - sin(v * 0.25 + uTime * 0.8 + u * 0.1) * 0.9, 3.5) + 3.5, 3.5);
+    if (kelp < 0.35 && hsh(int(floor(u / 3.5)), 1, bSeed) < 0.5) return vec3(30.0, 120.0 + 40.0 * sin(v * 0.5), 60.0);
+    float ff = floor(v / 4.0); int fl = int(ff); float fv = v / 4.0 - ff, bf = floor(u / 3.2); int bay = int(bf); float fu = u / 3.2 - bf, dx = fu - 0.5, dy = fv - 0.55;
+    if (v > 3.0 && dx * dx + dy * dy < 0.06) {
+      if (hsh(bay, fl, bSeed) < bWinP) return vec3(60, 230, 220) * (0.6 + 0.3 * sin(uTime * 1.5 + float(bay) + float(fl)));
+      return vec3(6, 20, 30);
+    }
+    float sp = hsh(int(floor(u * 1.5)), int(floor(v * 1.5)), bSeed + 9);
+    if (sp < 0.03 && mpp < 0.5) {
+      vec3 c = sp < 0.015 ? vec3(255, 120, 220) : vec3(120, 255, 240);
+      return c * (0.5 + 0.5 * sin(uTime * 2.0 + sp * 300.0));
+    }
+    return bc * (0.7 + 0.6 * (mpp < 0.5 ? vns(u * 0.2, v * 0.2, bSeed % 991) : 0.5));
+  }
+  if (bStyle == ${D.FAIR}) {
+    if (v < 7.0) {
+      if (v > 6.2) { bool on = jm(jm(u * 2.0 - uTime * 6.0, 2.0) + 2.0, 2.0) < 1.0; return on ? vec3(255, 220, 140) : vec3(90, 70, 40); }
+      vec3 c = (int(floor(u / 1.2)) & 1) == 1 ? bShop0 : vec3(235, 225, 210);
+      float k = v < 3.0 && jm(u, 6.0) > 1.0 && jm(u, 6.0) < 5.0 ? 1.1 : 0.75;
+      return c * k;
+    }
+    if (mpp > 1.0) return bAvg;
+    float ff = floor(v / 4.0); int fl = int(ff); float fv = v / 4.0 - ff, bf = floor(u / 3.0); int bay = int(bf); float fu = u / 3.0 - bf;
+    if (fv < 0.08 || fu < 0.06) {
+      bool on = ((int(floor((u + v) * 2.0)) - int(floor(uTime * 8.0))) % 4 + 4) % 4 == 0;
+      return on ? vec3(255, 230, 150) : vec3(70, 50, 40);
+    }
+    if (hsh(bay, fl, bSeed) < bWinP) return shop(int(hsh(bay, fl, 3) * 3.0)) * 0.7;
+    return bc;
+  }
+  if (bStyle == ${D.RUIN}) {
+    float vn = vns(u * 0.18, v * 0.06, bSeed % 997) + hsh(int(floor(u * 0.9)), int(floor(v * 0.4)), 5) * 0.25;
+    float grow = 0.8 - 0.4 * max(0.0, 1.0 - v / 20.0) - 0.25 * max(0.0, (v - bH + 15.0) / 15.0);
+    if (vn > grow) {
+      bool leaf = mpp < 0.5 && hsh(int(floor(u * 3.0)), int(floor(v * 3.0)), bSeed) < 0.3;
+      return leaf ? vec3(70, 130, 50) : vec3(26, 60, 28);
+    }
+    if (mpp < 0.6 && v > 3.8) {
+      float ff = floor(v / 3.2), bf = floor(u / 2.6); int fl = int(ff), bay = int(bf); float fv = v / 3.2 - ff, fu = u / 2.6 - bf;
+      if (hsh(bay, fl, bSeed + 21) < 0.3 && fv > 0.28 && fv < 0.82 && fu > 0.15 && fu < 0.85) return vec3(4, 4, 6);
+    }
+  }
+  if (bStyle == ${D.CITADEL}) {                      // storm citadel: battlements, buttresses, pointed windows
+    if (v > bH - 1.6) { if (jm(u, 2.4) < 1.2) return bc * 1.2; gHole = true; return vec3(0); }
+    float bf = floor(u / 4.0); int bay = int(bf); float fu = u / 4.0 - bf;
+    if (bay % 3 == 0 && fu < 0.16) return bc * 1.5;
+    if (mpp > 1.0) return bAvg;
+    float ff = floor(v / 8.0); int fl = int(ff); float fv = v / 8.0 - ff;
+    if (v > 3.8 && fu > 0.32 && fu < 0.68 && fv > 0.12 && fv < 0.88 && (fv < 0.7 || abs(fu - 0.5) < (0.88 - fv))) {
+      if (mpp < 0.4 && (jm(fu * 4.0, 1.0) < 0.1 || jm(fv * 8.0, 1.0) < 0.08)) return vec3(20, 22, 30);
+      float k = hsh(bay, fl, bSeed) < bWinP ? 0.6 + 0.2 * sin(uTime * 0.7 + float(bay)) + uFlash * 0.3 : 0.1;
+      return vec3(150, 190, 255) * k;
+    }
+    bool blk = mpp < 0.5 && (jm(v, 1.2) < 0.08 || jm(u + floor(v / 1.2) * 0.9, 1.8) < 0.08);
+    return bc * (blk ? 0.75 : 1.0);
+  }
+  if (bStyle == ${D.BAZAAR}) {
+    if (v < 4.2) {
+      float cf = floor(u / 3.2); int cell = int(cf); float cu = u / 3.2 - cf, top = min(3.6, 3.0 + (0.5 - abs(cu - 0.5)) * 1.6);
+      if (cu > 0.12 && cu < 0.88 && v < top) return shop(cell % 3) * (0.4 + 0.25 * v / 3.6);
+      return bc * 0.85;
+    }
+    if (jm(v, 4.0) < 0.3) return vec3(40, 170, 170);
+    if (mpp > 0.9) return bAvg;
+    float ff = floor(v / 4.0); int fl = int(ff); float fv = v / 4.0 - ff, bf = floor(u / 3.0); int bay = int(bf); float fu = u / 3.0 - bf;
+    if (fu > 0.2 && fu < 0.8 && fv > 0.2 && fv < 0.85) {
+      if (hsh(bay, fl, bSeed) < bWinP) {
+        bool lat = mpp < 0.35 && (jm(fu * 9.0 + fv * 9.0, 1.0) < 0.25 || jm(jm(fu * 9.0 - fv * 9.0, 1.0) + 1.0, 1.0) < 0.25);
+        return vec3(255, 180, 90) * (lat ? 0.25 : 0.75);
+      }
+      return bc * 0.4;
+    }
+    return bc;
+  }
+  if (mpp > 0.75 && v >= 3.8) return bAvg;
+  if (v < 3.8) {
+    float cf = floor(u / 6.0); int cell = int(cf); float cu = u - cf * 6.0;
+    if (v > 3.0 && v < 3.6) {
+      vec3 c = shop(int(hsh(cell, bId, 3) * 3.0));
+      if (cu > 0.4 && cu < 5.6 && hsh(int(floor(cu * 2.2)), cell, bId) < 0.6 && !(bDark == 1 && hsh(cell, bId, 11) < 0.75)) return c;
+      return vec3(16, 10, 22);
+    }
+    if (cu > 0.5 && cu < 5.5 && v > 0.15 && v < 2.8) {
+      float k = (0.35 + 0.25 * (v / 2.8)) * (bDark == 1 ? (hsh(cell, bId, int(floor(uTime * 6.0))) < 0.08 ? 0.8 : 0.12) : 1.0);
+      return shop(cell % 3) * k;
+    }
+    return bc * 0.8;
+  }
+  float ff = floor(v / 3.2); int fl = int(ff); float fv = v / 3.2 - ff, bf = floor(u / 2.6); int bayN = int(bf); float fu = u / 2.6 - bf;
+  if (fv > 0.28 && fv < 0.82 && fu > 0.15 && fu < 0.85) {
+    if (hsh(bayN, fl, bSeed) < bWinP) {
+      vec3 c = WIN_[int(hsh(bayN, fl, bSeed + 1) * 6.0)]; float k = 0.5 + 0.5 * hsh(bayN, fl, bSeed + 2);
+      return c * k;
+    }
+    return vec3(14.0 + fv * 14.0, 14.0 + fv * 8.0, 28.0 + fv * 18.0);
+  }
+  float p = fu < 0.08 || fu > 0.92 ? 1.35 : 1.0;
+  return bc * p;
+}
+// every distance gets the full detail: one sample up close, and further out a grid of samples across the
+// pixel's footprint on the wall, averaged, so far facades show their real windows smoothed instead of
+// switching from a flat colour to detail (the JavaScript's distance cut-offs) as they come closer
+vec4 facade(float uc, float vc, float du, float dv, bool front, float mpp) {
+  gMpp = mpp;
+  int nu = clamp(int(ceil(du / 0.22)), 1, 4), nv = clamp(int(ceil(dv / 0.22)), 1, 4);
+  vec3 acc = vec3(0); float n = 0.0;
+  for (int i = 0; i < 4; i++) { if (i >= nu) break;
+    for (int j = 0; j < 4; j++) { if (j >= nv) break;
+      gHole = false;
+      vec3 c = wallTex(uc + du * ((float(i) + 0.5) / float(nu) - 0.5), vc + dv * ((float(j) + 0.5) / float(nv) - 0.5), front, 0.0);
+      if (!gHole) { acc += c; n += 1.0; }
+    } }
+  if (n == 0.0) return vec4(0);
+  // a footprint wider than the samples can resolve: ease towards the facade's average colour (gradually, no switch);
+  // see-through facades (skeletons, battlements, stilts) cover the pixel only partly
+  return vec4(mix(acc / n, bAvg, smoothstep(0.9, 2.6, max(du, dv))), n / float(nu * nv));
+}vec3 roofTex(float ul, float w, float lz, float mpp) {
+  vec4 t9 = bt(9); float L = t9.x * ${SEGL}.0; int kindR = int(t9.y), roofB = int(t9.z);
+  if (ul < 0.5) return bHasCrown ? bCrown : vec3(80, 72, 98);
+  float ku = ul - 13.0, kz = lz - L / 2.0;
+  if (kindR == 2 && L > 15.0) {
+    float d = length(vec2(ku, kz));
+    if (d < 7.5) {
+      if (d > 6.4) return vec3(230, 190, 40);
+      if (abs(ku) < 2.6 && abs(kz) < 3.2 && (abs(ku) > 1.7 || abs(kz) < 0.45)) return vec3(235, 235, 240);
+      return vec3(44, 48, 60);
+    }
+  } else if (kindR == 3) {
+    if (jm(lz, 4.0) < 0.3) { bool on = hsh(int(floor(ul * 2.0)), int(floor(lz / 4.0)), int(floor(uTime * 3.0))) < 0.9; return on ? vec3(255, 205, 130) : vec3(90, 70, 50); }
+    if (mpp < 0.5 && hsh(int(floor(ul / 2.5)), int(floor(lz / 2.5)), bSeed) < 0.18 && jm(ul, 2.5) < 1.1 && jm(lz, 2.5) < 1.1) return vec3(120, 60, 50);
+    bool pl = mpp < 0.4 && jm(lz, 0.8) < 0.08; return pl ? vec3(44, 30, 24) : vec3(78, 52, 36);
+  } else if (kindR == 4 && L > 12.0) {
+    if (abs(ku) < 9.0 && abs(kz) < L / 2.0 - 2.0) {
+      int cu = int(floor((ku + 9.0) / 1.5)), cz = int(floor(lz / 1.5));
+      bool on = (cu % 4 != 3) && hsh(cu >> 2, (cu & 3) + (cz % 5) * 3, bSeed) < 0.55; float fl = hsh(int(floor(uTime * 6.0)), bId, 3) < 0.05 ? 0.3 : 1.0;
+      if (on) return bLobby * fl;
+      return vec3(18, 16, 24);
+    }
+  } else if (kindR == 5) {
+    if (jm(lz, 3.0) < 2.2 && jm(ul, 2.6) < 2.2) { bool ln = mpp < 0.4 && (jm(lz, 0.55) < 0.05 || jm(ul, 0.55) < 0.05); return ln ? vec3(70, 90, 140) : vec3(28, 46, 104); }
+    return vec3(40, 40, 48);
+  }
+  float fxq = floor(ul / 5.0), fzq = floor(w / 5.0); int tx = int(fxq), tz = int(fzq);
+  float h = hsh(tx, tz, bSeed), fu = ul / 5.0 - fxq, fz = w / 5.0 - fzq;
+  int hk = int(h * 10.0) + roofB * 2, kind = hk > 13 ? 9 : hk % 10;
+  if (kind < 4) { bool ln = mpp < 0.5 && (fu < 0.05 || fz < 0.05); return ln ? vec3(26, 24, 32) : vec3(44, 42, 54); }
+  if (kind < 6) { bool tree = mpp < 1.0 && hsh(int(floor(ul * 1.2)), int(floor(w * 1.2)), bSeed + 5) < 0.35; return tree ? vec3(60, 140, 74) : vec3(28, 66, 40); }
+  if (kind < 8) { bool st = mpp < 0.6 && jm(fz * 5.0, 1.0) < 0.15; return st ? vec3(70, 90, 140) : vec3(24, 42, 84); }
+  if (kind < 9) { bool box = fu > 0.25 && fu < 0.75 && fz > 0.25 && fz < 0.75; return box ? vec3(96, 96, 106) : vec3(44, 42, 54); }
+  bool pool = fu > 0.15 && fu < 0.85 && fz > 0.2 && fz < 0.8; float ww = 0.7 + 0.3 * sin(w * 2.0 + uTime * 2.0 + ul);
+  return pool ? vec3(30.0 * ww, 180.0 * ww, 210.0 * ww) : vec3(44, 42, 54);
+}
+
+void main() {
+  loadB(vBuilding);
+  vec3 normal = abs(vNormalL);
+  bool endFace = normal.z > 0.5;
+  float u = endFace ? vWall.x : vWall.y;
+  float v = vLocal.y;
+  vec3 col;
+
+  if (vNormalL.y > 0.5) {
+    float roadDistance = bt(9).w * ${SEGL}.0 + vWall.y;
+    col = roofTex(vWall.x, roadDistance, vWall.y, max(fwidth(vWall.x), fwidth(vWall.y)));
+  } else if (vNormalL.y < -0.5) {
+    col = bBase * 0.55;
+  } else {
+    float du = fwidth(u), dv = fwidth(v);
+    vec4 face = facade(u, v, du, dv, endFace, max(du, dv));
+    if (face.a < 0.5) discard;
+    col = face.rgb * (endFace ? 0.7 : 1.0);
   }
 
-  void main() {
-    float seed  = vMeta.x, winP = vMeta.y, uOff = vMeta.z, H = vMeta.w;
-    float style = vExtra.x, dark = vExtra.y, id = vExtra.z;
-    vec3 lobby  = unpack(vExtra.w);
-    vec3 shop0 = unpack(vShop.x), shop1 = unpack(vShop.y), shop2 = unpack(vShop.z);
-    vec3 avg = unpack(vShop.w);
-    vec3 bc = vBase;
-
-    vec3 an = abs(vNormalL);
-    bool roof = an.y > 0.7;
-    float u = (an.x > an.z ? vLocal.z + uOff : vLocal.x);
-    float v = vLocal.y;
-    float mpp = max(fwidth(u), fwidth(v));          // metres per pixel: the LOD the original passed in
-
-    vec3 col = bc;
-    bool done = false;
-
-    if (roof) {
-      col = bc * 0.55;
-      vec2 g = fract(vec2(vLocal.x, vLocal.z) / 3.0);
-      if (g.x < 0.06 || g.y < 0.06) col *= 1.5;
-      done = true;
-    }
-
-    // the crown band
-    if (!done && length(vCrown) > 0.01 && v > H - 0.6 && style != 2.0) { col = vCrown; done = true; }
-
-    // sky lobbies where the upper roads run past (levels 1 and 2)
-    if (!done && style != 11.0) {
-      for (int q = 1; q < 3; q++) {
-        float LHq = (q == 1) ? 35.0 : 100.0;
-        float lv = v - LHq;
-        if (lv > -0.7 && lv < 3.4 && H > LHq + 5.0) {
-          if (lv < -0.25) { col = lobby * (dark > 0.5 ? 0.3 : 1.0); done = true; break; }
-          if (lv > 3.0 || mod(u, 3.0) < 0.18) { col = vec3(0.133, 0.118, 0.173); done = true; break; }
-          float k = (0.5 + 0.25 * lv / 3.0) * (dark > 0.5 ? 0.25 : 1.0);
-          if (mpp > 0.9) { col = vec3(0.902, 0.745, 0.588) * k; done = true; break; }
-          float cell = floor(u / 1.3), fu = u / 1.3 - cell;
-          if (mpp < 0.35 && lv < 1.8 && fu > 0.4 && fu < 0.65 && hash3(cell, float(q), seed) < 0.2) {
-            col = vec3(0.063, 0.047, 0.086); done = true; break;     // someone at the glass
-          }
-          col = vec3(1.0, 0.804, 0.627) * k; done = true; break;
-        }
-      }
-    }
-
-    if (!done && style == 2.0) {                     // glass spires
-      float bayN = floor(u / 1.8), fu = u / 1.8 - bayN;
-      if (mod(bayN, 4.0) < 0.5 && fu < 0.12 && v > 5.0) {
-        float run = mod(v * 0.35 - uTime * 4.0 + bayN * 0.37 + seed, 6.0);
-        col = vCrown * (run < 1.2 ? 1.0 : 0.28); done = true;
-      } else if (mpp > 1.2) { col = avg; done = true; }
-      else if (v < 5.0) {
-        bool m = mod(u, 3.0) < 0.15 || v > 4.6;
-        col = m ? bc * 0.7 : vec3(0.784, 0.745, 0.667) * (0.3 + 0.15 * (v / 5.0));
-        done = true;
-      } else {
-        float fl = floor(v / 3.6), fv = v / 3.6 - fl;
-        if (fv > 0.12 && fv < 0.92 && fu > 0.06 && fu < 0.94) {
-          if (hash3(bayN, fl, seed) < winP)
-            col = COOLC(hash3(bayN, fl, seed + 1.0) * 4.0) * (0.45 + 0.4 * hash3(bayN, fl, seed + 2.0));
-          else col = vec3(0.071 + fv * 0.086, 0.102 + fv * 0.086, 0.180 + fv * 0.118);
-        } else col = bc * 1.3;
-        done = true;
-      }
-    }
-
-    if (!done && style == 4.0 && v < 16.0) {         // docklands sheds
-      if (length(vCrown) > 0.01 && v > H - 2.2 && v < H - 1.4) { col = vCrown; done = true; }
-      else {
-        float cell = floor(u / 9.0), cu = u - cell * 9.0;
-        if (v < 5.5 && cu > 1.5 && cu < 7.5) {
-          if (hash3(cell, id, 9.0) < 0.35) col = vec3(1.0, 0.667, 0.353) * (0.45 + 0.2 * (v / 5.5));
-          else col = bc * (mod(v, 0.5) < 0.08 ? 0.6 : 1.1);
-        } else col = bc * (mpp < 0.3 && mod(u, 0.7) < 0.15 ? 0.75 : 1.0);
-        done = true;
-      }
-    }
-
-    if (!done && style == 6.0 && v >= 3.8) {         // holo gardens: planted balconies
-      float fl = floor(v / 3.2), fv = v / 3.2 - fl;
-      if (fv < 0.2 && mpp < 0.9) {
-        float hh = hash3(floor(u * 2.5), fl, seed);
-        col = hh < 0.35 ? vec3(0.196, 0.784, 0.471) * 0.8
-            : hh < 0.5  ? vec3(0.784, 0.314, 0.902) * 0.8
-            : hh < 0.62 ? vec3(0.235, 0.863, 0.902) * 0.8
-                        : vec3(0.275, 0.251, 0.314);
-        done = true;
-      }
-    }
-
-    if (!done && style == 7.0 && v >= 3.8) {         // arcade row: giant screens
-      float cell = floor(u / 10.0), cu = u - cell * 10.0, top = min(H - 2.5, 32.0);
-      if (cu > 0.6 && cu < 9.4 && v > 5.0 && v < top) {
-        vec3 c1 = (mod(cell, 3.0) < 1.0) ? shop0 : (mod(cell, 3.0) < 2.0 ? shop1 : shop2);
-        vec3 c2 = (mod(cell + 1.0, 3.0) < 1.0) ? shop0 : (mod(cell + 1.0, 3.0) < 2.0 ? shop1 : shop2);
-        if (mpp > 1.0) { col = c1 * 0.45; }
-        else {
-          float uu = (cu - 0.6) / 8.8, vv = 1.0 - (v - 5.0) / (top - 5.0);
-          float kind = floor(hash3(cell, id, 7.0) * 4.0);
-          vec3 c = vec3(0.031, 0.031, 0.055);
-          if (kind < 1.5) {                           // bars / equalizer
-            float hgt = 0.5 + 0.45 * sin(uTime * 5.0 + floor(uu * 16.0) * 0.9 + seed);
-            c = vv < hgt ? mix(c1, c2, vv) : c2 * 0.2;
-          } else if (kind < 2.5) {                    // blocky panel
-            vec2 g = floor(vec2(uu * 9.0, vv * 6.0));
-            c = hash3(g.x, g.y, seed) < 0.5 ? c1 : c2 * 0.25;
-          } else {                                    // sweep
-            float sweep = fract(uTime * 0.3 + seed * 0.01);
-            c = mix(c2 * 0.2, c1 * 1.4, exp(-abs(uu - sweep) * 10.0));
-          }
-          float scan = mod(floor(vv * 30.0), 2.0) < 1.0 ? 0.8 : 1.0;
-          col = c * scan;
-        }
-        done = true;
-      } else if (v < top + 0.8) { col = vec3(0.102, 0.094, 0.133); done = true; }
-    }
-
-    if (!done && style == 9.0) {                     // stacktown: shacks on shacks
-      if (mpp > 0.8) { col = avg; done = true; }
-      else {
-        float fl = floor(v / 2.6), fv = v / 2.6 - fl;
-        float uo = u + hash3(fl, 1.0, seed) * 2.4;
-        float cell = floor(uo / 2.4), fu = uo / 2.4 - cell;
-        float hh = hash3(cell, fl, seed);
-        if (fu < 0.06 || fv < 0.07) col = vec3(0.055, 0.043, 0.047);
-        else if (hh < 0.08) col = vec3(0.024, 0.02, 0.031);
-        else if (fu > 0.32 && fu < 0.68 && fv > 0.3 && fv < 0.72) {
-          col = hash3(cell, fl, seed + 3.0) < winP ? WINC(hh * 6.0) * 0.8 : vec3(0.063, 0.055, 0.086);
-        } else if (fv > 0.76 && fu > 0.08 && fu < 0.3 && hh > 0.7) col = vec3(0.431, 0.431, 0.455);
-        else col = STKC(hash3(cell, fl, seed + 1.0) * 6.0) * (0.45 + 0.35 * hh);
-        done = true;
-      }
-    }
-
-    if (!done && style == 10.0) {                    // data canyon: black walls, server lights, scan laser
-      float scanV = mod(uTime * 4.0 + mod(seed, 50.0), max(H, 1.0));
-      if (abs(v - scanV) < max(0.15, mpp * 0.6)) { col = vec3(0.471, 1.0, 0.549); done = true; }
-      else {
-        if (mpp < 0.45) {
-          float cx = floor(u / 0.5), cy = floor(v / 0.5);
-          float hh = hash3(cx, cy, seed);
-          float fu = u / 0.5 - cx, fv = v / 0.5 - cy;
-          if (hh < 0.06 && fu > 0.3 && fu < 0.7 && fv > 0.35 && fv < 0.65) {
-            bool on = hash3(cx, cy, floor(uTime * (2.0 + hh * 30.0))) < 0.6;
-            vec3 c = hh < 0.035 ? vec3(0.235, 1.0, 0.471) : vec3(0.275, 0.627, 1.0);
-            col = on ? c : c * 0.15; done = true;
-          }
-        }
-        if (!done) {
-          bool pnl = mpp < 0.6 && mod(u, 3.0) < 0.08;
-          col = pnl ? vec3(0.094, 0.110, 0.133) : vec3(0.039, 0.047, 0.063);
-          done = true;
-        }
-      }
-    }
-
-    if (!done && style == 11.0) {                    // construction: steel skeleton and tarps
-      if (v > 2.2 && v < 2.6) { bool st = mod(u + v, 1.2) < 0.6; col = st ? vec3(0.863,0.667,0.118) : vec3(0.078,0.071,0.063); done = true; }
-      else if (v < 2.6) { col = vec3(0.353, 0.306, 0.227); done = true; }
-      else {
-        float fl = floor(v / 3.6), fv = v / 3.6 - fl;
-        float bayN = floor(u / 4.0), fu = u / 4.0 - bayN;
-        float th = max(0.1, mpp * 0.25);
-        if (fv < 0.1 + th * 0.3 || fu < 0.09 + th * 0.3) { col = vec3(0.588, 0.322, 0.118); done = true; }
-        else if (hash3(bayN, fl, seed) < 0.3 && v < H - 6.0) {
-          vec3 tc = hash3(bayN, fl, seed + 1.0) < 0.5 ? vec3(0.157,0.314,0.627) : vec3(0.588,0.588,0.627);
-          col = tc * (0.8 + 0.2 * sin(u * 3.0 + uTime * 2.0)); done = true;
-        } else if (abs(fu - fv) < 0.05 + th * 0.2 && hash3(bayN, fl, seed + 2.0) < 0.5) {
-          col = vec3(0.510, 0.275, 0.102); done = true;
-        } else discard;                               // open steel: you see straight through
-      }
-    }
-
-    if (!done && style == 12.0) {                    // shrine street: wood, paper screens, cloth
-      if (v > H - 1.2) { col = v > H - 0.3 ? vec3(0.275,0.204,0.196) : vec3(0.110,0.086,0.102); done = true; }
-      else if (v > 2.0 && v < 2.8 && mod(u, 4.0) > 0.5 && mod(u, 4.0) < 3.5) {
-        vec3 c = hash3(floor(u / 4.0), 1.0, seed) < 0.5 ? vec3(0.667,0.118,0.118) : vec3(0.118,0.157,0.431);
-        col = c * (mod(u, 0.8) < 0.08 ? 0.6 : 1.0); done = true;
-      } else if (v > 0.2 && v < 2.0) {
-        bool lat = mod(u, 0.5) < 0.06 || mod(v, 0.6) < 0.06;
-        col = lat ? vec3(0.235,0.157,0.118) : vec3(0.784,0.627,0.431); done = true;
-      } else if (mpp < 0.8) {
-        float fl = floor(v / 3.0), fv = v / 3.0 - fl;
-        float bayN = floor(u / 2.4), fu = u / 2.4 - bayN;
-        if (fu > 0.2 && fu < 0.8 && fv > 0.3 && fv < 0.75) {
-          if (mod(fu * 2.4, 0.4) < 0.05 || mod(fv * 3.0, 0.4) < 0.05) col = vec3(0.196,0.133,0.102);
-          else col = hash3(bayN, fl, seed) < 0.6 ? vec3(0.902,0.667,0.431) : vec3(0.235,0.173,0.133);
-        } else col = bc * (mod(v, 0.5) < 0.05 ? 0.7 : 1.0);
-        done = true;
-      } else { col = bc * vec3(1.2, 1.1, 1.0); done = true; }
-    }
-
-    if (!done && style == 15.0) {                    // rust mesa: layered rock, carved windows
-      if (v > H - 0.8) { col = bc * vec3(1.35, 1.3, 1.2); done = true; }
-      else {
-        float band = vnoise(vec2(u * 0.03, v * 0.35), mod(seed, 997.0)) * 0.7 + vnoise(vec2(u * 0.2, v * 1.2), 7.0) * 0.3;
-        if (mpp < 0.8) {
-          float fl = floor(v / 4.0), fv = v / 4.0 - fl;
-          float bayN = floor(u / 5.0), fu = u / 5.0 - bayN;
-          if (fu > 0.3 && fu < 0.6 && fv > 0.35 && fv < 0.7 && hash3(bayN, fl, seed) < 0.12) {
-            col = WINC(hash3(bayN, fl, 2.0) * 6.0) * vec3(0.8, 0.75, 0.6); done = true;
-          }
-        }
-        if (!done) { col = bc * (0.65 + band * 0.7); done = true; }
-      }
-    }
-
-    if (!done && style == 17.0) {                    // ember foundry: iron plates, furnace slits
-      if (v < 3.8) {
-        float cell = floor(u / 6.0), cu = u - cell * 6.0;
-        if (cu > 1.0 && cu < 5.0 && v < 3.0 && hash3(cell, id, 13.0) < 0.6) {
-          col = vec3(1.0, 0.471, 0.157) * (0.6 + 0.4 * sin(uTime * 5.0 + cell)); done = true;
-        }
-      } else if (mpp > 1.0) { col = avg; done = true; }
-      else {
-        float fl = floor(v / 5.0), fv = v / 5.0 - fl, bay = floor(u / 3.0);
-        if (fv > 0.45 && fv < 0.6 && hash3(bay, fl, seed) < winP) {
-          col = vec3(1.0, 0.431, 0.118) * (0.7 + 0.3 * sin(uTime * 7.0 + bay * 1.7 + fl)); done = true;
-        } else if (mod(u, 7.0) < 0.6 && mpp < 0.8) { col = vec3(0.243, 0.157, 0.133); done = true; }
-      }
-      if (!done) { col = bc * (mpp < 0.6 && mod(v, 2.5) < 0.12 ? 0.6 : 1.0); done = true; }
-    }
-
-    if (!done && style == 18.0) {                    // monsoon terraces: rice ledges
-      float fl = floor(v / 5.0), fv = v / 5.0 - fl;
-      if (fl > 0.0 && fv < 0.18) {
-        if (mpp > 0.9) col = vec3(0.157, 0.353, 0.196);
-        else {
-          float row = mod(floor(u * 2.5), 2.0);
-          float sh = 0.8 + 0.2 * sin(u * 0.7 + uTime * 1.2 + fl);
-          col = (row > 0.5 ? vec3(0.275,0.588,0.275) : vec3(0.118,0.353,0.314)) * sh;
-        }
-        done = true;
-      } else if (fl > 0.0 && fv < 0.22) { col = vec3(0.078,0.094,0.078); done = true; }
-      else if (mpp < 0.8 && v > 3.8) {
-        float bay = floor(u / 3.0), fu = u / 3.0 - bay;
-        if (fu > 0.25 && fu < 0.75 && fv > 0.35 && fv < 0.8) {
-          col = hash3(bay, fl, seed) < winP ? WINC(hash3(bay, fl, 4.0) * 6.0) * vec3(0.8,0.8,0.7)
-                                            : vec3(0.055,0.071,0.063);
-          done = true;
-        }
-      }
-      if (!done) {
-        float st = (mpp < 0.5 && (mod(u + mod(fl, 2.0) * 0.6, 1.2) < 0.06 || mod(v, 1.0) < 0.05)) ? 0.7 : 1.0;
-        col = bc * st; done = true;
-      }
-    }
-
-    if (!done && style == 21.0) {                    // verdant ruin: vines and broken windows
-      float vn = vnoise(vec2(u * 0.18, v * 0.06), mod(seed, 997.0)) + hash3(floor(u * 0.9), floor(v * 0.4), 5.0) * 0.25;
-      float grow = 0.8 - 0.4 * max(0.0, 1.0 - v / 20.0) - 0.25 * max(0.0, (v - H + 15.0) / 15.0);
-      if (vn > grow) {
-        bool leaf = mpp < 0.5 && hash3(floor(u * 3.0), floor(v * 3.0), seed) < 0.3;
-        col = leaf ? vec3(0.275,0.510,0.196) : vec3(0.102,0.235,0.110); done = true;
-      } else if (mpp < 0.6 && v > 3.8) {
-        float fl = floor(v / 3.2), bay = floor(u / 2.6);
-        float fv = v / 3.2 - fl, fu = u / 2.6 - bay;
-        if (hash3(bay, fl, seed + 21.0) < 0.3 && fv > 0.28 && fv < 0.82 && fu > 0.15 && fu < 0.85) {
-          col = vec3(0.016, 0.016, 0.024); done = true;
-        }
-      }
-    }
-
-    if (!done && style == 22.0) {                    // storm citadel: battlements and pointed windows
-      if (v > H - 1.6) { if (mod(u, 2.4) < 1.2) { col = bc * 1.2; done = true; } else discard; }
-      else {
-        float bay = floor(u / 4.0), fu = u / 4.0 - bay;
-        if (mod(bay, 3.0) < 0.5 && fu < 0.16) { col = bc * 1.5; done = true; }
-        else if (mpp > 1.0) { col = avg; done = true; }
-        else {
-          float fl = floor(v / 8.0), fv = v / 8.0 - fl;
-          if (v > 3.8 && fu > 0.32 && fu < 0.68 && fv > 0.12 && fv < 0.88 && (fv < 0.7 || abs(fu - 0.5) < (0.88 - fv))) {
-            if (mpp < 0.4 && (mod(fu * 4.0, 1.0) < 0.1 || mod(fv * 8.0, 1.0) < 0.08)) col = vec3(0.078,0.086,0.118);
-            else {
-              float k = hash3(bay, fl, seed) < winP ? 0.6 + 0.2 * sin(uTime * 0.7 + bay) + uFlash * 0.3 : 0.1;
-              col = vec3(0.588, 0.745, 1.0) * k;
-            }
-            done = true;
-          }
-          if (!done) {
-            float blk = (mpp < 0.5 && (mod(v, 1.2) < 0.08 || mod(u + floor(v / 1.2) * 0.9, 1.8) < 0.08)) ? 0.75 : 1.0;
-            col = bc * blk; done = true;
-          }
-        }
-      }
-    }
-
-    if (!done && style == 23.0) {                    // mirage bazaar: arches, tile bands, lattice
-      if (v < 4.2) {
-        float cell = floor(u / 3.2), cu = u / 3.2 - cell;
-        float top = min(3.6, 3.0 + (0.5 - abs(cu - 0.5)) * 1.6);
-        if (cu > 0.12 && cu < 0.88 && v < top) {
-          vec3 c = (mod(cell, 3.0) < 1.0) ? shop0 : (mod(cell, 3.0) < 2.0 ? shop1 : shop2);
-          col = c * (0.4 + 0.25 * v / 3.6);
-        } else col = bc * 0.85;
-        done = true;
-      } else if (mod(v, 4.0) < 0.3) { col = vec3(0.157, 0.667, 0.667); done = true; }
-      else if (mpp > 0.9) { col = avg; done = true; }
-      else {
-        float fl = floor(v / 4.0), fv = v / 4.0 - fl;
-        float bay = floor(u / 3.0), fu = u / 3.0 - bay;
-        if (fu > 0.2 && fu < 0.8 && fv > 0.2 && fv < 0.85) {
-          if (hash3(bay, fl, seed) < winP) {
-            bool lat = mpp < 0.35 && (mod(fu * 9.0 + fv * 9.0, 1.0) < 0.25 || mod(fu * 9.0 - fv * 9.0 + 9.0, 1.0) < 0.25);
-            col = vec3(1.0, 0.706, 0.353) * (lat ? 0.25 : 0.75);
-          } else col = bc * 0.4;
-        } else col = bc;
-        done = true;
-      }
-    }
-
-    // ---------- the default district: shopfronts, awning, window grid ----------
-    if (!done) {
-      if (mpp > 0.75 && v >= 3.8) { col = avg; }
-      else if (v < 3.8) {
-        float cell = floor(u / 6.0), cu = u - cell * 6.0;
-        if (v > 3.0 && v < 3.6) {                     // the lit awning band over the shops
-          vec3 c = (hash3(cell, id, 3.0) < 0.333) ? shop0 : (hash3(cell, id, 3.0) < 0.667 ? shop1 : shop2);
-          bool lit = cu > 0.4 && cu < 5.6 && hash3(floor(cu * 2.2), cell, id) < 0.6
-                     && !(dark > 0.5 && hash3(cell, id, 11.0) < 0.75);
-          col = lit ? c : vec3(0.063, 0.039, 0.086);
-        } else if (cu > 0.5 && cu < 5.5 && v > 0.15 && v < 2.8) {   // the shopfront itself
-          vec3 c = (mod(cell, 3.0) < 1.0) ? shop0 : (mod(cell, 3.0) < 2.0 ? shop1 : shop2);
-          float k = (0.35 + 0.25 * (v / 2.8))
-                  * (dark > 0.5 ? (hash3(cell, id, floor(uTime * 6.0)) < 0.08 ? 0.8 : 0.12) : 1.0);
-          col = c * k;
-        } else col = bc * 0.8;
-      } else {
-        float fl = floor(v / 3.2), fv = v / 3.2 - fl;
-        float bayN = floor(u / 2.6), fu = u / 2.6 - bayN;
-        if (fv > 0.28 && fv < 0.82 && fu > 0.15 && fu < 0.85) {
-          if (hash3(bayN, fl, seed) < winP)
-            col = WINC(hash3(bayN, fl, seed + 1.0) * 6.0) * (0.5 + 0.5 * hash3(bayN, fl, seed + 2.0));
-          else col = vec3(0.055 + fv * 0.055, 0.055 + fv * 0.031, 0.110 + fv * 0.071);
-        } else col = bc * ((fu < 0.08 || fu > 0.92) ? 1.35 : 1.0);
-      }
-    }
-
-    // the original shades nothing by normal — the texture carries it — but a
-    // touch keeps the volumes readable from a free camera
-    float lam = 0.88 + 0.12 * max(0.0, dot(normalize(vNormalW), normalize(vec3(0.4, 0.8, 0.35))));
-    col *= lam;
-
-    float d = distance(vWorld, uCam);
-    col = mix(col, uFog, smoothstep(uFogNear, uFogFar, d) * 0.97);
-    gl_FragColor = vec4(col, 1.0);
-  }
+  float distanceAhead = max(0.0, -(viewMatrix * vec4(vWorld, 1.0)).z);
+  vec3 fogged = mix(col / 255.0, uFog, smoothstep(uFogNear, uFogFar, distanceAhead) * 0.97);
+  fragColor = vec4(fogged, 1.0);
+}
 `;

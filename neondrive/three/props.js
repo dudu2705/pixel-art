@@ -5,6 +5,7 @@
 import * as THREE from './vendor/three.module.js';
 import { SEGL, NSEG, RW, SW, blocks, SIDE, ELEV, LAYERED, BASE, district, D, hash } from './world.js';
 import { frameAt } from './road.js';
+import { integerHash } from './shaders.js';
 
 // ---------- shared glsl ----------
 const COMMON = /* glsl */`
@@ -42,64 +43,28 @@ const fogTail = /* glsl */`
 // blade sign: border, then a grid of fake glyphs, flickering
 const SIGN_FRAG = /* glsl */`
   precision highp float;
-  ${COMMON}
+  precision highp int;
+  ${integerHash}
+  out vec4 fragColor;
   varying vec3 vCol; varying vec4 vMeta; varying vec2 vUv; varying vec3 vWorld; varying vec3 vNL;
   uniform vec3 uFog, uCam; uniform float uFogNear, uFogFar, uTime;
   void main() {
-    float seed = vMeta.x, dead = vMeta.y;
-    // flicker exactly like the original: dead signs stutter, live ones blink rarely
-    float t = floor(uTime * (dead > 0.5 ? 9.0 : 7.0));
-    float f = dead > 0.5 ? (h21(vec2(t, seed), 6.0) < 0.06 ? 1.0 : 0.12)
-                         : (h21(vec2(t, seed), 5.0) < 0.04 ? 0.25 : 1.0);
-    vec2 g = vUv;
-    float TW = 5.0, TH = 14.0;
-    vec2 cell = floor(vec2(g.x * TW, (1.0 - g.y) * TH));
-    vec3 col;
-    if (cell.x < 0.5 || cell.x > TW - 1.5 || cell.y < 0.5 || cell.y > TH - 1.5) {
-      col = vCol * 0.55;                                   // frame
-    } else {
-      float ch = floor((cell.y - 1.0) / 5.0), jj = mod(cell.y - 1.0, 5.0);
-      float on = (jj < 4.0 && h21(vec2(ch, (cell.x - 1.0) + jj * 3.0), seed) < 0.55) ? 1.0 : 0.0;
-      col = on > 0.5 ? mix(vec3(0.12, 0.04, 0.12), vCol * 1.9, f) : vec3(0.08, 0.03, 0.09);
+    int seed = int(vMeta.x);
+    bool dead = vMeta.y > 0.5;
+    float flicker = dead ? (hsh(int(floor(uTime * 9.0)), seed, 6) < 0.06 ? 1.0 : 0.12)
+                         : (hsh(int(floor(uTime * 7.0)), seed, 5) < 0.04 ? 0.25 : 1.0);
+    float u = vMeta.w > 0.0 ? 1.0 - vUv.x : vUv.x;
+    ivec2 grid = ivec2(5, int(vMeta.z));
+    ivec2 cell = min(ivec2(vec2(u, 1.0 - vUv.y) * vec2(grid)), grid - 1);
+    vec3 col = vCol * 0.65;
+    if (abs(vNL.z) > 0.5 && cell.x > 0 && cell.x < grid.x - 1 && cell.y > 0 && cell.y < grid.y - 1) {
+      int ch = (cell.y - 1) / 5, row = (cell.y - 1) % 5;
+      bool on = row < 4 && hsh(ch, cell.x - 1 + row * 3, seed) < 0.55;
+      col = on ? mix(vec3(30, 10, 30) / 255.0, vCol, flicker) : vec3(20, 8, 24) / 255.0;
     }
-    ${fogTail}
-  }
-`;
-
-// billboard: five animated kinds, same colour pairs the generator picked
-const BB_FRAG = /* glsl */`
-  precision highp float;
-  ${COMMON}
-  varying vec3 vCol; varying vec4 vMeta; varying vec2 vUv; varying vec3 vWorld; varying vec3 vNL;
-  uniform vec3 uFog, uCam; uniform float uFogNear, uFogFar, uTime;
-  uniform vec3 uCol2;
-  void main() {
-    float seed = vMeta.x, kind = vMeta.y;
-    vec2 uv = vUv;
-    vec3 c2 = vec3(vMeta.z, vMeta.w, 0.0);               // packed below
-    vec3 col;
-    if (kind < 0.5) {                                     // scrolling bars
-      float b = fract(uv.y * 6.0 - uTime * 0.35);
-      col = mix(vCol, vCol * 0.25, step(0.5, b));
-    } else if (kind < 1.5) {                              // blocky data wall
-      vec2 g = floor(uv * vec2(10.0, 7.0));
-      float r = h21(g, seed + floor(uTime * 2.0) * 0.001);
-      col = r > 0.55 ? vCol * 1.6 : vCol * 0.18;
-    } else if (kind < 2.5) {                              // pulsing panel
-      float p = 0.55 + 0.45 * sin(uTime * 2.0 + seed);
-      col = vCol * (0.4 + p * 1.5);
-    } else if (kind < 3.5) {                              // sweeping bar of light
-      float s = fract(uTime * 0.25 + seed * 0.01);
-      float d = abs(uv.x - s);
-      col = mix(vCol * 0.2, vCol * 2.2, exp(-d * 14.0));
-    } else {                                              // big glyph block
-      vec2 g = floor(uv * vec2(7.0, 5.0));
-      float on = h21(g, seed) < 0.5 ? 1.0 : 0.0;
-      col = mix(vCol * 0.15, vCol * 1.8, on);
-    }
-    // a dark border so it reads as a panel bolted to the wall
-    if (uv.x < 0.04 || uv.x > 0.96 || uv.y < 0.05 || uv.y > 0.95) col *= 0.25;
-    ${fogTail}
+    float d = distance(vWorld, uCam);
+    col = mix(col, vCol * 0.55, smoothstep(0.1, 0.3, fwidth(u)));
+    fragColor = vec4(mix(col, uFog, smoothstep(uFogNear, uFogFar, d) * 0.97), 1.0);
   }
 `;
 
@@ -269,14 +234,15 @@ export function makeMaterials(uniforms) {
   const mk = frag => new THREE.ShaderMaterial({ vertexShader: PROP_VERT, fragmentShader: frag, uniforms });
   const two = frag => new THREE.ShaderMaterial({ vertexShader: PROP_VERT, fragmentShader: frag, uniforms, side: THREE.DoubleSide });
   return {
-    sign: two(SIGN_FRAG), bb: two(BB_FRAG), emit: two(EMIT_FRAG), metal: mk(METAL_FRAG),
+    sign: new THREE.ShaderMaterial({ vertexShader: PROP_VERT, fragmentShader: SIGN_FRAG, uniforms, glslVersion: THREE.GLSL3 }),
+    emit: two(EMIT_FRAG), metal: mk(METAL_FRAG),
     foliage: mk(FOLIAGE_FRAG), cloth: two(CLOTH_FRAG), water: two(WATER_FRAG),
     tunnel: two(TUNNEL_FRAG), glass: two(GLASS_FRAG), rail: two(RAIL_FRAG),
   };
 }
 
 export function markGlowing(mats) {
-  for (const k of ['sign', 'bb', 'emit']) mats[k].userData.glows = true;
+  for (const k of ['sign', 'emit']) mats[k].userData.glows = true;
   return mats;
 }
 
@@ -321,7 +287,7 @@ export class Batch {
 
 // ---------- build every prop in one chunk ----------
 export function buildProps(n0, n1, mats) {
-  const signs = new Batch(unitBox), bbs = new Batch(unitPlane);
+  const signs = new Batch(unitBox);
   const emit = new Batch(unitBox), metal = new Batch(unitBox);
   const f = {};
 
@@ -345,27 +311,16 @@ export function buildProps(n0, n1, mats) {
       frameAt(d, f);
       const gy = floorAt(d);
       // a slab standing out from the wall, facing along the road
-      const x = f.x + f.rx * sg * (wall + 0.8), z = f.z + f.rz * sg * (wall + 0.8);
-      signs.add([x, gy + sn.v0, z], [1.7, sn.v1 - sn.v0, 0.45], f.th,
-        sn.c, [sn.seed % 1000, sn.dead ? 1 : 0]);
-    }
-
-    for (const b of B.bbs) {
-      const uc = (b.u0 + b.u1) / 2;
-      frameAt(B.start * SEGL + uc, f);
-      const gy = floorAt(B.start * SEGL + uc);
-      const w = b.u1 - b.u0, h = b.v1 - b.v0;
-      const x = f.x + f.rx * sg * (wall - 0.15), z = f.z + f.rz * sg * (wall - 0.15);
-      // the plane's local +Z must face away from the wall
-      bbs.add([x, gy + (b.v0 + b.v1) / 2, z], [w, h, 1], f.th + (sg > 0 ? Math.PI / 2 : -Math.PI / 2),
-        b.c1, [b.seed % 1000, b.kind, 0, 0]);
+      const x = f.x + f.rx * sg * (wall - 0.8), z = f.z + f.rz * sg * (wall - 0.8);
+      signs.add([x, gy + sn.v0, z], [1.6, sn.v1 - sn.v0, 0.12], f.th,
+        sn.c, [sn.seed, Number(sn.dead), Math.max(6, Math.round((sn.v1 - sn.v0) / 1.6 * 5)), sg]);
     }
 
     // --- rooftop kit, straight off B.roofKind ---
     const mid = (B.start + B.len / 2) * SEGL;
     frameAt(mid, f);
     const roofY = floorAt(mid) + B.h;
-    const rx = f.x + f.rx * sg * (wall + 7), rz = f.z + f.rz * sg * (wall + 7);
+    const rx = f.x + f.rx * sg * (wall + 13), rz = f.z + f.rz * sg * (wall + 13);
     if (B.roofKind === 2 && B.len * SEGL > 15) {        // helipad: a ring of landing lights
       for (let i = 0; i < 8; i++) {
         const a = i / 8 * Math.PI * 2;
@@ -375,8 +330,6 @@ export function buildProps(n0, n1, mats) {
     } else if (B.roofKind === 3) {                       // rooftop bar: a string of warm bulbs
       for (let i = 0; i < 6; i++)
         emit.add([rx + (i - 2.5) * 2.4, roofY + 2.2, rz], [0.4, 0.4, 0.4], 0, [255, 190, 110], [i, 0.25]);
-    } else if (B.roofKind === 4 && B.crown) {            // neon sign laid flat, facing the sky
-      bbs.add([rx, roofY + 0.4, rz], [10, 5, 1], f.th, B.crown, [B.seed % 1000, 4, 0, 0]);
     }
     if (B.landmark) {                                     // antenna mast with an aviation light
       const mh = 10 + hash(B.id, 1, 5) * 22;
@@ -402,7 +355,7 @@ export function buildProps(n0, n1, mats) {
   }
 
   const out = [];
-  for (const [b, m] of [[signs, mats.sign], [bbs, mats.bb], [emit, mats.emit], [metal, mats.metal]]) {
+  for (const [b, m] of [[signs, mats.sign], [emit, mats.emit], [metal, mats.metal]]) {
     const mesh = b.build(m);
     if (mesh) out.push(mesh);
   }

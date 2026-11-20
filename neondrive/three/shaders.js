@@ -1,3 +1,12 @@
+export const integerHash = /* glsl */`
+float hsh(int x, int y, int s) {
+  uint h = uint(x) * 374761393u + uint(y) * 668265263u + uint(s) * 1442695041u;
+  h = (h ^ (h >> 13u)) * 1274126177u;
+  h ^= h >> 16u;
+  return float(h >> 8u) / 16777216.0;           // the top 24 bits, so it stays below 1 exactly as in JavaScript
+}
+`;
+
 // shaders.js — the look. The old build computed every wall pixel in JS
 // (wallTex(), ~280k calls a frame). Here the same procedural facade runs as a
 // fragment shader, so the GPU draws it in parallel and it costs ~nothing.

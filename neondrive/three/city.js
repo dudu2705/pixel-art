@@ -6,7 +6,7 @@ import * as THREE from './vendor/three.module.js';
 import { SEGL, NSEG, LEN, RW, SW, blocks, SIDE, ELEV, LAYERED, BASE, zoneAt, D } from './world.js';
 import { frameAt } from './road.js';
 import { roadVert, roadFrag, floorVert, floorFrag } from './shaders.js';
-import { facadeVert, facadeFrag } from './facade.glsl.js';
+import { facadeVert, facadeFrag, makeBuildingTexture } from './facade.glsl.js';
 import { makeMaterials, markGlowing, buildProps } from './props.js';
 import { buildDressing } from './dressing.js';
 import { buildSignals } from './signals.js';
@@ -36,8 +36,8 @@ export class City {
     };
     this.facadeMat = new THREE.ShaderMaterial({
       vertexShader: facadeVert, fragmentShader: facadeFrag,
-      uniforms: this.uniforms, side: THREE.DoubleSide,
-      extensions: { derivatives: true },
+      uniforms: { ...this.uniforms, uBuildings: { value: makeBuildingTexture() } },
+      side: THREE.DoubleSide, glslVersion: THREE.GLSL3,
     });
     this.roadMat = new THREE.ShaderMaterial({
       vertexShader: roadVert, fragmentShader: roadFrag,
@@ -160,27 +160,22 @@ export class City {
 
     // A block can run 80m. Emitting it as one straight box makes it cut across
     // the road wherever the road curves under it, so each block is laid down in
-    // short pieces that follow the centreline. iMeta.z carries how far along the
+    // short pieces that follow the centreline. iWall carries how far along the
     // facade each piece starts, so the window grid runs on unbroken.
     const STEP = 3;                                     // segments per piece
     const pieces = [];
     for (const { B, side } of list) {
-      const depth = 10 + (B.seed % 17);
       for (let a = 0; a < B.len; a += STEP) {
         const b = Math.min(B.len, a + STEP);
-        pieces.push({ B, side, a, b, depth });
+        pieces.push({ B, side, a, b });
       }
     }
     const N = pieces.length;
     const iPos = new Float32Array(N * 3), iSize = new Float32Array(N * 3);
-    const iRot = new Float32Array(N), iBase = new Float32Array(N * 3);
-    const iCrown = new Float32Array(N * 3), iMeta = new Float32Array(N * 4);
-    const iExtra = new Float32Array(N * 4), iShop = new Float32Array(N * 4);
-    const pack = c => Math.round(Math.min(255, Math.max(0, c[0]))) * 65536
-                    + Math.round(Math.min(255, Math.max(0, c[1]))) * 256
-                    + Math.round(Math.min(255, Math.max(0, c[2])));
+    const iRot = new Float32Array(N), iWall = new Float32Array(N * 3);
+    const depth = 36;                                    // GPU reference rooftop width
     const f = {};
-    pieces.forEach(({ B, side, a, b, depth }, i) => {
+    pieces.forEach(({ B, side, a, b }, i) => {
       const mid = (B.start + (a + b) / 2) * SEGL;
       frameAt(mid, f);
       const sg = side ? 1 : -1;
@@ -194,20 +189,7 @@ export class City {
       iSize[i * 3 + 1] = B.h;
       iSize[i * 3 + 2] = (b - a) * SEGL + 0.25;        // a touch of overlap hides the joins
       iRot[i] = f.th;
-      iBase[i * 3] = B.base[0] / 255; iBase[i * 3 + 1] = B.base[1] / 255; iBase[i * 3 + 2] = B.base[2] / 255;
-      if (B.crown) { iCrown[i * 3] = B.crown[0] / 255; iCrown[i * 3 + 1] = B.crown[1] / 255; iCrown[i * 3 + 2] = B.crown[2] / 255; }
-      iMeta[i * 4] = B.seed % 1000;
-      iMeta[i * 4 + 1] = B.winP;
-      iMeta[i * 4 + 2] = a * SEGL;                      // u offset along the facade
-      iMeta[i * 4 + 3] = B.h;
-      iExtra[i * 4] = B.style;
-      iExtra[i * 4 + 1] = B.dark ? 1 : 0;
-      iExtra[i * 4 + 2] = B.id % 4096;
-      iExtra[i * 4 + 3] = pack(B.lobby || [120, 120, 160]);
-      iShop[i * 4] = pack(B.shop[0]);
-      iShop[i * 4 + 1] = pack(B.shop[1]);
-      iShop[i * 4 + 2] = pack(B.shop[2]);
-      iShop[i * 4 + 3] = pack(B.avg);
+      iWall.set([B.id, (a + b) * SEGL / 2, sg], i * 3);
     });
 
     const g = new THREE.InstancedBufferGeometry();
@@ -218,11 +200,7 @@ export class City {
     g.setAttribute('iPos', new THREE.InstancedBufferAttribute(iPos, 3));
     g.setAttribute('iSize', new THREE.InstancedBufferAttribute(iSize, 3));
     g.setAttribute('iRot', new THREE.InstancedBufferAttribute(iRot, 1));
-    g.setAttribute('iBase', new THREE.InstancedBufferAttribute(iBase, 3));
-    g.setAttribute('iCrown', new THREE.InstancedBufferAttribute(iCrown, 3));
-    g.setAttribute('iMeta', new THREE.InstancedBufferAttribute(iMeta, 4));
-    g.setAttribute('iExtra', new THREE.InstancedBufferAttribute(iExtra, 4));
-    g.setAttribute('iShop', new THREE.InstancedBufferAttribute(iShop, 4));
+    g.setAttribute('iWall', new THREE.InstancedBufferAttribute(iWall, 3));
     g.instanceCount = N;
     g.userData.sharedBase = true;
     const mesh = new THREE.Mesh(g, this.facadeMat);
