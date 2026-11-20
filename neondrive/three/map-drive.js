@@ -1,6 +1,7 @@
 import { VANTA_BAY, frameOn, frameInLane, laneOffset, legalTurns, routeTo, turnAngle, turnPath,
   inBore, underSkyDeck, LANE_WIDTH, SURFACES, onSurface } from './map.js';
 import { S, blendTheme, setAuto, updateClimate } from './sim.js';
+import { signalState } from './map-signals.js';
 import { CITIES, CRUISE, SEGL, ZONES, cars, clamp, mulberry } from './world.js';
 
 const { nodes, edges } = VANTA_BAY;
@@ -114,6 +115,9 @@ export class MapDrive {
 
   canEnter(current) {
     if (current === this.player && !S.auto) return true;
+    // traffic lights: stop on red, and on amber unless already at the line
+    const light = signalState(current.edge, S.T);
+    if (light === 2 || (light === 1 && current.edge.path.length - current.edge.to.trim - current.s > 20)) return false;
     const owner = this.owners.get(current.edge.to);
     if (owner && owner !== current) return false;
     const lane = this.nextLane(current, current.exit);
@@ -231,7 +235,7 @@ export class MapDrive {
       const handLean = S.auto || current.turn ? 0 : S.steer * Math.min(current.speed, 40) * 0.2;
       const tilt = clamp(Math.atan((this.yawRate * current.speed + handLean) / 9.8), -0.42, 0.42);
       S.roll += (tilt - S.roll) * Math.min(1, dt * 4);
-      S.waitLight = false;
+      S.waitLight = S.auto && current.speed < 1 && remaining < 6 && signalState(current.edge, S.T) === 2;
     }
   }
 

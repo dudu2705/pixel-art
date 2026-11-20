@@ -13,6 +13,7 @@ import { ArtOverlay } from './overlay.js';
 import { drawCockpit, drawRideReadout } from './cockpit.js';
 import { makeLightCycle } from './cycle.js';
 import { Signals } from './signals.js';
+import { MapSignals } from './map-signals.js';
 import { S, update as simUpdate, setAuto, setCruise, cruiseKmh } from './sim.js';
 import { Rig, MODES } from './camera.js';
 import { Glow } from './glow.js';
@@ -140,7 +141,7 @@ const cycle = makeLightCycle(city.uniforms);
 scene.add(cycle);
 const traffic = new Traffic(scene, city.mats);
 const weather = new Weather();
-const signals = comparisonLoop ? new Signals(scene, city.mats) : null;
+const signals = comparisonLoop ? new Signals(scene, city.mats) : new MapSignals(scene, city.mats);
 const rig = new Rig(camera, canvas, mapDrive ? {
   frameAt: sampleFrame, enclosed: mapDrive.enclosed.bind(mapDrive), boreHalfWidth: RAMP_BORE_HALF_WIDTH, period: 0,
 } : undefined);
@@ -309,7 +310,7 @@ function frame(now) {
     focal, f.elev, crown, [lightGrade / tint.x, lightGrade / tint.y, lightGrade / tint.z]);
 
   city.update(bike.dist, camera.position, T);
-  if (mapDrive) traffic.updateMap(mapDrive.traffic);
+  if (mapDrive) { traffic.updateMap(mapDrive.traffic); signals.update(S.T); }
   else {
     traffic.update(bike.dist, dt, T);
     signals.update(bike.dist);

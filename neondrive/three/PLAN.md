@@ -122,6 +122,28 @@ Use these shots as the visual baseline when replacing scenery with connected geo
   weather shelter under real cover, and the last level and portal height on each intercity link as cities are
   added. Run the checks from the static server using the default map and `?loop`.
 
+## Map life port (in progress, one piece at a time)
+
+The comparison loop (`?loop`) has the reference's street life; the Vanta Bay map so far has only cars. Port it onto
+the map in this order, one commit each. Whoever picks this up: tick the box, add a line under it, commit.
+
+- [x] **1. Traffic lights at map junctions.** Street-level junctions with three or more roads (not the plaza ring,
+  not ramp nodes) get the reference cycle: 30 s period, each axis 12 s green, 3 s amber, 15 s red, axes opposite,
+  random offset per junction. Traffic and autopilot stop at the stop line on red and on amber when not already
+  close; the manual rider can run them. `S.waitLight` (cockpit `RED`) only for autopilot held by a real red.
+  Masts and lit heads on each approach, as `signals.js` draws them in the loop. Code: `map-signals.js`.
+  Done: six junctions (west, east, north, northeast, south, southeast). Amber stops a car only if more than 20 m
+  from the line, as the reference. Headless 4-min autopilot run: 169 junction entries, 0 on red, autopilot held
+  at red 6 times (longest 11.8 s), no gridlock. Masts render over the boulevard with lit heads.
+  Next: item 2. Stop lines sit at each node's `trim`; put the zebra between the stop line and the junction disc.
+- [ ] **2. Zebra crossings and pedestrians crossing on red.** Painted crossings on each signalled approach;
+  people cross while their road is red, as `crossersRaw` does in the reference (umbrellas in rain). Traffic waits
+  for them; hitting one stops the rider dead.
+- [ ] **3. Sidewalk pedestrians** walking the map's sidewalks and skywalks (the loop's crowd art).
+- [ ] **4. Hover cars and air-lane gates** over the map's main avenues.
+- [ ] **5. Monorail / skytrain** on a fixed loop over Vanta Bay.
+- [ ] Then: Crown level and lift (see "Later build" above), district looks per neighbourhood, more cities.
+
 ## Driving feel
 
 Done first, without a structural change:
