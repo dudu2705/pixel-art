@@ -1,3 +1,5 @@
+import { SEGL } from './world.js';
+
 export const integerHash = /* glsl */`
 float hsh(int x, int y, int s) {
   uint h = uint(x) * 374761393u + uint(y) * 668265263u + uint(s) * 1442695041u;
@@ -144,63 +146,79 @@ export const roadVert = /* glsl */`
 
 export const roadFrag = /* glsl */`
   precision highp float;
+  precision highp int;
+  ${integerHash}
+  out vec4 fragColor;
   varying vec2 vUv;
   varying vec3 vWorld;
   varying float vLat;
   uniform vec3 uFog;
   uniform float uFogNear, uFogFar;
-  uniform vec3 uCam;
-  uniform float uRW, uSW;
+  uniform float uRW;
   uniform sampler2D uReflect;
   uniform vec2 uRes;
   uniform float uWet;
-  uniform float uGlass;   // 1 on levels 2 and 3: the deck is see-through
+  uniform float uGlass;
+  uniform vec2 uBike;
+  uniform vec2 uBikeForward;
+  uniform float uHeadlight;
 
   void main() {
     float a = abs(vLat);
-    vec3 col;
-    if (a >= uRW) {
-      col = vec3(0.095, 0.092, 0.125);                    // pavement
-      // paving slabs, and a pale kerb edge where it meets the road
-      vec2 slab = vec2(fract(vUv.y * 0.5), fract((a - uRW) / 1.6));
-      if (slab.x < 0.05 || slab.y < 0.05) col *= 1.45;
-      if (a < uRW + 0.05) col = vec3(0.26, 0.25, 0.3);
-    } else {
-      col = vec3(0.055, 0.055, 0.075);                    // asphalt
-      // lane markings: centre line and the dashed lane divides
-      float lane = abs(fract((vLat + uRW) / (uRW * 2.0 / 4.0)) - 0.5);
-      if (a < 0.16) col = vec3(0.65, 0.55, 0.15);         // centre
-      else if (lane > 0.47 && fract(vUv.y * 3.0) < 0.45) col = vec3(0.6, 0.62, 0.68);
-      if (a > uRW - 0.25) col = vec3(0.5, 0.52, 0.6);     // edge line
-    }
-    // levels 2 and 3 ride on a clear glass deck: dark blue glass over the city,
-    // with the pavement's tile lines left solid
+    float roadZ = vUv.y * ${SEGL}.0;
+    float pixelWidth = fwidth(vLat);
+    float lineWidth = max(0.09, pixelWidth * 0.55);
     float alpha = 1.0;
-    if (uGlass > 0.5) {
-      if (a < uRW) {
-        if (col.r < 0.1) { col = vec3(0.055, 0.118, 0.188); alpha = 0.30; }   // plain deck
-        else alpha = 0.92;                                                    // keep the markings
+    float reflectivity;
+    vec3 col;
+
+    if (a < uRW) {
+      reflectivity = 0.2;
+      if (abs(a - 0.2) < lineWidth) col = vec3(235, 165, 40);
+      else if (abs(a - 3.5) < lineWidth && mod(roadZ, 10.0) < 4.5) col = vec3(190, 190, 210);
+      else if (abs(a - (uRW - 0.3)) < lineWidth) col = uGlass > 0.5 ? vec3(90, 230, 255) : vec3(200, 200, 215);
+      else if (uGlass > 0.5) {
+        col = vec3(14, 30, 48);
+        alpha = 0.30;
+        reflectivity = 0.15;
       } else {
-        bool line = mod(vUv.y * 0.5, 1.0) < 0.05 || mod((a - uRW) / 1.6, 1.0) < 0.05;
-        alpha = line ? 0.9 : 0.35;
-        col = line ? col : vec3(0.08, 0.1, 0.16);
+        float noise = hsh(int(floor(vLat * 3.0)), int(floor(roadZ * 3.0)), 9);
+        col = vec3(24, 22, 34) + mix(9.0 * noise, 4.5, smoothstep(0.25, 0.35, pixelWidth));
+        reflectivity = 0.5;
       }
+    } else if (a < uRW + 0.3) {
+      col = vec3(0, 225, 255);
+      reflectivity = 0.3;
+    } else {
+      bool tile = pixelWidth < 0.5 && (mod(roadZ, 1.6) < max(0.12, pixelWidth) ||
+                                       mod(a - uRW, 1.6) < max(0.10, pixelWidth));
+      col = tile ? vec3(30, 26, 42) : vec3(46, 40, 60);
+      alpha = uGlass > 0.5 ? (tile ? 0.9 : 0.35) : 1.0;
+      reflectivity = uGlass > 0.5 ? 0.1 : 0.25;
     }
 
-    // wet tarmac: the mirrored lights, smeared along the road and fading out
-    // with distance, the way the original's reflection buffer did
+    float d = max(0.0, -(viewMatrix * vec4(vWorld, 1.0)).z);
+    float fog = smoothstep(uFogNear, uFogFar, d) * 0.97;
+    col = mix(col / 255.0, uFog, fog);
+
     if (uWet > 0.01) {
-      vec2 ruv = gl_FragCoord.xy / uRes;
-      vec3 refl = texture2D(uReflect, ruv).rgb;
-      float lum = dot(refl, vec3(0.3, 0.5, 0.2));
-      // the brighter the thing above, the more of it the tarmac carries
-      float k = uWet * (0.35 + 0.55 * smoothstep(0.02, 0.45, lum));
-      col = mix(col * (1.0 - 0.3 * uWet), refl, k);
+      vec2 uv = gl_FragCoord.xy / uRes;
+      vec3 reflection = texture2D(uReflect, uv).rgb * 0.5
+                      + texture2D(uReflect, uv + vec2(0, 2) / uRes).rgb * 0.25
+                      + texture2D(uReflect, uv - vec2(0, 2) / uRes).rgb * 0.25;
+      float luma = dot(reflection, vec3(0.3, 0.5, 0.2));
+      float weight = reflectivity * (1.0 - fog) * uWet * (1.0 - smoothstep(45.0, 170.0, d));
+      col = mix(col, reflection, weight * 0.55 * smoothstep(70.0 / 255.0, 190.0 / 255.0, luma));
     }
-    float d = distance(vWorld, uCam);
-    float fg = smoothstep(uFogNear, uFogFar, d);
-    col = mix(col, uFog, fg * 0.97);
-    gl_FragColor = vec4(col, alpha);
+
+    vec2 offset = vWorld.xz - uBike;
+    float ahead = dot(offset, uBikeForward);
+    float across = dot(offset, vec2(uBikeForward.y, -uBikeForward.x)) / 2.8;
+    float beam = (1.0 - smoothstep(9.0, 32.0, ahead)) * smoothstep(2.5, 6.0, ahead)
+                 * max(0.0, 1.0 - across * across) * uHeadlight;
+    col += vec3(190, 215, 255) / 255.0 * beam;
+
+    fragColor = vec4(col, alpha);
   }
 `;
 

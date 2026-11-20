@@ -100,20 +100,18 @@ export class Rig {
       return;
     }
 
-    let want = new THREE.Vector3(), lookAt = new THREE.Vector3(bx, by + 1.6, bz), roll = 0, fov = 68;
+    let want = new THREE.Vector3(), lookAt = new THREE.Vector3(bx, by + 1.6, bz), fov = 68;
 
     if (this.mode === 0) {                        // COCKPIT
       want.set(bx, by + 1.45, bz);
       const ahead = frameAt(bike.dist + 30, {});
       lookAt.set(ahead.x + ahead.rx * bike.lat, ahead.y + 1.3, ahead.z + ahead.rz * bike.lat);
-      roll = bike.roll;          // the cockpit rolls fully with the bike
       fov = 72;
     } else if (this.mode === 1) {                 // CHASE
       const back = 11 + bike.speed * 0.05;
       want.set(bx + Math.sin(head) * -back, by + 4.2, bz + Math.cos(head) * -back);
       const ahead = frameAt(bike.dist + 26, {});
       lookAt.set(ahead.x, ahead.y + 2.2, ahead.z);
-      roll = bike.roll * 0.85;   // the chase view leans with it too
     } else if (this.mode === 2) {                 // TOP
       want.set(bx, by + 46, bz);
       lookAt.set(bx + Math.sin(head) * 18, by, bz + Math.cos(head) * 18);
@@ -152,7 +150,7 @@ export class Rig {
     this.look.z = damp(this.look.z, lookAt.z, l, dt);
 
     this.cam.position.copy(this.pos);
-    this.cam.up.set(Math.sin(roll), Math.cos(roll), 0);
+    this.cam.up.set(0, 1, 0);
     this.cam.lookAt(this.look);
     if (Math.abs(this.cam.fov - fov) > 0.05) { this.cam.fov = damp(this.cam.fov, fov, 6, dt); this.cam.updateProjectionMatrix(); }
   }

@@ -11,6 +11,7 @@ import { makeMaterials, markGlowing, buildProps } from './props.js';
 import { buildDressing } from './dressing.js';
 import { buildSignals } from './signals.js';
 
+export const ROAD_LAYER = 2;
 export const CHUNK = 64;                       // segments per chunk
 export const NCHUNK = Math.ceil(NSEG / CHUNK);
 const AHEAD = 22, BEHIND = 6;                  // chunks kept live
@@ -29,10 +30,12 @@ export class City {
       uTime: { value: 0 },
       uFlash: { value: 0 },
       uRW: { value: RW },
-      uSW: { value: SW },
       uReflect: { value: null },
       uRes: { value: new THREE.Vector2(1, 1) },
       uWet: { value: 0 },
+      uBike: { value: new THREE.Vector2() },
+      uBikeForward: { value: new THREE.Vector2() },
+      uHeadlight: { value: 0 },
     };
     this.facadeMat = new THREE.ShaderMaterial({
       vertexShader: facadeVert, fragmentShader: facadeFrag,
@@ -41,13 +44,13 @@ export class City {
     });
     this.roadMat = new THREE.ShaderMaterial({
       vertexShader: roadVert, fragmentShader: roadFrag,
-      uniforms: { ...this.uniforms, uGlass: { value: 0 } }, side: THREE.DoubleSide,
+      uniforms: { ...this.uniforms, uGlass: { value: 0 } }, side: THREE.DoubleSide, glslVersion: THREE.GLSL3,
     });
     // levels 2 and 3 ride on a see-through deck, so they get their own material
     this.glassMat = new THREE.ShaderMaterial({
       vertexShader: roadVert, fragmentShader: roadFrag,
       uniforms: { ...this.uniforms, uGlass: { value: 1 } }, side: THREE.DoubleSide,
-      transparent: true, depthWrite: false,
+      transparent: true, depthWrite: false, glslVersion: THREE.GLSL3,
     });
     this.floorMat = new THREE.ShaderMaterial({
       vertexShader: floorVert, fragmentShader: floorFrag,
@@ -103,6 +106,7 @@ export class City {
     g.setIndex(idx);
     g.computeBoundingSphere();
     const m = new THREE.Mesh(g, wantElev ? this.glassMat : this.roadMat);
+    m.layers.set(ROAD_LAYER);
     if (wantElev) m.renderOrder = 2;
     return m;
   }
@@ -137,6 +141,7 @@ export class City {
     g.setIndex(idx);
     g.computeBoundingSphere();
     const m = new THREE.Mesh(g, this.floorMat);
+    m.layers.set(ROAD_LAYER);
     m.renderOrder = -2;
     return m;
   }

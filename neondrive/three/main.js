@@ -2,7 +2,7 @@ import * as THREE from './vendor/three.module.js';
 import { SEGL, NSEG, LEN, RW, SW, CITIES, ZONE_NAMES, LINK_NAMES, LH, LAYER, ELEV,
          zoneAt, district, setTime, D } from './world.js';
 import { frameAt } from './road.js';
-import { City } from './city.js';
+import { City, ROAD_LAYER } from './city.js';
 import { Traffic } from './traffic.js';
 import { Weather } from './weather.js';
 import { Signals } from './signals.js';
@@ -19,6 +19,7 @@ renderer.setPixelRatio(1);
 renderer.outputColorSpace = THREE.LinearSRGBColorSpace;
 const scene = new THREE.Scene();
 const camera = new THREE.PerspectiveCamera(68, 1, 0.5, 6000);
+camera.layers.enable(ROAD_LAYER);
 
 // Match the GPU game's art grid and its always-on 2x city detail.
 const ART_SHORT_SIDE = 280, CITY_SCALE = 2;
@@ -26,7 +27,11 @@ let rt = null;
 const quadScene = new THREE.Scene();
 const quadCam = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
 const quadMat = new THREE.ShaderMaterial({
-  uniforms: { map: { value: null }, uGlow: { value: null }, uGlowAmt: { value: 1.0 } },
+  uniforms: {
+    map: { value: null }, uGlow: { value: null }, uGlowAmt: { value: 1 },
+    uView: { value: new THREE.Vector2() }, uRotation: { value: new THREE.Vector2(1, 0) },
+    uTint: { value: new THREE.Vector3(1, 1, 1) }, uFlash: { value: new THREE.Vector3() },
+  },
   vertexShader: `varying vec2 vUv; void main(){ vUv = uv; gl_Position = vec4(position.xy, 0.0, 1.0); }`,
   fragmentShader: `
     precision highp float;
@@ -34,12 +39,15 @@ const quadMat = new THREE.ShaderMaterial({
     uniform sampler2D map;
     uniform sampler2D uGlow;
     uniform float uGlowAmt;
+    uniform vec2 uView, uRotation;
+    uniform vec3 uTint, uFlash;
     void main() {
-      vec3 c = texture2D(map, vUv).rgb;
-      // the light buffer, quantised to six steps before it is added, exactly as
-      // addLight() did. The steps are the point: a smooth bloom reads as film.
-      vec3 g = floor(texture2D(uGlow, vUv).rgb * uGlowAmt * 6.0) / 6.0;
-      gl_FragColor = vec4(c + g, 1.0);
+      vec2 p = (vUv - 0.5) * uView;
+      vec2 uv = 0.5 + vec2(uRotation.x * p.x + uRotation.y * p.y,
+                            -uRotation.y * p.x + uRotation.x * p.y) / vec2(textureSize(map, 0));
+      vec3 scene = texture2D(map, uv).rgb;
+      vec3 glow = texture2D(uGlow, uv).rgb * uGlowAmt;
+      gl_FragColor = vec4(scene * uTint + glow + uFlash, 1.0);
     }`,
 });
 quadScene.add(new THREE.Mesh(new THREE.PlaneGeometry(2, 2), quadMat));
@@ -57,10 +65,15 @@ function resize() {
   renderer.setSize(outputWidth, outputHeight, false);
   canvas.style.width = `${outputWidth / dpr}px`;
   canvas.style.height = `${outputHeight / dpr}px`;
-  camera.aspect = artWidth / artHeight;
-  camera.updateProjectionMatrix();
+  // Draw enough offscreen city for the widest bank at the current aspect.
+  const maxLean = 0.43;
+  const margin = across => Math.ceil(across * Math.sin(maxLean) / 2) + 2;
+  const width = artWidth * CITY_SCALE, height = artHeight * CITY_SCALE;
+  const mx = margin(height), my = margin(width);
+  const pw = width + 2 * mx, ph = height + 2 * my;
+  camera.setViewOffset(width, height, -mx, -my, pw, ph);
+  quadMat.uniforms.uView.value.set(width, height);
   if (rt) rt.dispose();
-  const pw = artWidth * CITY_SCALE, ph = artHeight * CITY_SCALE;
   rt = new THREE.WebGLRenderTarget(pw, ph, {
     minFilter: THREE.NearestFilter, magFilter: THREE.NearestFilter,
     depthBuffer: true, type: THREE.UnsignedByteType,
@@ -77,25 +90,21 @@ let reflectRT = null;
 const mirrorCam = new THREE.PerspectiveCamera();
 const REFL = new THREE.Matrix4();
 
-// mirror the camera about the road plane and draw only the glowing things
+// Mirror the scene across the road plane, leaving the receiving surface out.
 function renderReflection(roadY) {
   REFL.set(1, 0, 0, 0,  0, -1, 0, 2 * roadY,  0, 0, 1, 0,  0, 0, 0, 1);
-  mirrorCam.copy(camera);
+  camera.updateMatrixWorld();
+  mirrorCam.copy(camera, false);
   mirrorCam.matrixAutoUpdate = false;
+  mirrorCam.matrixWorldAutoUpdate = false;
   mirrorCam.matrixWorld.multiplyMatrices(REFL, camera.matrixWorld);
   mirrorCam.matrixWorldInverse.copy(mirrorCam.matrixWorld).invert();
-  mirrorCam.projectionMatrix.copy(camera.projectionMatrix);
-  mirrorCam.projectionMatrixInverse.copy(camera.projectionMatrixInverse);
-  // the original reflected EVERYTHING above the horizon into the wet road, not
-  // just the lights, which is why its streets are half reflection
-  mirrorCam.layers.enableAll();
-  const pc = renderer.getClearColor(new THREE.Color()), pa = renderer.getClearAlpha();
+  mirrorCam.layers.disable(ROAD_LAYER);
+  const showCockpit = cockpit.visible;
+  cockpit.visible = false;
   renderer.setRenderTarget(reflectRT);
-  renderer.setClearColor(0x000000, 1);
-  renderer.clear();
   renderer.render(scene, mirrorCam);
-  renderer.setRenderTarget(null);
-  renderer.setClearColor(pc, pa);
+  cockpit.visible = showCockpit;
 }
 addEventListener('resize', resize);
 
@@ -279,10 +288,6 @@ const bikeGroup = new THREE.Group();
 }
 scene.add(bikeGroup);
 
-// headlight cone on the road
-const head = new THREE.SpotLight(0xffeedd, 0);
-scene.add(head);
-
 // ---------- the light cycle's cockpit, for camera 1 ----------
 // The original drew a smoked-glass dome with a glowing ring floating inside and
 // no dash. Here it is geometry parented to the camera.
@@ -397,7 +402,7 @@ function theme(dt) {
   fireworks(dt, S.T, (S.TH.fireworks || 0) > 0.3, camera.position);
 
   weather.setKind(S.fall === 'none' || S.fall === 'off' ? 'clear' : S.fall);
-  city.uniforms.uWet.value = Math.max(0, (S.wet - 0.45) / 0.55);
+  city.uniforms.uWet.value = S.rainOn ? S.wet : 0;
   city.uniforms.uFlash.value = S.flash;
 
   if (z[3] !== themeCity) { themeCity = z[3]; hud(); }
@@ -435,6 +440,18 @@ function frame(now) {
   bikeGroup.rotation.set(0, f.th, bike.roll);
   bikeGroup.visible = rig.mode !== 0;
   cockpit.visible = rig.mode === 0;
+  const lean = cockpit.visible ? bike.roll : 0;
+  cockpit.rotation.z = -lean;
+  quadMat.uniforms.uRotation.value.set(Math.cos(lean), Math.sin(lean));
+
+  const crown = THREE.MathUtils.smoothstep(f.elev, LH[1] + 15, LH[2]);
+  const dim = 1 - 0.38 * S.night;
+  quadMat.uniforms.uTint.value.set(dim * (1 - 0.07 * crown), dim, dim * (1 + 0.08 * crown));
+  quadMat.uniforms.uFlash.value.set(1, 0.3, 0.4).multiplyScalar(S.crashFlash * 120 / 255);
+  const roadUniforms = city.uniforms;
+  roadUniforms.uBike.value.set(bx, bz);
+  roadUniforms.uBikeForward.value.set(Math.sin(f.th), Math.cos(f.th));
+  roadUniforms.uHeadlight.value = lightOn ? 0.14 + 0.22 * (S.TH.dark || 0) + 0.08 * S.night : 0;
 
   sky.position.copy(camera.position);
   mountains.position.set(camera.position.x, 0, camera.position.z);
@@ -443,13 +460,13 @@ function frame(now) {
   signals.update(bike.dist);
   weather.update(camera.position, dt, T, city.uniforms.uFog.value, city.uniforms.uFogFar.value);
 
-  if (city.uniforms.uWet.value > 0.02) renderReflection(frameAt(bike.dist, {}).y);
+  if (city.uniforms.uWet.value > 0.02) renderReflection(f.y);
   renderer.setRenderTarget(rt);
   renderer.render(scene, camera);
   renderer.setRenderTarget(null);
   quadMat.uniforms.map.value = rt.texture;
   quadMat.uniforms.uGlow.value = BLOOM ? glow.render(rt.texture) : null;
-  quadMat.uniforms.uGlowAmt.value = BLOOM ? 1.0 : 0.0;
+  quadMat.uniforms.uGlowAmt.value = BLOOM ? (1 + 0.35 * S.night) * (1 - 0.25 * crown) : 0;
   renderer.setRenderTarget(null);
   renderer.render(quadScene, quadCam);
 
