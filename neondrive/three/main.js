@@ -7,6 +7,7 @@ import { Traffic } from './traffic.js';
 import { Weather } from './weather.js';
 import { ArtOverlay } from './overlay.js';
 import { drawCockpit } from './cockpit.js';
+import { makeLightCycle } from './cycle.js';
 import { Signals } from './signals.js';
 import { S, update as simUpdate, setAuto, setCruise, cruiseKmh, CARS } from './sim.js';
 import { Rig, MODES } from './camera.js';
@@ -277,35 +278,10 @@ function fireworks(dt, time, on, camPos) {
 }
 const NEONJS = [[255, 46, 170], [0, 234, 255], [255, 214, 64], [170, 90, 255], [70, 255, 150], [255, 110, 50]];
 
-// ---------- the bike ----------
-const bikeGroup = new THREE.Group();
-{
-  const body = new THREE.Mesh(new THREE.BoxGeometry(0.75, 0.5, 2.5),
-    new THREE.MeshBasicMaterial({ color: 0x1a2030 }));
-  body.position.y = 0.78;
-  const shell = new THREE.Mesh(new THREE.BoxGeometry(0.6, 0.45, 1.1),
-    new THREE.MeshBasicMaterial({ color: 0x0d1118 }));
-  shell.position.set(0, 1.18, -0.3);
-  const glow = new THREE.Mesh(new THREE.BoxGeometry(0.82, 0.1, 2.2),
-    new THREE.MeshBasicMaterial({ color: 0x00eaff }));
-  glow.position.y = 0.52;
-  const wheelG = new THREE.CylinderGeometry(0.62, 0.62, 0.22, 14).rotateZ(Math.PI / 2);
-  const wheelM = new THREE.MeshBasicMaterial({ color: 0x05070c });
-  const w1 = new THREE.Mesh(wheelG, wheelM); w1.position.set(0, 0.62, 1.05);
-  const w2 = new THREE.Mesh(wheelG, wheelM); w2.position.set(0, 0.62, -1.05);
-  const rim = new THREE.Mesh(new THREE.TorusGeometry(0.58, 0.05, 6, 18),
-    new THREE.MeshBasicMaterial({ color: 0x00eaff }));
-  rim.position.set(0, 0.62, 1.05);
-  const rim2 = rim.clone(); rim2.position.z = -1.05;
-  const lamp = new THREE.Mesh(new THREE.BoxGeometry(0.3, 0.18, 0.1),
-    new THREE.MeshBasicMaterial({ color: 0xfff4d0 }));
-  lamp.position.set(0, 1.05, 1.28);
-  bikeGroup.add(body, shell, glow, w1, w2, rim, rim2, lamp);
-}
-scene.add(bikeGroup);
-
 // ---------- world streaming ----------
 const city = new City(scene);
+const cycle = makeLightCycle(city.uniforms);
+scene.add(cycle);
 const traffic = new Traffic(scene, city.mats);
 const weather = new Weather();
 const signals = new Signals(scene, city.mats);
@@ -333,10 +309,10 @@ addEventListener('keydown', e => {
   else if (k === 'r' || k === 'w') { S.rainOn = !S.rainOn; banner2('WEATHER · ' + (S.rainOn ? 'ON' : 'OFF')); }
   else if (k === 'v') { setCruise(S.cruise + 1); hud(); banner2('CRUISE · ' + cruiseKmh() + ' KMH' + (S.auto ? '' : ' (AUTOPILOT)')); }
   else if (k === 'l') { lightOn = !lightOn; banner2('HEADLIGHT · ' + (lightOn ? 'ON' : 'OFF')); }
-  else if (k === 'c') { rig.setMode((rig.mode + 1) % MODES.length); banner2('CAMERA · ' + MODES[rig.mode]); }
+  else if (k === 'c') { rig.cycleShot(); banner2('CAMERA · ' + MODES[rig.mode]); }
   else if (k === 'h') document.body.classList.toggle('hints');
   else if (k === 'b') { BLOOM = !BLOOM; banner2('GLOW · ' + (BLOOM ? 'ON' : 'OFF')); }
-  else if (/^[1-5]$/.test(e.key)) { rig.setMode(+e.key - 1); banner2('CAMERA · ' + MODES[rig.mode]); }
+  else if (/^[1-7]$/.test(e.key)) { rig.setMode(+e.key - 1); banner2('CAMERA · ' + MODES[rig.mode]); }
 });
 addEventListener('keyup', e => { if (KEYMAP[e.key]) simKeys[KEYMAP[e.key]] = false; });
 let lightOn = true;
@@ -401,10 +377,14 @@ function frame(now) {
 
   const f = frameAt(bike.dist, {});
   const bx = f.x + f.rx * bike.lat, bz = f.z + f.rz * bike.lat;
-  bikeGroup.position.set(bx, f.y, bz);
-  bikeGroup.rotation.set(0, f.th, bike.roll);
+  cycle.position.set(bx, f.y, bz);
+  cycle.rotation.set(0, f.th, bike.roll);
   const cockpit = rig.mode === 0;
-  bikeGroup.visible = !cockpit;
+  cycle.visible = !cockpit;
+  const spin = bike.dist / 0.5 % (2 * Math.PI);
+  cycle.material.uniforms.uSpin.value.set(Math.cos(spin), Math.sin(spin));
+  cycle.material.uniforms.uSky.value.copy(skyUniforms.uMid.value).lerp(skyUniforms.uLow.value, 0.5);
+  cycle.material.uniforms.uViewportHeight.value = rt.height;
   const lean = cockpit ? bike.roll : 0;
   quadMat.uniforms.uRotation.value.set(Math.cos(lean), Math.sin(lean));
 

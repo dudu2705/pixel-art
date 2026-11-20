@@ -1,8 +1,7 @@
-// camera.js — the free camera rig.
-//
+// The five GPU shots and two inspection cameras.
 import * as THREE from './vendor/three.module.js';
 import { frameAt } from './road.js';
-import { SEGL, NSEG, RW, D, district, TRANS, TRANS_AT } from './world.js';
+import { SEGL, NSEG, LEN, LH, RW, D, district, TRANS, TRANS_AT, clamp, smooth } from './world.js';
 
 // tunnels, the sea tube, the vactrain and every level-change bore are enclosed:
 // a camera that sits outside them shows a roofless trench, so they clamp it in
@@ -15,7 +14,17 @@ function enclosed(dist) {
   return tri >= 0 && n >= TRANS[tri].s && n < TRANS[tri].e;
 }
 
-export const MODES = ['COCKPIT', 'CHASE', 'TOP', 'ORBIT', 'FLY'];
+export const SHOTS = ['COCKPIT', 'CHASE', 'DRONE', 'TRACKSIDE', 'ALONGSIDE'];
+export const MODES = [...SHOTS, 'ORBIT', 'FLY'];
+const ORBIT = SHOTS.length, FLY = ORBIT + 1;
+const FOLLOW = [
+  { back: 0, up: 0, pitch: 0 },
+  { back: 6.5, up: 1.5, pitch: 0.16 },
+  { back: 16, up: 7, pitch: 0.38 },
+  { back: 0, up: 0.6, pitch: 0 },
+  { back: 7, up: 0.5, pitch: 0 },
+];
+const LOW_DRONE = { back: 9, up: 2.2, pitch: 0.06 };
 
 const lerp = (a, b, t) => a + (b - a) * t;
 const damp = (a, b, l, dt) => lerp(a, b, 1 - Math.exp(-l * dt));
@@ -23,10 +32,14 @@ const damp = (a, b, l, dt) => lerp(a, b, 1 - Math.exp(-l * dt));
 export class Rig {
   constructor(camera, dom) {
     this.cam = camera;
-    this.mode = 1;                       // start in CHASE so you can see the bike
+    this.mode = 0;
+    this.shot = { ...FOLLOW[0], lat: 0 };
+    this.shotChanged = true;
+    this.trackside = null;
+    this.alongside = 1;
+    this.lastLat = 3.5;
     this.yaw = 0; this.pitch = 0.22; this.dist = 14;
     this.tYaw = 0; this.tPitch = 0.22; this.tDist = 14;
-    this.pos = new THREE.Vector3();
     this.look = new THREE.Vector3();
     this.fly = new THREE.Vector3();
     this.flyYaw = 0; this.flyPitch = 0;
@@ -41,20 +54,20 @@ export class Rig {
       this.dragging = true; this.lx = e.clientX; this.ly = e.clientY;
       dom.setPointerCapture(e.pointerId);
       // dragging always takes you to a camera you can steer
-      if (this.mode !== 3 && this.mode !== 4) this.setMode(3);
+      if (this.mode !== ORBIT && this.mode !== FLY) this.setMode(ORBIT);
     });
     dom.addEventListener('pointerup', e => { this.dragging = false; });
     dom.addEventListener('pointermove', e => {
       if (!this.dragging) return;
       const dx = (e.clientX - this.lx) * 0.006, dy = (e.clientY - this.ly) * 0.006;
       this.lx = e.clientX; this.ly = e.clientY;
-      if (this.mode === 4) { this.flyYaw -= dx; this.flyPitch = clampP(this.flyPitch - dy); }
+      if (this.mode === FLY) { this.flyYaw -= dx; this.flyPitch = clampP(this.flyPitch - dy); }
       else { this.tYaw -= dx; this.tPitch = clampP(this.tPitch + dy); }
     });
     dom.addEventListener('wheel', e => {
       e.preventDefault();
       this.tDist = Math.min(400, Math.max(1.5, this.tDist * Math.exp(e.deltaY * 0.0012)));
-      if (this.mode !== 3 && this.mode !== 4) this.setMode(3);
+      if (this.mode !== ORBIT && this.mode !== FLY) this.setMode(ORBIT);
     }, { passive: false });
     // the camera no longer binds its own keys: main.js owns the keyboard so the
     // original's bindings stay exactly as they were
@@ -65,25 +78,29 @@ export class Rig {
   setMode(m) {
     const prev = this.mode;
     this.mode = m;
-    if (m === 4 && prev !== 4) {                 // entering free flight: start where we are
+    this.shotChanged = true;
+    this.trackside = null;
+    this.alongside = this.lastLat > 3.5 ? -1 : 1;
+    if (m === FLY && prev !== FLY) {                 // entering free flight: start where we are
       this.fly.copy(this.cam.position);
       const d = new THREE.Vector3(); this.cam.getWorldDirection(d);
       this.flyYaw = Math.atan2(-d.x, -d.z);
       this.flyPitch = Math.asin(THREE.MathUtils.clamp(d.y, -1, 1));
     }
-    if (m === 3) { this.tYaw = this.yaw; this.tPitch = this.pitch; this.tDist = this.dist; }
+    if (m === ORBIT) { this.tYaw = this.yaw; this.tPitch = this.pitch; this.tDist = this.dist; }
     this.onMode && this.onMode(MODES[m]);
   }
 
   reset() { this.tYaw = 0; this.tPitch = 0.22; this.tDist = 14; }
 
-  // bike: { dist (along road), lat, speed, roll }
-  update(bike, dt) {
-    const f = frameAt(bike.dist, {});
-    const bx = f.x + f.rx * bike.lat, by = f.y, bz = f.z + f.rz * bike.lat;
-    const head = f.th;
+  cycleShot() {
+    this.setMode(this.mode < SHOTS.length ? (this.mode + 1) % SHOTS.length : 0);
+  }
 
-    if (this.mode === 4) {                        // FLY: detached, WASD + mouse
+  update(bike, dt) {
+    this.lastLat = bike.lat;
+    this.cam.up.set(0, 1, 0);
+    if (this.mode === FLY) {                        // FLY: detached, WASD + mouse
       const sp = (this.keys.ShiftLeft ? 160 : 45) * dt;
       const cy = Math.cos(this.flyYaw), sy = Math.sin(this.flyYaw);
       const fwd = new THREE.Vector3(-sy * Math.cos(this.flyPitch), Math.sin(this.flyPitch), -cy * Math.cos(this.flyPitch));
@@ -96,63 +113,73 @@ export class Rig {
       if (this.keys.KeyE) this.fly.y += sp;
       this.cam.position.copy(this.fly);
       this.cam.lookAt(this.fly.clone().add(fwd));
-      this.cam.up.set(0, 1, 0);
       return;
     }
 
-    let want = new THREE.Vector3(), lookAt = new THREE.Vector3(bx, by + 1.6, bz), fov = 68;
-
-    if (this.mode === 0) {                        // COCKPIT
-      want.set(bx, by + 1.45, bz);
-      const ahead = frameAt(bike.dist + 30, {});
-      lookAt.set(ahead.x + ahead.rx * bike.lat, ahead.y + 1.3, ahead.z + ahead.rz * bike.lat);
-      fov = 72;
-    } else if (this.mode === 1) {                 // CHASE
-      const back = 11 + bike.speed * 0.05;
-      want.set(bx + Math.sin(head) * -back, by + 4.2, bz + Math.cos(head) * -back);
-      const ahead = frameAt(bike.dist + 26, {});
-      lookAt.set(ahead.x, ahead.y + 2.2, ahead.z);
-    } else if (this.mode === 2) {                 // TOP
-      want.set(bx, by + 46, bz);
-      lookAt.set(bx + Math.sin(head) * 18, by, bz + Math.cos(head) * 18);
-      fov = 60;
-    } else {                                      // ORBIT — mouse-driven, anchored on the bike
-      this.yaw = damp(this.yaw, this.tYaw, 10, dt);
-      this.pitch = damp(this.pitch, this.tPitch, 10, dt);
-      this.dist = damp(this.dist, this.tDist, 8, dt);
-      const cp = Math.cos(this.pitch), a = head + this.yaw;
-      want.set(bx - Math.sin(a) * this.dist * cp, by + 1.6 + Math.sin(this.pitch) * this.dist, bz - Math.cos(a) * this.dist * cp);
-      lookAt.set(bx, by + 1.6, bz);
+    if (this.mode === ORBIT) {
+      this.updateOrbit(bike, dt);
+      return;
     }
 
-    // inside a bore, pull the camera back through the walls and under the roof
-    if (this.mode !== 0 && enclosed(bike.dist)) {
-      const dx = want.x - bx, dy = want.y - by, dz = want.z - bz;
-      let lat = dx * f.rx + dz * f.rz;                      // sideways offset
-      let fwd = dx * Math.sin(head) + dz * Math.cos(head);  // along the road
-      lat = Math.max(-(BORE_W - 1.4), Math.min(BORE_W - 1.4, lat));
-      const maxUp = BORE_H - 1.9;
-      const up = Math.min(dy, maxUp);
-      if (this.mode === 2) fwd = Math.min(fwd, -5);         // the top camera becomes a low chase
-      want.set(bx + f.rx * lat + Math.sin(head) * fwd,
-               by + Math.max(1.1, up),
-               bz + f.rz * lat + Math.cos(head) * fwd);
-      lookAt.y = Math.min(lookAt.y, by + maxUp);
+    const underRoof = enclosed(bike.dist);
+    const target = this.mode === 2 && underRoof ? LOW_DRONE : FOLLOW[this.mode];
+    const lat = this.mode === 4 ? this.alongside * 2.2 : 0;
+    const amount = this.shotChanged ? 1 : 1 - Math.pow(0.94, dt * 60);
+    for (const key of ['back', 'up', 'pitch']) this.shot[key] = lerp(this.shot[key], target[key], amount);
+    this.shot.lat = lerp(this.shot.lat, lat, amount);
+    this.shotChanged = false;
+
+    let dist = bike.dist - this.shot.back;
+    let side = bike.lat + this.shot.lat;
+    if (this.mode === 3) {
+      const passed = this.trackside && (bike.dist - this.trackside.dist + LEN) % LEN;
+      if (!this.trackside || (passed > 55 && passed < LEN / 2)) {
+        this.trackside = { dist: (bike.dist + 25) % LEN, lat: bike.lat > 3.5 ? -2.2 : 9.2 };
+      }
+      dist = this.trackside.dist;
+      side = this.trackside.lat;
     }
 
-    // critically damped follow so nothing snaps
-    const l = this.mode === 0 ? 60 : 9;
-    this.pos.x = damp(this.pos.x, want.x, l, dt);
-    this.pos.y = damp(this.pos.y, want.y, l, dt);
-    this.pos.z = damp(this.pos.z, want.z, l, dt);
-    this.look.x = damp(this.look.x, lookAt.x, l, dt);
-    this.look.y = damp(this.look.y, lookAt.y, l, dt);
-    this.look.z = damp(this.look.z, lookAt.z, l, dt);
+    const f = frameAt(dist, {});
+    const covered = underRoof || enclosed(dist);
+    const height = covered ? Math.min(1.4 + this.shot.up, BORE_H - 1.9) : 1.4 + this.shot.up;
+    if (covered) side = clamp(side, -(BORE_W - 1.4), BORE_W - 1.4);
+    this.cam.position.set(f.x + f.rx * side, f.y + height, f.z + f.rz * side);
 
-    this.cam.position.copy(this.pos);
-    this.cam.up.set(0, 1, 0);
+    const focal = Math.max(0.62 * this.cam.aspect, 0.8) * (1 - 0.14 * smooth(45, 85, bike.speed));
+    const lift = 0.14 * smooth(0, LH[1], f.elev) - 0.16 * smooth(LH[1] + 15, LH[2], f.elev);
+    const pitch = (0.05 + this.shot.pitch - lift) / focal;
+    this.look.set(this.cam.position.x + Math.sin(f.th), this.cam.position.y - pitch, this.cam.position.z + Math.cos(f.th));
     this.cam.lookAt(this.look);
-    if (Math.abs(this.cam.fov - fov) > 0.05) { this.cam.fov = damp(this.cam.fov, fov, 6, dt); this.cam.updateProjectionMatrix(); }
+    this.setFov(THREE.MathUtils.radToDeg(2 * Math.atan(0.5 / focal)));
+  }
+
+  updateOrbit(bike, dt) {
+    const f = frameAt(bike.dist, {});
+    this.yaw = damp(this.yaw, this.tYaw, 10, dt);
+    this.pitch = damp(this.pitch, this.tPitch, 10, dt);
+    this.dist = damp(this.dist, this.tDist, 8, dt);
+    const cp = Math.cos(this.pitch), a = f.th + this.yaw;
+    const bx = f.x + f.rx * bike.lat, bz = f.z + f.rz * bike.lat;
+    let x = -Math.sin(a) * this.dist * cp, z = -Math.cos(a) * this.dist * cp;
+    let up = 1.6 + Math.sin(this.pitch) * this.dist;
+    if (enclosed(bike.dist)) {
+      const side = x * f.rx + z * f.rz;
+      const limit = BORE_W - 1.4;
+      const correction = clamp(bike.lat + side, -limit, limit) - bike.lat - side;
+      x += correction * f.rx;
+      z += correction * f.rz;
+      up = clamp(up, 1.1, BORE_H - 1.9);
+    }
+    this.cam.position.set(bx + x, f.y + up, bz + z);
+    this.cam.lookAt(bx, f.y + 1.6, bz);
+    this.setFov(68);
+  }
+
+  setFov(fov) {
+    if (Math.abs(this.cam.fov - fov) < 0.05) return;
+    this.cam.fov = fov;
+    this.cam.updateProjectionMatrix();
   }
 }
 

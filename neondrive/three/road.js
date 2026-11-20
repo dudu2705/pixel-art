@@ -19,7 +19,7 @@ export const TH = new Float32Array(NSEG + 1);   // heading, radians
     PX[n] = x; PY[n] = hill[i]; PZ[n] = z; TH[n] = th;
     x += Math.sin(th) * SEGL;
     z += Math.cos(th) * SEGL;
-    th += curve[i];
+    th -= curve[i] / SEGL;  // the legacy curve changes lateral displacement per segment
   }
 }
 
@@ -33,8 +33,8 @@ export function frameAt(d, out = _p) {
   out.y = PY[n] + (PY[m] - PY[n]) * f;
   out.z = PZ[n] + (PZ[m] - PZ[n]) * f;
   out.th = TH[n] + (TH[m] - TH[n]) * f;
-  out.rx = Math.cos(out.th);          // right vector (world XZ)
-  out.rz = -Math.sin(out.th);
+  out.rx = -Math.cos(out.th);         // camera right when looking down the +Z road
+  out.rz = Math.sin(out.th);
   const i = n % NSEG;
   out.elev = LAYERED[i] ? ELEV[i] : 0;
   return out;

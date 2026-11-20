@@ -314,7 +314,7 @@ export function buildProps(n0, n1, mats) {
       // a slab standing out from the wall, facing along the road
       const x = f.x + f.rx * sg * (wall - 0.8), z = f.z + f.rz * sg * (wall - 0.8);
       signs.add([x, gy + sn.v0, z], [1.6, sn.v1 - sn.v0, 0.12], f.th,
-        sn.c, [sn.seed, Number(sn.dead), Math.max(6, Math.round((sn.v1 - sn.v0) / 1.6 * 5)), sg]);
+        sn.c, [sn.seed, Number(sn.dead), Math.max(6, Math.round((sn.v1 - sn.v0) / 1.6 * 5)), -sg]);
     }
 
     // --- rooftop kit, straight off B.roofKind ---

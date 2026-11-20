@@ -93,7 +93,7 @@ export class City {
         for (let j = 0; j < lats.length - 1; j++) {
           const a = prevRow * lats.length + j, b = a + 1;
           const c = row * lats.length + j, d2 = c + 1;
-          idx.push(a, c, b, b, c, d2);
+          idx.push(a, b, c, b, d2, c);
         }
       }
       prevRow = row; row++;
@@ -193,7 +193,7 @@ export class City {
       iSize[i * 3 + 1] = B.h;
       iSize[i * 3 + 2] = (b - a) * SEGL + 0.25;        // a touch of overlap hides the joins
       iRot[i] = f.th;
-      iWall.set([B.id, (a + b) * SEGL / 2, sg], i * 3);
+      iWall.set([B.id, (a + b) * SEGL / 2, -sg], i * 3);
     });
 
     const g = new THREE.InstancedBufferGeometry();
