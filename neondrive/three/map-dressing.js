@@ -7,6 +7,8 @@ import { FONT } from './cockpit.js';
 import { Batch, unitBox, unitPlane, unitSphere, unitCone, unitCyl } from './props.js';
 
 const LEAF = [[60, 255, 180], [200, 90, 255], [90, 200, 255], [255, 90, 200]];
+const PINK = [[255, 170, 210], [255, 200, 228], [255, 90, 140], [255, 236, 250]];
+const RUIN_LEAF = [[90, 160, 70], [60, 130, 60], [120, 180, 80], [70, 140, 90]];
 const CORAL = [[255, 110, 160], [120, 255, 220], [255, 170, 90], [200, 120, 255]];
 const BOX = [[150, 60, 40], [40, 110, 120], [190, 150, 40], [50, 70, 140], [160, 40, 60], [90, 100, 60]];
 // which district each street is, by road id (unlisted street roads stay plain)
@@ -27,6 +29,11 @@ const GRID_DISTRICTS = {
   'AURORA PASS': { av: D.GARDENS, r0: D.DOWNTOWN, r2: D.BUILD, c0: D.ARCADE, c1: D.TUNNEL, c2: D.GARDENS },
   'MONSOON TERRACES': { av: D.TERRACE, r0: D.SPIRES, r2: D.SHRINE, c0: D.TERRACE, c1: D.GARDENS, c2: D.TERRACE },
   'MIRAGE BAZAAR': { av: D.BAZAAR, r0: D.CANYON, r2: D.BAZAAR, c0: D.BAZAAR, c1: D.SPIRES, c2: D.CANYON },
+  'RUST MESA': { av: D.CANYON, r0: D.DOWNTOWN, r2: D.BUILD, c0: D.CANYON, c1: D.BUILD, c2: D.CANYON },
+  'SAKURA GRID': { av: D.SHRINE, r0: D.GARDENS, r2: D.SHRINE, c0: D.SHRINE, c1: D.SPIRES, c2: D.GARDENS },
+  'CARNIVAL ISLE': { av: D.FAIR, r0: D.ARCADE, r2: D.FAIR, c0: D.FAIR, c1: D.ARCADE, c2: D.SPIRES },
+  'VERDANT RUIN': { av: D.RUIN, r0: D.GARDENS, r2: D.STACK, c0: D.RUIN, c1: D.TUNNEL, c2: D.RUIN },
+  'STORM CITADEL': { av: D.CITADEL, r0: D.DOWNTOWN, r2: D.SPIRES, c0: D.CITADEL, c1: D.CITADEL, c2: D.SPIRES },
 };
 for (const c of GRID_CITIES) {
   const g = GRID_DISTRICTS[c.name], p = c.p;
@@ -34,18 +41,19 @@ for (const c of GRID_CITIES) {
   for (const i of [0, 1]) { STREET_DISTRICT[p + '-r0' + i] = g.r0; STREET_DISTRICT[p + '-r2' + i] = g.r2; }
   for (const i of [0, 1, 2]) for (const j of [0, 1]) STREET_DISTRICT[p + '-c' + i + j] = g['c' + i];
 }
-STREET_DISTRICT['mega-highway'] = D.HIGHWAY;
+for (const road of VANTA_BAY.roads) if (road.highway) STREET_DISTRICT[road.id] = D.HIGHWAY;
 
 export function buildMapDressing(mats) {
   const B = { metal: new Batch(unitBox), emit: new Batch(unitBox), cloth: new Batch(unitPlane),
     lamp: new Batch(unitSphere), effect: new Batch(unitPlane), foliage: new Batch(unitPlane), cone: new Batch(unitCone),
-    pole: new Batch(unitCyl), water: new Batch(unitPlane) };
+    pole: new Batch(unitCyl), water: new Batch(unitPlane), wheel: new Batch(unitPlane), track: new Batch(unitBox) };
   for (const road of VANTA_BAY.roads) {
     const d = STREET_DISTRICT[road.id], city = CITIES.find(c => c.name === road.city) ?? (road.link && CITIES.find(c => c.name === road.link.b));
     if (d === undefined || road.level !== 0) continue;
     const linkCity = road.link ? CITIES.find(c => c.name === road.link.b) : null;
     const RW = road.halfWidth, from = (road.a.discR || 0) + 3, to = road.path.length - (road.b.discR || 0) - 3;
     const seed = road.id.length * 977 + Math.round(road.path.length);
+    const coasterHeight = distance => 9 + 4 * (1 + Math.sin(distance * 0.09)) + 2 * Math.sin(distance * 0.17);
     for (let s = from, i = 0; s < to; s += SEGL, i++) {
       const n = seed + i, f = frameOn(road.path, s), gy = f.y;
       const put = (lat, up, size, col, batch, meta = [0, 0], rot = f.th) =>
@@ -93,12 +101,16 @@ export function buildMapDressing(mats) {
         steam((hash(n, 5, 5) < 0.5 ? -1 : 1) * (RW - 1.5), 0, 1.4, 3.5, n);
       // ---------- holo gardens and the reef: glowing trees, or coral, along the kerb ----------
       const reef = d === D.REEF && i % 4 === 2;
-      if ((d === D.GARDENS && i % 2 === 1) || reef) for (const sg of [-1, 1]) {
+      const ruin = d === D.RUIN && i % 3 === 1;
+      const garden = (d === D.GARDENS || d === D.SHRINE) && i % 2 === 1;
+      if (garden || ruin || reef) for (const sg of [-1, 1]) {
         if (reef && hash(n, sg + 13, 35) >= 0.5) continue;
-        const c = (reef ? CORAL : LEAF)[(hash(n, sg + 3, 71) * 4) | 0], lat = sg * (RW + 0.9);
+        if (ruin && hash(n, sg + 11, 33) >= 0.6) continue;
+        const colors = reef ? CORAL : ruin ? RUIN_LEAF : city.name === 'SAKURA GRID' || d === D.SHRINE ? PINK : LEAF;
+        const c = colors[(hash(n, sg + 3, 71) * 4) | 0], lat = sg * (RW + 0.9);
         put(lat, 0, [0.32, 3.2, 0.32], [36, 26, 40], B.metal);
         put(lat, 4.3, [3, 2.5, 1], c, B.foliage, [n, 0]);
-        put(lat, 4.3, [0.01, 0.01, 0.01], c, B.emit, [n, 0.4, 2.6, 60]);
+        if (!ruin) put(lat, 4.3, [0.01, 0.01, 0.01], c, B.emit, [n, 0.4, 2.6, 60]);
       }
       // ---------- stilt canals: lantern boats moored beside the street ----------
       if (d === D.CANALS && i % 7 === 0) {
@@ -149,6 +161,32 @@ export function buildMapDressing(mats) {
         put(0, 5.65, [width * 2 + 0.8, 0.28, 0.38], [167, 40, 59], B.metal);
         put(0, 6.3, [width * 2 + 1.6, 0.32, 0.52], pink, B.emit, [n, 0.25]);
       }
+      if (d === D.CANYON && i % 7 === 3) {
+        const side = hash(n, 3, 11) < 0.5 ? -1 : 1, height = 10 + hash(n, 2, 11) * 16;
+        put(side * (RW + SW + 11), 0, [9, height, 11], [120, 65, 42], B.metal);
+        put(side * (RW + SW + 11), height * 0.7, [9.2, 1.2, 11.1], [169, 98, 54], B.metal);
+      }
+      if (d === D.RUIN && i % 8 === 4) {
+        const side = hash(n, 1, 17) < 0.5 ? -1 : 1;
+        put(side * (RW + SW + 2), 0, [2.2, 3.5, 4.2], [46, 52, 39], B.metal);
+        put(side * (RW + SW + 1.7), 3.4, [2.9, 2.6, 1], RUIN_LEAF[n % 4], B.foliage, [n, 0]);
+      }
+      if (d === D.FAIR && road.id === 'ci-av-mid') {
+        const lateral = -(RW + SW + 6), height = coasterHeight(s);
+        if (s + SEGL <= to) {
+          const next = coasterHeight(s + SEGL);
+          B.track.add([f.x + f.rx * lateral + Math.sin(f.th) * SEGL / 2, gy + (height + next) / 2,
+            f.z + f.rz * lateral + Math.cos(f.th) * SEGL / 2], [0.5, 0.35, SEGL + 0.08], f.th,
+            [230, 60, 80], [0, 1, 0, next - height]);
+        }
+        if (i % 4 === 0) put(lateral, 0, [0.5, height, 0.5], [70, 66, 90], B.metal);
+        if (i === 22) {
+          const center = RW + SW + 18;
+          for (const side of [-1, 1]) put(center + side * 5, 0, [0.6, 19, 0.6], [60, 60, 80], B.metal);
+          put(center, 19, [34, 34, 1], [255, 200, 120], B.wheel, [n, 0]);
+          put(center, 19, [0.06, 0.06, 0.06], [255, 200, 120], B.emit, [n, 0.25, 7, 60]);
+        }
+      }
       // ---------- mega-highway: barriers along both edges, an overpass every 280 m ----------
       if (d === D.HIGHWAY) {
         for (const sg of [-1, 1]) put(sg * (RW + SW), 0, [0.3, 1.1, SEGL + 0.05], [56, 54, 70], B.metal);
@@ -193,7 +231,8 @@ export function buildMapDressing(mats) {
   }
   const out = [];
   for (const [b, m] of [[B.metal, mats.metal], [B.emit, mats.emit], [B.cloth, mats.cloth], [B.lamp, mats.emit], [B.effect, mats.effect],
-    [B.foliage, mats.foliage], [B.cone, mats.emit], [B.pole, mats.metal], [B.water, mats.water]]) {
+    [B.foliage, mats.foliage], [B.cone, mats.emit], [B.pole, mats.metal], [B.water, mats.water],
+    [B.wheel, mats.wheel], [B.track, mats.track]]) {
     const mesh = b.build(m); if (mesh) out.push(mesh);
   }
   return out;

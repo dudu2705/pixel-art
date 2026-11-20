@@ -10,10 +10,10 @@ The default game opens in **Vanta Bay**. Vanta Boulevard passes through Prism
 Plaza and its holographic fountain. Four surrounding blocks connect to the plaza.
 The glass Sky Avenues deck runs above a busy street at 35 metres. Two one-way
 spiral ramps connect the levels through lit bores. A two-way helix climbs to
-Crown Way at 100 metres. The nine cities east of Vanta Bay share this three-level
+Crown Way at 100 metres. The fourteen cities east of Vanta Bay share this three-level
 layout, with their own districts, weather, palettes, and connectors.
 
-Autopilot visits all three levels in each city, goes as far as Mirage Bazaar,
+Autopilot visits all three levels in each city, goes as far as Storm Citadel,
 then returns to Vanta Bay. In manual mode, follow the signed road branches to
 climb from Street or descend from Sky Avenues. The helix runs both ways.
 

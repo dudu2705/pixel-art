@@ -1,22 +1,46 @@
-// The big static set pieces between and in the two cities: the bay's open water, the skybridge's towers and
-// suspension cables (as the reference's skybridge), lantern boats on the water, and Aurum Heights' space elevator,
-// a tether of light rising out of sight with pods climbing it.
+// Map connector scenery, from skybridge towers and suspension cables to ferries and enclosed tubes.
+// Also draws Aurum Heights' space elevator and the pods along its tether.
 import * as THREE from './vendor/three.module.js';
-import { VANTA_BAY, frameOn, AURUM, BRIDGE } from './map.js';
+import { VANTA_BAY, frameOn, AURUM } from './map.js';
 import { FONT } from './cockpit.js';
 import { CITIES, D, SW, hash } from './world.js';
 import { Batch, unitBox, unitCone, unitCyl, unitSphere, unitPlane, unitPlaneFlat } from './props.js';
 
 export function buildSetPieces(mats, groundMat) {
   const out = [];
+  for (const road of VANTA_BAY.roads.filter(road => road.bridge)) out.push(...buildSkybridge(road, mats, groundMat));
+  const metal = new Batch(unitBox), emit = new Batch(unitBox);
+  // the space elevator: a white-gold tether straight up out of the elevator block, glowing bands, climbing pods
+  const E = AURUM.elevator;
+  emit.add([E.x, 64, E.z], [1.6, 2400, 1.6], 0, [235, 240, 255], [0, 0]);
+  for (let y = 90; y < 1400; y += 70) emit.add([E.x, y, E.z], [4.5, 0.6, 4.5], 0, [255, 210, 140], [y, 0.5, 4, 50]);
+  for (const [y, s] of [[180, 1], [430, -1], [760, 1]]) {
+    metal.add([E.x + s * 1.9, y, E.z], [2.2, 6, 2.2], 0, [60, 60, 80], [0, 0]);
+    emit.add([E.x + s * 1.9, y + 3, E.z], [2.3, 0.4, 2.3], 0, [120, 220, 255], [y, 0.7, 6, 40]);
+  }
+  for (const [batch, material] of [[metal, mats.metal], [emit, mats.emit]]) {
+    const mesh = batch.build(material);
+    if (mesh) out.push(mesh);
+  }
+  for (const tube of VANTA_BAY.roads.filter(road => road.tube)) out.push(...buildTube(tube, mats));
+  for (const ferry of VANTA_BAY.roads.filter(road => road.link?.district === D.FERRY)) out.push(...buildFerry(ferry, mats));
+  for (const rim of VANTA_BAY.roads.filter(road => road.link?.district === D.VOLCANO)) out.push(...buildVolcano(rim, mats));
+  for (const causeway of VANTA_BAY.roads.filter(road => road.link?.district === D.CLOUDS)) out.push(...buildCloudTowers(causeway, mats));
+  for (const pontoon of VANTA_BAY.roads.filter(road => road.link?.district === D.PONTOON)) out.push(...buildPontoon(pontoon, mats));
+  for (const salt of VANTA_BAY.roads.filter(road => road.link?.district === D.SALT)) out.push(...buildSaltPoles(salt, mats));
+  return out;
+}
+
+function buildSkybridge(road, mats, groundMat) {
+  const out = [];
   // the bay: one flat sheet, drawn by the ground shader's water band
-  const water = new THREE.Mesh(new THREE.PlaneGeometry(BRIDGE.x1 - BRIDGE.x0, 1400).rotateX(-Math.PI / 2), groundMat);
-  water.position.set((BRIDGE.x0 + BRIDGE.x1) / 2, -0.04, 0);
+  const water = new THREE.Mesh(new THREE.PlaneGeometry(road.link.x1 - road.link.x0, 1400).rotateX(-Math.PI / 2), groundMat);
+  water.position.set((road.link.x0 + road.link.x1) / 2, -0.04, 0);
   out.push(water);
 
   const metal = new Batch(unitBox), emit = new Batch(unitBox), lamp = new Batch(unitSphere);
-  const road = VANTA_BAY.roads.find(r => r.id === 'skybridge'), L = road.path.length, hw = road.halfWidth + SW - 0.3;
-  const vanta = CITIES.find(c => c.name === 'VANTA BAY'), aurum = CITIES.find(c => c.name === 'AURUM HEIGHTS');
+  const L = road.path.length, hw = road.halfWidth + SW - 0.3;
+  const west = CITIES.find(c => c.name === road.link.a), east = CITIES.find(c => c.name === road.link.b);
   const steel = [46, 50, 66];
   // two towers, a third and two thirds of the way across, each a pair of legs joined at the top
   const TOP = 92, towers = [L / 3, 2 * L / 3];
@@ -46,36 +70,22 @@ export function buildSetPieces(mats, groundMat) {
       metal.add([(x0 + x1) / 2, (y0 + y1) / 2 - 0.2, (z0 + z1) / 2], [0.35, 0.35 + Math.abs(y1 - y0), len], e.y, [70, 74, 92], [0, 0]);
       if (d % 12 === 0 && y0 - f0.y > 3) {
         metal.add([x0, f0.y + 0.6, z0], [0.08, y0 - f0.y - 0.6, 0.08], f0.th, [80, 84, 100], [0, 0]);
-        if (d % 48 === 0) emit.add([x0, y0 + 0.4, z0], [0.4, 0.4, 0.4], f0.th, d < L / 2 ? vanta.neon[1] : aurum.neon[0], [d, 0.5, 1.6, 30]);
+        if (d % 48 === 0) emit.add([x0, y0 + 0.4, z0], [0.4, 0.4, 0.4], f0.th, d < L / 2 ? west.neon[1] : east.neon[0], [d, 0.5, 1.6, 30]);
       }
     }
   }
   // lantern boats drifting on the bay
   for (let i = 0; i < 14; i++) {
-    const x = BRIDGE.x0 + 90 + ((i * 197) % (BRIDGE.x1 - BRIDGE.x0 - 180)), z = ((i * 131) % 500) - 250;
+    const x = road.link.x0 + 90 + ((i * 197) % (road.link.x1 - road.link.x0 - 180)), z = ((i * 131) % 500) - 250;
     if (Math.abs(z) < 30) continue;
     metal.add([x, 0, z], [3.2, 0.6, 6], i, [50, 34, 26], [0, 0]);
     metal.add([x, 0.6, z], [0.1, 1.3, 0.1], 0, [30, 24, 20], [0, 0]);
-    lamp.add([x, 2.0, z], [0.6, 0.6, 0.6], 0, (i % 2 ? vanta : aurum).neon[i % 6], [i, 0.45, 2, 48]);
-  }
-  // the space elevator: a white-gold tether straight up out of the elevator block, glowing bands, climbing pods
-  const E = AURUM.elevator;
-  emit.add([E.x, 64, E.z], [1.6, 2400, 1.6], 0, [235, 240, 255], [0, 0]);
-  for (let y = 90; y < 1400; y += 70) emit.add([E.x, y, E.z], [4.5, 0.6, 4.5], 0, [255, 210, 140], [y, 0.5, 4, 50]);
-  for (const [y, s] of [[180, 1], [430, -1], [760, 1]]) {
-    metal.add([E.x + s * 1.9, y, E.z], [2.2, 6, 2.2], 0, [60, 60, 80], [0, 0]);
-    emit.add([E.x + s * 1.9, y + 3, E.z], [2.3, 0.4, 2.3], 0, [120, 220, 255], [y, 0.7, 6, 40]);
+    lamp.add([x, 2.0, z], [0.6, 0.6, 0.6], 0, (i % 2 ? west : east).neon[i % 6], [i, 0.45, 2, 48]);
   }
   for (const [batch, material] of [[metal, mats.metal], [emit, mats.emit], [lamp, mats.emit]]) {
     const mesh = batch.build(material);
     if (mesh) out.push(mesh);
   }
-  for (const tube of VANTA_BAY.roads.filter(road => road.tube)) out.push(...buildTube(tube, mats));
-  for (const ferry of VANTA_BAY.roads.filter(road => road.link?.district === D.FERRY)) out.push(...buildFerry(ferry, mats));
-  for (const rim of VANTA_BAY.roads.filter(road => road.link?.district === D.VOLCANO)) out.push(...buildVolcano(rim, mats));
-  for (const causeway of VANTA_BAY.roads.filter(road => road.link?.district === D.CLOUDS)) out.push(...buildCloudTowers(causeway, mats));
-  for (const pontoon of VANTA_BAY.roads.filter(road => road.link?.district === D.PONTOON)) out.push(...buildPontoon(pontoon, mats));
-  for (const salt of VANTA_BAY.roads.filter(road => road.link?.district === D.SALT)) out.push(...buildSaltPoles(salt, mats));
   return out;
 }
 

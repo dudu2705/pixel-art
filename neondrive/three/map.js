@@ -207,12 +207,27 @@ export const GRID_CITIES = [
   { name: 'MIRAGE BAZAAR', p: 'mb', gate: 12600, x0: 12750, xm: 12900, x1: 13050, z0: -130, z1: 130,
     avenue: 'Mirage Avenue', rows: ['Canopy Row', 'Dune Row'], cols: ['Lantern Street', 'Oasis Street', 'Spire Street'],
     incoming: { id: 'salt-flats', district: D.SALT, speed: 250, lanes: 2 } },
+  { name: 'RUST MESA', p: 'rm', gate: 13950, x0: 14100, xm: 14250, x1: 14400, z0: -130, z1: 130,
+    avenue: 'Mesa Avenue', rows: ['Quarry Row', 'Foundry Row'], cols: ['Redstone Street', 'Switchback Street', 'Rig Street'],
+    incoming: { id: 'mesa-highway', district: D.HIGHWAY, speed: 300, lanes: 3 } },
+  { name: 'SAKURA GRID', p: 'sg', gate: 15300, x0: 15450, xm: 15600, x1: 15750, z0: -130, z1: 130,
+    avenue: 'Blossom Avenue', rows: ['Petal Row', 'Garden Row'], cols: ['Torii Street', 'Lattice Street', 'Lantern Street'],
+    incoming: { id: 'sakura-skybridge', district: D.BRIDGE, speed: 180, lanes: 2, height: 22 } },
+  { name: 'CARNIVAL ISLE', p: 'ci', gate: 16550, x0: 16700, xm: 16850, x1: 17000, z0: -130, z1: 130,
+    avenue: 'Midway Avenue', rows: ['Arcade Row', 'Wheel Row'], cols: ['Coaster Street', 'Marquee Street', 'Spire Street'],
+    tourExit: '11', incoming: { id: 'carnival-ferry', district: D.FERRY, speed: 120, lanes: 2, height: 4 } },
+  { name: 'VERDANT RUIN', p: 'vr', gate: 17900, x0: 18050, xm: 18200, x1: 18350, z0: -130, z1: 130,
+    avenue: 'Canopy Avenue', rows: ['Ivy Row', 'Hollow Row'], cols: ['Fern Street', 'Vault Street', 'Stack Street'],
+    underpass: 'c10', incoming: { id: 'verdant-pontoon', district: D.PONTOON, speed: 120, lanes: 2, height: 2, bend: -32 } },
+  { name: 'STORM CITADEL', p: 'sc', gate: 19350, x0: 19500, xm: 19650, x1: 19800, z0: -130, z1: 130,
+    avenue: 'Citadel Avenue', rows: ['Thunder Row', 'Relay Row'], cols: ['Bastion Street', 'Coil Street', 'Parapet Street'],
+    incoming: { id: 'citadel-skybridge', district: D.BRIDGE, speed: 180, lanes: 2, height: 22 } },
 ];
 export const AURUM = GRID_CITIES[0];
 export const BRIDGE = { x0: 240, x1: AURUM.gate, top: 22, ramp: 350 };
 // along the map, west to east: each link joins city a (west) to city b (east) between x0 and x1
 export const LINKS = [
-  { id: 'skybridge', name: 'SKYBRIDGE', a: 'VANTA BAY', b: 'AURUM HEIGHTS', x0: BRIDGE.x0, x1: BRIDGE.x1 },
+  { id: 'skybridge', name: 'SKYBRIDGE', district: D.BRIDGE, a: 'VANTA BAY', b: 'AURUM HEIGHTS', x0: BRIDGE.x0, x1: BRIDGE.x1 },
   { id: 'mega-highway', name: 'MEGA-HIGHWAY', a: 'AURUM HEIGHTS', b: 'GLACIA', x0: AURUM.x1, x1: GRID_CITIES[1].gate },
   { id: 'aqua-tube', name: 'AQUA TUBE', district: D.TUBE, a: 'GLACIA', b: 'CORAL DEEP', x0: GRID_CITIES[1].x1, x1: GRID_CITIES[2].gate },
   ...GRID_CITIES.flatMap((c, i) => {
@@ -300,6 +315,8 @@ for (const city of GRID_CITIES) {
     }
     const r = road(link.id, link.name, link.from, link.to, link.lanes, { interior, speed: link.speed, city: 'link' });
     r.link = link;
+    if (link.district === D.BRIDGE) r.bridge = true;
+    if (link.district === D.HIGHWAY) r.highway = true;
     if (link.district === D.VAC) r.tube = { from: 32, to: r.path.length - 32, mode: 3 };
   }
 }

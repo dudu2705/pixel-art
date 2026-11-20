@@ -15,7 +15,7 @@ const itinerary = [
   { id: 'crown-outlook', level: null },               // up the helix to the Crown, then back down
   { id: 'sky-south', level: null },
   { id: 'street-south', level: null },
-  ...GRID_CITIES.flatMap(({ p }) => ['22', 'sky-south', 'crown-outlook', 'street-south', '00']
+  ...GRID_CITIES.flatMap(({ p, tourExit = '00' }) => ['22', 'sky-south', 'crown-outlook', 'street-south', tourExit]
     .map(stop => ({ id: p + '-' + stop, level: null }))),
 ];
 const rng = mulberry(2048);

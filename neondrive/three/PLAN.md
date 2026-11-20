@@ -184,6 +184,14 @@ The comparison loop (`?loop`) is the street-life reference. Record each map port
   Testing tip: drive `MapDrive` directly in node (`new MapDrive()`, `update(1/60, keys)`); the headless browser
   with SwiftShader is far too slow for long simulated runs now that the Crown towers are in.
 - [ ] **7. Lift** (drive-on tower elevator between levels).
+  Approved approach. Build one two-way lift in Vanta Bay from Street to Sky Avenues, with a short spur
+  and signed landing at each end. Keep the spiral ramps in service. Place both landings on the same
+  shaft axis so the cabin is a real moving road surface. Model the lift as a dedicated graph edge with
+  a call, boarding, travel and release cycle. A rider or vehicle can board only at its open landing and
+  stays on the platform until the destination opens. Autopilot can route through the spur when it has
+  a lift stop. Start with a single cabin and one vehicle per trip. Check both directions in manual and
+  auto, check vehicles queue off the through lanes, and verify the camera, shelter, and level banner
+  during travel and on arrival.
 - [x] **8. District looks per street.** `map-dressing.js`: each Vanta Bay street is one of the city's reference
   districts (`STREET_DISTRICT`: boulevard west = downtown, east = glass spires, Lantern/Market rows and Marina west
   = lantern market, Arcade street/row and Foundry east = arcade row, harbour end = docklands) and gets that
@@ -293,6 +301,13 @@ The comparison loop (`?loop`) is the street-life reference. Record each map port
   stops were 9.4/7.2/14.3 s. NPCs across the map recorded 13/12/13 waits over 20 s.
   Chrome captures cover the six new links and city streets, plus the raised roads in Aurum Heights, Aurora Pass
   and Mirage Bazaar. Compared the new connector views with the matching link types in the GPU reference.
+- [x] **21. Finish the reference city roster.** Rust Mesa uses the mega-highway, Sakura Grid a skybridge,
+  Carnival Isle a ferry, Verdant Ruin a pontoon road, and Storm Citadel a skybridge. Each has the reference
+  weather, district scenery, and all three levels. New scenery includes red mesas, pink shrine canopies,
+  the Midway's coaster and wheel, overgrown ruins, and rooftop Tesla coils. Node out-and-back runs checked
+  every level and link banner, with no crashes or rider stops over 20 s. The longest was 16.6 s on Carnival
+  Isle after routing the exit along Midway Avenue. The three-start 10-minute benchmark had zero rider
+  waits over 20 s, with maxima of 9.2 s, 6.0 s and 11.0 s. Chrome rendered all five cities and connectors.
 
 ## Driving feel
 
@@ -393,4 +408,4 @@ last 34 m, and the graph drives the turn. Proposed instead:
 4. Build and verify the three-level network in Vanta Bay.
 5. Then add more cities and the links between them.
 
-The mapped tour now covers ten cities and all nine connector types. Every mapped city has all three levels.
+The mapped tour now covers all fifteen reference cities and all nine connector types. Every mapped city has all three levels.

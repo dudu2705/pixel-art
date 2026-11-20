@@ -1,7 +1,7 @@
 import * as THREE from './vendor/three.module.js';
 import { City, ROAD_LAYER } from './city.js';
 import { Batch, unitBox, unitCyl, unitSphere, unitPlane, unitPlaneFlat } from './props.js';
-import { VANTA_BAY, frameOn, PLAZA_RADIUS, deckCoverFor, RAMP_BORE_HALF_WIDTH, CROWN_HELIX, BRIDGE, GRID_CITIES, LINKS } from './map.js';
+import { VANTA_BAY, frameOn, PLAZA_RADIUS, deckCoverFor, RAMP_BORE_HALF_WIDTH, CROWN_HELIX, GRID_CITIES, LINKS } from './map.js';
 import { FONT } from './cockpit.js';
 import { blocks, CITIES, zoneAt, D, SW, SEGL, mulberry, mix } from './world.js';
 
@@ -112,6 +112,7 @@ function makeBuildings() {
     const E = c.elevator;
     for (let x = c.x0 - 40; x <= c.x1 + 40; x += 30) for (let z = c.z0 - 40; z <= c.z1 + 40; z += 30) {
       if (E && Math.hypot(x - E.x, z - E.z) < 42) continue;
+      if (c.p === 'ci' && x > c.x0 + 35 && x < c.xm - 5 && Math.abs(z) < 65) continue;
       const east = (x - c.x0) / (c.x1 - c.x0), nearAvenue = Math.abs(z) < 45;
       const h = nearAvenue ? 22 + random() * 20 : 34 + random() * 50 + east * 70;
       lot(x + (random() - 0.5) * 4, z + (random() - 0.5) * 4, 19 + random() * 5, 19 + random() * 5, h, east > 0.6 ? 1 : random() < 0.5 ? 0 : 2, 0, c.name);
@@ -175,11 +176,8 @@ const groundFragment = /* glsl */`
       float caustic = sin(p.x * 0.31 + uTime * 1.3) * sin(p.y * 0.27 - uTime * 1.1);
       color = vec3(18, 46, 52) + vec3(20, 60, 60) * max(0.0, caustic) * 0.5;
     }
-    if (p.x > ${BRIDGE.x0 + 40}.0 && p.x < ${BRIDGE.x1 - 40}.0) {          // the bay under the skybridge
-      float ripple = sin(p.x * 0.21 + p.y * 0.07 + uTime * 0.9) * sin(p.y * 0.17 - uTime * 0.6);
-      color = vec3(6, 12, 28) + vec3(10, 18, 34) * max(0.0, ripple) * 0.6;
-    }
     float water = sin(p.x * 0.12 + p.y * 0.23 - uTime * 0.9) * sin(p.x * 0.31 - p.y * 0.13 + uTime * 0.6);
+    ${linkTerrain(D.BRIDGE, 'vec3(6, 12, 28) + vec3(10, 18, 34) * max(0.0, water) * 0.6')}
     ${linkTerrain(D.FERRY, 'vec3(6, 12, 27) + vec3(17, 23, 39) * smoothstep(0.15, 0.95, water)')}
     ${linkTerrain(D.PONTOON, 'vec3(7, 20, 24) + vec3(15, 31, 35) * smoothstep(0.12, 0.95, water)')}
     float lava = terrainNoise(p * vec2(0.06, 0.12) - vec2(uTime * 0.15, 0)) * 0.7
@@ -397,6 +395,7 @@ export class MapCity extends City {
     if (cell) {
       const metal = new Batch(unitBox), emit = new Batch(unitBox), rails = new Batch(unitPlane);
       const walls = new Batch(unitPlane), ceiling = new Batch(unitPlaneFlat), siding = new Batch(unitPlane);
+      const coils = new Batch(unitSphere), arcs = new Batch(unitPlane);
       for (const { road, from, to } of cell.roads) {
         if (road.id.endsWith('street-north-approach') || road.id.endsWith('sky-deck')) {
           const up = road.id.endsWith('street-north-approach'), d = up ? road.path.length - 43 : 43;
@@ -473,12 +472,21 @@ export class MapCity extends City {
           put(metal, 0, -0.75, [2 * (road.halfWidth + SW), 0.75, 1.25], [28, 25, 39], [0, 0]);
       }
       for (const b of cell.buildings) {
+        if (b.style === D.CITADEL) {
+          metal.add([b.x, b.h, b.z], [1.2, 9, 1.2], b.rot, [50, 54, 70], [0, 0]);
+          for (let i = 1; i < 6; i++) metal.add([b.x, b.h + i * 1.5, b.z], [1.8, 0.15, 1.8], b.rot, [160, 120, 60], [0, 0]);
+          coils.add([b.x, b.h + 9.8, b.z], [3.2, 1.4, 3.2], b.rot, [120, 130, 150], [0, 0]);
+          arcs.add([b.x, b.h + 9.8, b.z], [28, 14, 1], 0, [190, 220, 255], [2, b.id]);
+          emit.add([b.x, b.h + 10.45, b.z], [0.01, 0.01, 0.01], b.rot, [150, 190, 255], [b.id, 0.25, 4, 52]);
+          continue;
+        }
         if (b.h < 48) continue;
         metal.add([b.x, b.h, b.z], [0.25, 4.8, 0.25], b.rot, [40, 38, 52], [0, 0]);
         emit.add([b.x, b.h + 4.8, b.z], [0.28, 0.3, 0.28], b.rot, [255, 50, 80], [0, 0.55, 1.4, 24]);
       }
       for (const mesh of [metal.build(this.mats.metal), emit.build(this.mats.emit), rails.build(this.mats.rail),
-        walls.build(this.mats.tunnel), ceiling.build(this.mats.tunnel), siding.build(this.mats.track)]) if (mesh) group.add(mesh);
+        walls.build(this.mats.tunnel), ceiling.build(this.mats.tunnel), siding.build(this.mats.track),
+        coils.build(this.mats.metal), arcs.build(this.mats.effect)]) if (mesh) group.add(mesh);
       if (cell.plaza) group.add(this.makeMonument());
     }
     this.scene.add(group);
