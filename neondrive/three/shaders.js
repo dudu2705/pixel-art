@@ -213,7 +213,7 @@ vec3 mapGround(float lx, float w, float pxw, out float reflectivity) {
     if (uMapMode > 0.5) {
       float materialWet;
       vec3 base = mapGround(vLat, roadZ, pixelWidth, materialWet);
-      float shade = (1.0 - smoothstep(uMapDeck.y - 1.0, uMapDeck.y + 3.0, abs(vWorld.x - uMapDeck.x)))
+      float shade = step(1.0, uMapDeck.y) * (1.0 - smoothstep(uMapDeck.y - 1.0, uMapDeck.y + 3.0, abs(vWorld.x - uMapDeck.x)))
         * smoothstep(uMapDeck.z - 5.0, uMapDeck.z + 6.0, vWorld.z)
         * (1.0 - smoothstep(uMapDeck.w - 6.0, uMapDeck.w + 5.0, vWorld.z))
         * (1.0 - smoothstep(25.0, 33.0, vWorld.y));

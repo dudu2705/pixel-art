@@ -122,14 +122,14 @@ road('street-north-through', 'Sky Avenue Street', 'street-up', 'street-north', 2
 road('street-south-approach', 'Sky Avenue Street', 'southeast', 'street-down', 1, { speed: 100 });
 road('street-south-through', 'Sky Avenue Street', 'street-down', 'street-south', 1, { speed: 100 });
 
-function spiralRamp(id, name, start, end) {
+function spiralRamp(id, name, start, end, city) {
   const a = nodes[start], b = nodes[end];
   const radius = 105, opening = 0.38, samples = 144;
   const direction = Math.sign(b.z - a.z);
   const points = Array.from({ length: samples + 1 }, (_, i) => {
     const t = i / samples, angle = opening + t * (2 * Math.PI - 2 * opening);
     return {
-      x: DECK_X + radius * (Math.cos(opening) - Math.cos(angle)),
+      x: a.x + radius * (Math.cos(opening) - Math.cos(angle)),
       z: a.z + (b.z - a.z) * t
         + direction * radius * (Math.sin(angle) - (1 - 2 * t) * Math.sin(opening)),
     };
@@ -147,23 +147,23 @@ function spiralRamp(id, name, start, end) {
     const rise = ease(Math.max(0, Math.min(distance, length - distance) - flat));
     points[i].y = a.y + (b.y - a.y) * (distance < length / 2 ? rise : gradeLength - rise) / gradeLength;
   }
-  const ramp = road(id, name, start, end, 1, { interior: points.slice(1, -1), oneWay: true, speed: 80 });
+  const ramp = road(id, name, start, end, 1, { interior: points.slice(1, -1), oneWay: true, speed: 80, city });
   ramp.bore = { from: 56, to: Math.floor((ramp.path.length - 56) / SEGL) * SEGL, mode: a.level < b.level ? 1 : 2 };
 }
 
-// two-way, open to the sky, ~990 m for the 65 m climb (about 15 m of road per metre, as the reference)
-function crownHelix() {
-  const { cx, cz, r, turns } = CROWN_HELIX, a = nodes['sky-north'], b = nodes['crown-arrival'];
-  const samples = Math.round(turns * 64), end = turns * 2 * Math.PI, flat = 0.04;
+// Two-way and open to the sky. Three turns at 70 m radius ease the 65 m climb.
+function crownHelix(id, start, end, { cx, cz, r, turns }, city) {
+  const a = nodes[start], b = nodes[end];
+  const samples = Math.round(turns * 64), sweep = turns * 2 * Math.PI, flat = 0.04;
   const points = [];
   for (let i = 1; i < samples; i++) {
-    const t = i / samples, phi = t * end;
+    const t = i / samples, phi = t * sweep;
     // a steady grade, eased over the first and last 6% of the climb
     const k = Math.min(1, Math.max(0, (t - flat) / (1 - 2 * flat))), e = 0.06;
     const rise = k < e ? k * k / (2 * e * (1 - e)) : k > 1 - e ? 1 - (1 - k) ** 2 / (2 * e * (1 - e)) : (k - e / 2) / (1 - e);
     points.push({ x: cx + r * Math.cos(phi), y: a.y + (b.y - a.y) * rise, z: cz + r * Math.sin(phi) });
   }
-  const helix = road('crown-helix', 'Crown Helix', 'sky-north', 'crown-arrival', 1, { interior: points, speed: 90 });
+  const helix = road(id, 'Crown Helix', start, end, 1, { interior: points, speed: 90, city });
   helix.helix = true;
 }
 road('sky-south-through', 'Sky Avenues', 'sky-south', 'sky-departure', 2, { speed: 100 });
@@ -171,7 +171,7 @@ road('sky-deck', 'Sky Avenues', 'sky-departure', 'sky-arrival', 2, { speed: 110 
 road('sky-north-through', 'Sky Avenues', 'sky-arrival', 'sky-north', 2, { speed: 100 });
 spiralRamp('sky-up', 'Sky Ramp Up', 'street-up', 'sky-arrival');
 spiralRamp('sky-down', 'Sky Ramp Down', 'sky-departure', 'street-down');
-crownHelix();
+crownHelix('crown-helix', 'sky-north', 'crown-arrival', CROWN_HELIX);
 // north off the helix, one wide 120 m bend (holdable at the 120 km/h limit), then west between the Crown towers
 road('crown-way', 'Crown Way', 'crown-arrival', 'crown-outlook', 2, { speed: 120, interior:
   Array.from({ length: 16 }, (_, i) => { const a = (i + 0.5) / 16 * Math.PI / 2;
@@ -190,7 +190,7 @@ export const GRID_CITIES = [
     avenue: 'Tide Avenue', rows: ['Kelp Row', 'Pearl Row'], cols: ['Anemone Street', 'Current Street', 'Lantern Street'] },
   { name: 'BLACKOUT SECTOR', p: 'bs', gate: 5150, x0: 5300, xm: 5450, x1: 5600, z0: -130, z1: 130,
     avenue: 'Blackout Avenue', rows: ['Relay Row', 'Stack Row'], cols: ['Switch Street', 'Node Street', 'Failsafe Street'],
-    incoming: { id: 'vactrain', district: D.VAC, speed: 450, lanes: 2 } },
+    underpass: 'c10', incoming: { id: 'vactrain', district: D.VAC, speed: 450, lanes: 2 } },
   { name: 'NEON LAGOON', p: 'nl', gate: 6400, x0: 6550, xm: 6700, x1: 6850, z0: -130, z1: 130,
     avenue: 'Lagoon Avenue', rows: ['Canal Row', 'Market Row'], cols: ['Stilt Street', 'Stack Street', 'Marina Street'],
     incoming: { id: 'ferry', district: D.FERRY, speed: 120, lanes: 2, height: 4 } },
@@ -199,6 +199,7 @@ export const GRID_CITIES = [
     incoming: { id: 'volcano-rim', district: D.VOLCANO, speed: 140, lanes: 2, height: 10, bend: 96 } },
   { name: 'AURORA PASS', p: 'ap', gate: 9800, x0: 9950, xm: 10100, x1: 10250, z0: -130, z1: 130,
     avenue: 'Aurora Avenue', rows: ['Snow Row', 'Summit Row'], cols: ['Pine Street', 'Glacier Street', 'Beacon Street'],
+    underpass: 'c10',
     incoming: { id: 'cloud-causeway', district: D.CLOUDS, speed: 180, lanes: 2, height: 42, ascent: 550, bend: -60 } },
   { name: 'MONSOON TERRACES', p: 'mt', gate: 11150, x0: 11300, xm: 11450, x1: 11600, z0: -130, z1: 130,
     avenue: 'Terrace Avenue', rows: ['Rain Row', 'Temple Row'], cols: ['Cascade Street', 'Garden Street', 'Spire Street'],
@@ -213,7 +214,7 @@ export const BRIDGE = { x0: 240, x1: AURUM.gate, top: 22, ramp: 350 };
 export const LINKS = [
   { id: 'skybridge', name: 'SKYBRIDGE', a: 'VANTA BAY', b: 'AURUM HEIGHTS', x0: BRIDGE.x0, x1: BRIDGE.x1 },
   { id: 'mega-highway', name: 'MEGA-HIGHWAY', a: 'AURUM HEIGHTS', b: 'GLACIA', x0: AURUM.x1, x1: GRID_CITIES[1].gate },
-  { id: 'aqua-tube', name: 'AQUA TUBE', a: 'GLACIA', b: 'CORAL DEEP', x0: GRID_CITIES[1].x1, x1: GRID_CITIES[2].gate },
+  { id: 'aqua-tube', name: 'AQUA TUBE', district: D.TUBE, a: 'GLACIA', b: 'CORAL DEEP', x0: GRID_CITIES[1].x1, x1: GRID_CITIES[2].gate },
   ...GRID_CITIES.flatMap((c, i) => {
     if (!c.incoming) return [];
     const previous = GRID_CITIES[i - 1];
@@ -230,7 +231,45 @@ for (const c of GRID_CITIES) {
   road(p + '-av-mid', c.avenue, p + '-01', p + '-11', 3, { ...A, speed: 140 });
   road(p + '-av-east', c.avenue, p + '-11', p + '-21', 3, { ...A, speed: 140 });
   for (const j of [0, 2]) for (const i of [0, 1]) road(p + '-r' + j + i, c.rows[j / 2], p + '-' + i + j, p + '-' + (i + 1) + j, 1, { ...A, speed: 80 });
-  for (const i of [0, 1, 2]) for (const j of [0, 1]) road(p + '-c' + i + j, c.cols[i], p + '-' + i + j, p + '-' + i + (j + 1), 1, { ...A, speed: 80 });
+  for (const i of [0, 1, 2]) for (const j of [0, 1]) {
+    const id = 'c' + i + j;
+    const r = road(p + '-' + id, c.cols[i], p + '-' + i + j, p + '-' + i + (j + 1), 1, { ...A, speed: 80 });
+    if (id === c.underpass) r.tube = { from: 28, to: Math.floor((r.path.length - 28) / SEGL) * SEGL, mode: 0 };
+  }
+}
+
+export const DECK_COVER = { x: DECK_X, south: DECK_SOUTH, north: DECK_NORTH, halfWidth: 2 * LANE_WIDTH + SW };
+const deckCovers = new Map([['VANTA BAY', DECK_COVER]]);
+export const deckCoverFor = city => deckCovers.get(city);
+
+for (const city of GRID_CITIES) {
+  const { p, xm: x, name } = city, prefix = id => p + '-' + id;
+  const cover = { x, south: -350, north: 360, halfWidth: DECK_COVER.halfWidth };
+  deckCovers.set(name, cover);
+  city.helix = { ...CROWN_HELIX, cx: x - CROWN_HELIX.r, cz: cover.north };
+  for (const [id, dx, z, level] of [
+    ['street-up', 0, 208, 0], ['street-down', 0, -274, 0],
+    ['street-north', 0, 349, 0], ['street-south', 0, -344, 0],
+    ['sky-arrival', 0, 298, 1], ['sky-departure', 0, -184, 1],
+    ['sky-north', 0, cover.north, 1], ['sky-south', 0, cover.south, 1],
+    ['crown-arrival', 0, cover.north, 2], ['crown-outlook', -342, 548, 2],
+  ]) nodes[prefix(id)] = node(prefix(id), x + dx, z, level);
+  for (const [id, a, b] of [
+    ['street-north-approach', '12', 'street-up'], ['street-north-through', 'street-up', 'street-north'],
+    ['street-south-approach', '10', 'street-down'], ['street-south-through', 'street-down', 'street-south'],
+  ]) road(prefix(id), city.cols[1], prefix(a), prefix(b), 2, { city: name, speed: 95 });
+  for (const [id, a, b] of [
+    ['sky-south-through', 'sky-south', 'sky-departure'], ['sky-deck', 'sky-departure', 'sky-arrival'],
+    ['sky-north-through', 'sky-arrival', 'sky-north'],
+  ]) road(prefix(id), 'Sky Avenues', prefix(a), prefix(b), 2, { city: name, speed: 110 });
+  spiralRamp(prefix('sky-up'), 'Sky Ramp Up', prefix('street-up'), prefix('sky-arrival'), name);
+  spiralRamp(prefix('sky-down'), 'Sky Ramp Down', prefix('sky-departure'), prefix('street-down'), name);
+  crownHelix(prefix('crown-helix'), prefix('sky-north'), prefix('crown-arrival'), city.helix, name);
+  const radius = 120, interior = Array.from({ length: 16 }, (_, i) => {
+    const angle = (i + 0.5) / 16 * Math.PI / 2;
+    return { x: x - radius + radius * Math.cos(angle), y: LEVEL_Y[2], z: 428 + radius * Math.sin(angle) };
+  });
+  road(prefix('crown-way'), 'Crown Way', prefix('crown-arrival'), prefix('crown-outlook'), 2, { interior, city: name, speed: 120 });
 }
 {
   // the skybridge: up off Vanta Boulevard's harbour end, 22 m over the water, and down onto Sun Avenue; ~16 m of road
@@ -274,14 +313,17 @@ for (const n of Object.values(nodes)) {
 }
 
 export const VANTA_BAY = { nodes, roads, edges };
-export const DECK_COVER = { x: DECK_X, south: DECK_SOUTH, north: DECK_NORTH, halfWidth: 2 * LANE_WIDTH + SW };
 
 export function inBore(road, distance) {
   return Boolean(road.bore && distance >= road.bore.from && distance <= road.bore.to);
 }
 
 export function underSkyDeck({ x, y, z }) {
-  return y < SKY_HEIGHT - 2 && z > DECK_SOUTH && z < DECK_NORTH && Math.abs(x - DECK_X) < DECK_COVER.halfWidth;
+  if (y >= SKY_HEIGHT - 2) return false;
+  for (const cover of deckCovers.values()) {
+    if (z > cover.south && z < cover.north && Math.abs(x - cover.x) < cover.halfWidth) return true;
+  }
+  return false;
 }
 
 // the closest point of a path to (x, z) in plan view: distance along it, signed sideways offset (+ is the

@@ -15,7 +15,8 @@ const itinerary = [
   { id: 'crown-outlook', level: null },               // up the helix to the Crown, then back down
   { id: 'sky-south', level: null },
   { id: 'street-south', level: null },
-  ...GRID_CITIES.flatMap(({ p }) => [{ id: p + '-22', level: null }, { id: p + '-00', level: null }]),
+  ...GRID_CITIES.flatMap(({ p }) => ['22', 'sky-south', 'crown-outlook', 'street-south', '00']
+    .map(stop => ({ id: p + '-' + stop, level: null }))),
 ];
 const rng = mulberry(2048);
 
@@ -40,7 +41,7 @@ export class MapDrive {
     const localEdges = edges.filter(edge => edge.road.city === 'VANTA BAY' && edge.road.level === 0 && !edge.road.oneWay &&
       !avenueIds.includes(edge.road.id) && edge.from !== nodes.gateway).filter((_, i) => i % 3 === 0);
     const avenueEdges = edges.filter(edge => avenueIds.includes(edge.road.id));
-    this.traffic = [...localEdges, ...avenueEdges, ...edges.filter(edge => edge.road.bore)]
+    this.traffic = [...localEdges, ...avenueEdges, ...edges.filter(edge => edge.road.city === 'VANTA BAY' && edge.road.bore)]
       .map((edge, i) => {
         const distance = clamp(edge.path.length * (0.4 + 0.22 * rng()), edge.from.trim + 2, edge.path.length - edge.to.trim - 2);
         const npc = vehicle(edge, distance,
@@ -69,6 +70,17 @@ export class MapDrive {
         npc.home = city.name;
         this.traffic.push(npc);
       }
+      const upper = edges.filter(edge => edge.road.id === city.p + '-sky-deck' ||
+        edge.id === city.p + '-crown-arrival/' + city.p + '-crown-outlook');
+      for (const [i, edge] of upper.entries()) {
+        const level = edge.road.level, npc = vehicle(edge, edge.path.length * (0.28 + i * 0.17), 0, 17);
+        const ends = level === 1 ? ['sky-south', 'sky-north'] : ['crown-arrival', 'crown-outlook'];
+        npc.limit = 18 + rng() * 7;
+        npc.style = { ...cars[(i * 9 + 19) % cars.length] };
+        npc.itinerary = ends.map(id => ({ id: city.p + '-' + id, level }));
+        npc.stopIndex = level === 2 ? 1 : Number(edge.to.z > edge.from.z);
+        this.traffic.push(npc);
+      }
     }
     for (const [i, e] of edges.filter(x => x.road.id === 'crown-way').entries()) {
       const npc = vehicle(e, e.path.length * (0.3 + 0.3 * i), 0, 18);
@@ -79,6 +91,7 @@ export class MapDrive {
       this.traffic.push(npc);
     }
     this.vehicles = [this.player, ...this.traffic];
+    this.onEdges = new Map();
     this.spawn();
   }
 
@@ -133,7 +146,7 @@ export class MapDrive {
 
   leadDistance(current, edge = current.edge, start = current.s, lane = current.lane) {
     let gap = Infinity;
-    for (const other of this.vehicles) {
+    for (const other of this.onEdges.get(edge) ?? []) {
       if (other === current || other.turn || other.edge !== edge || other.lane !== lane || other.s < start) continue;
       if (other.s === start && edge === current.edge && this.vehicles.indexOf(other) > this.vehicles.indexOf(current)) continue;   // a tie: one goes first
       gap = Math.min(gap, other.s - start);
@@ -163,7 +176,9 @@ export class MapDrive {
     if (!ignoreOwner && !this.junctionFree(current)) return false;
     const lane = this.nextLane(current, current.exit);
     // one car at a time into each lane of the exit, so two cars sharing a green can't land in the same spot
-    if (!ignoreOwner) for (const o of this.vehicles) if (o !== current && o.turn && o.turn.edge === current.exit && o.turn.lane === lane) return false;
+    if (!ignoreOwner) for (const o of this.owners.get(e.to) ?? []) {
+      if (o !== current && o.turn?.edge === current.exit && o.turn.lane === lane) return false;
+    }
     return this.leadDistance(current, current.exit, current.edge.to.trim - 0.01, lane) > 7;
   }
 
@@ -192,7 +207,9 @@ export class MapDrive {
         this.owners.get(current.edge.to)?.delete(current);
         const trim = current.edge.to.trim;
         const previousRoad = current.edge.road;
+        this.vehiclesOn(current.edge).delete(current);
         current.edge = turn.edge;
+        this.vehiclesOn(current.edge).add(current);
         current.lane = turn.lane;
         current.lat = laneOffset(current.edge, turn.lane);
         current.s = trim;
@@ -312,6 +329,11 @@ export class MapDrive {
     }
   }
 
+  vehiclesOn(edge) {
+    if (!this.onEdges.has(edge)) this.onEdges.set(edge, new Set());
+    return this.onEdges.get(edge);
+  }
+
   update(dt, keys) {
     const p = this.player;
     S.T += dt;
@@ -325,14 +347,23 @@ export class MapDrive {
         if (!p.turn) p.exit = null;
       }
     }
+    this.onEdges.clear();
+    for (const current of this.vehicles) this.vehiclesOn(current.edge).add(current);
     for (const current of this.traffic) this.updateVehicle(current, dt, keys);
     // by hand the rider is a free body on the road surfaces; autopilot drives the lane graph
     if (!S.auto && !this.free) this.enterFree();
-    else if (S.auto && this.free) this.leaveFree();
+    else if (S.auto && this.free) {
+      const edge = p.edge;
+      this.leaveFree();
+      if (p.edge !== edge) {
+        this.vehiclesOn(edge).delete(p);
+        this.vehiclesOn(p.edge).add(p);
+      }
+    }
     if (this.free) this.stepFree(dt, keys);
     else this.updateVehicle(p, dt, keys);
     // people on the crossings: drawn by main.js, and riding into one stops you dead, as in the reference
-    this.crossers = allCrossers(S.T);
+    this.crossers = allCrossers(S.T, p.pose.x, p.pose.z, 200);
     walkersNear(S.T, p.pose.x, p.pose.z, 180, this.crossers);   // and the sidewalk crowd around you
     if (this.free && p.speed > 3) for (const c of this.crossers) {     // the manual rider; autopilot waits at the line
       if (Math.abs(c.y - p.pose.y) < 2 && (c.x - p.pose.x) ** 2 + (c.z - p.pose.z) ** 2 < 0.9 * 0.9) {
@@ -348,22 +379,15 @@ export class MapDrive {
     S.elevation = p.pose.y;
     const deck = underSkyDeck(p.pose), bore = this.enclosed(p.traveled);
     S.gloom += (Number(deck || bore) - S.gloom) * Math.min(1, dt * 0.85);
-    // the sky, fog and weather of the city you're in, blending along each link as the reference does: the cities
-    // and links run west to east, so the rider's x says where you are
+    // Use the road's city on stacked roads. Blend west to east only while on a link.
     const x = p.pose.x;
-    let active = null, fraction = 0;
-    for (const [k, L] of LINKS.entries()) {
-      if (x < L.x0) break;
-      active = L;
-      fraction = clamp((x - L.x0) / (L.x1 - L.x0), 0, 1);
-    }
-    const road = this.free ? this.free.surface.road : p.edge.road;
-    const kind = road?.tube && !road.tube.mode ? D.TUBE : road?.link?.district;
-    const distance = active ? (x - active.x0) : 0, span = active ? active.x1 - active.x0 : 0;
-    const strength = smooth(0, 72, distance) * smooth(0, 72, span - distance);
-    const th = active ? blendCities(active.a, active.b, smooth(0.25, 0.85, fraction), kind, strength)
-      : blendCities(LINKS[0].a, LINKS[0].a, 0);
-    if (active === LINKS[0] && fraction < 1) th.TH.elevator = Math.max(th.TH.elevator, 0.6 * smooth(0, 0.3, fraction));
+    const road = this.free?.surface.road ?? p.edge.road, link = road.link;
+    const distance = link ? x - link.x0 : 0, span = link ? link.x1 - link.x0 : 0;
+    const fraction = link ? clamp(distance / span, 0, 1) : 0;
+    const strength = link ? smooth(0, 72, distance) * smooth(0, 72, span - distance) : 0;
+    const th = link ? blendCities(link.a, link.b, smooth(0.25, 0.85, fraction), link.district, strength)
+      : blendCities(road.city, road.city, 0);
+    if (link === LINKS[0] && fraction < 1) th.TH.elevator = Math.max(th.TH.elevator, 0.6 * smooth(0, 0.3, fraction));
     // Aurum's space elevator: far off, the sky paints it (fog would hide the real one); in the city the real one
     if (x > AURUM.gate - 150 && x < AURUM.x1 + 150) th.TH.elevator = 0;
     updateClimate(dt, th, deck || bore);

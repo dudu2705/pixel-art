@@ -9,12 +9,13 @@ From the repository root, run `python3 -m http.server` and open
 The default game opens in **Vanta Bay**. Vanta Boulevard passes through Prism
 Plaza and its holographic fountain. Four surrounding blocks connect to the plaza.
 The glass Sky Avenues deck runs above a busy street at 35 metres. Two one-way
-spiral ramps connect the levels through lit bores. Autopilot and traffic share
-the rider's lane graph, and autopilot stays on each level for several passes.
+spiral ramps connect the levels through lit bores. A two-way helix climbs to
+Crown Way at 100 metres. The nine cities east of Vanta Bay share this three-level
+layout, with their own districts, weather, palettes, and connectors.
 
-In manual mode, steer left at the signed northbound Street exit to climb, or
-right at the signed southbound Sky Avenues exit to descend. Keep straight at
-either exit to stay on the same level.
+Autopilot visits all three levels in each city, goes as far as Mirage Bazaar,
+then returns to Vanta Bay. In manual mode, follow the signed road branches to
+climb from Street or descend from Sky Avenues. The helix runs both ways.
 
 Use `index.html?loop` to revisit the 30-district visual comparison route.
 
@@ -22,8 +23,8 @@ Use `index.html?loop` to revisit the 30-district visual comparison route.
 
 | File | Role |
 |---|---|
-| `map.js`, `map-drive.js` | Define the fixed Vanta Bay lane graph and route the rider, traffic, and autopilot through it |
-| `map-city.js` | Stream Vanta Bay by map position and draw the boulevard, plaza, skyline, and sky deck |
+| `map.js`, `map-drive.js` | Define the city and connector lane graphs, manual road surfaces, and tour itinerary |
+| `map-city.js`, `map-bridge.js`, `map-dressing.js` | Stream roads and buildings by map position and draw the districts, decks, and connector scenery |
 | `world.js`, `road.js` | Supply the reference palette and art data and generate the comparison loop |
 | `city.js` | Stream the road, buildings, and district art in 64-segment chunks |
 | `facade.glsl.js`, `shaders.js` | Paint the building walls, billboards, roofs, street surfaces, and glass decks |
@@ -43,7 +44,7 @@ select those shots directly. Use `6` for orbit or `7` for free flight.
 Drag to look and use the wheel to zoom in orbit. Use `WASD` and `QE` to move
 in free flight. `F` shows diagnostics and `B` toggles glow for comparison.
 
-In Vanta Bay, manual mode steers freely: the arrows turn the bike, anywhere on the
+In the mapped cities, manual mode steers freely. The arrows turn the bike anywhere on the
 road surfaces, junctions and the plaza ring. Hands off the arrows, the bike settles
 into the road's direction. Deck edges, bore walls and the plaza's centre are walls
 you slide along. Turn around wherever there is room. Autopilot drives the lane

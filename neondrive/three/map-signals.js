@@ -62,11 +62,15 @@ export function pedsOn(e, T) { return crossers(e, T, scratch).some(c => Math.abs
 export function pedsOnOutbound(e, T) { return crossers(e, T, scratch).some(c => c.lat < 0.6 && c.lat > -e.road.halfWidth - 0.6); }
 
 // every crosser in world space, for drawing and for the rider's collisions
-export function allCrossers(T) {
+export function allCrossers(T, x, z, range = Infinity) {
   const out = [], f = {};
-  for (const e of APPROACHES) for (const c of crossers(e, T, [])) {
-    frameInLane(e, c.s, c.lat, f);
-    out.push({ x: f.x, y: f.y, z: f.z, th: f.th - c.dir * Math.PI / 2, ph: c.ph, umb: c.umb, coat: c.coat });
+  const crossing = [];
+  for (const e of APPROACHES) {
+    if (Math.abs(e.to.x - x) > range + e.to.discR || Math.abs(e.to.z - z) > range + e.to.discR) continue;
+    for (const c of crossers(e, T, crossing)) {
+      frameInLane(e, c.s, c.lat, f);
+      out.push({ x: f.x, y: f.y, z: f.z, th: f.th - c.dir * Math.PI / 2, ph: c.ph, umb: c.umb, coat: c.coat });
+    }
   }
   return out;
 }

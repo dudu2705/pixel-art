@@ -199,7 +199,8 @@ function buildTube(road, mats) {
     if (mode && (d - from) % 28 === 0)
       emit.add([a.x, a.y + height / 2, a.z], [0.01, 0.01, 0.01], a.th, [80, 210, 255], [d, 0.35, 5, 60]);
   }
-  const accent = mode ? [90, 210, 255] : [0, 230, 255];
+  const glass = road.link?.district === D.TUBE;
+  const accent = glass ? [0, 230, 255] : [90, 210, 255];
   for (const [d, facing] of [[from, 1], [to, -1]]) {
     const f = frameOn(road.path, d);
     const put = (lat, up, size, col, batch) => batch.add(
@@ -207,13 +208,14 @@ function buildTube(road, mats) {
     for (const side of [-1, 1]) put(side * (width + 0.25), 0, [0.5, height + 0.5, 0.35], accent, emit);
     put(0, height, [width * 2, 0.5, 0.35], accent, emit);
     put(0, height + 0.5, [width * 2 + 6, 4.2, 0.32], [24, 30, 44], metal);
-    const label = road.link.name, labelWidth = 14, cw = labelWidth / (label.length * 4 + 2), ch = 2.4 / 7;
+    const label = road.link?.name ?? 'UNDERPASS', labelWidth = Math.min(14, width * 2 - 1);
+    const cw = labelWidth / (label.length * 4 + 2), ch = 2.4 / 7;
     for (let i = 0; i < label.length; i++) {
       const glyph = FONT[label[i]] || FONT[' '];
       for (let bit = 0; bit < glyph.length; bit++) if (glyph[bit] === '1')
         put((i * 4 + bit % 3 + 1.5) * cw - labelWidth / 2, height + 1.2 + (5 - Math.floor(bit / 3)) * ch, [cw, ch, 0.5], accent, emit);
     }
   }
-  const surface = mode ? mats.tunnel : mats.glass;
+  const surface = glass ? mats.glass : mats.tunnel;
   return [metal.build(mats.metal), emit.build(mats.emit), walls.build(surface), ceiling.build(surface)].filter(Boolean);
 }

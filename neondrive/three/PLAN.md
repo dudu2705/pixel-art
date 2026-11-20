@@ -43,7 +43,7 @@ The reference comparison loop remains available at `index.html?loop`.
 
 ## Stacked city levels
 
-The Street-to-Sky slice is ready for review. Crown and the lift follow a later review.
+The mapped cities now have Street, Sky Avenues and Crown. The drive-on lift remains on the checklist.
 
 ### First slice
 
@@ -124,8 +124,7 @@ Use these shots as the visual baseline when replacing scenery with connected geo
 
 ## Map life port (in progress, one piece at a time)
 
-The comparison loop (`?loop`) has the reference's street life; the Vanta Bay map so far has only cars. Port it onto
-the map in this order, one commit each. Whoever picks this up: tick the box, add a line under it, commit.
+The comparison loop (`?loop`) is the street-life reference. Record each map port and how it was verified.
 
 - [x] **1. Traffic lights at map junctions.** Street-level junctions with three or more roads (not the plaza ring,
   not ramp nodes) get the reference cycle: 30 s period, each axis 12 s green, 3 s amber, 15 s red, axes opposite,
@@ -282,7 +281,18 @@ the map in this order, one commit each. Whoever picks this up: tick the box, add
   isolated lamp poles and the reference's heat shimmer. Mirage uses its warm clear palette, kites, and bright
   bazaar awnings. Node out-and-back took 169 s with correct banners and clear weather, a 12.7 s longest
   rider stop, and zero crashes.
-- [ ] **20. Sky Avenues and Crown for the grid cities.**
+- [x] **20. Sky Avenues and Crown for the grid cities.** All nine grids have a 710 m glass deck at 35 m above
+  their central street, separate lit up and down spirals, and a two-way helix to Crown Way at 100 m.
+  Crown Way runs between 150–250 m towers. Each grid has two Sky Avenues cars and one Crown car, with
+  street crowds and traffic visible through the deck. A city's deck controls gloom and shelter below it.
+  The tour rides all three levels locally, then rejoins the street-level route to the next link.
+  Node verified all nine out-and-back routes, city weather and directional link banners, plus a manual
+  helix climb in Aurum without a crash. The full tour from Vanta Bay visited every city and all three levels
+  before returning in 1 h 56 min simulated time. The longest rider stop was 18.6 s with zero crashes.
+  Three separate 10-minute starts had 0/0/0 rider waits over 20 s and zero crashes. The longest rider
+  stops were 9.4/7.2/14.3 s. NPCs across the map recorded 13/12/13 waits over 20 s.
+  Chrome captures cover the six new links and city streets, plus the raised roads in Aurum Heights, Aurora Pass
+  and Mirage Bazaar. Compared the new connector views with the matching link types in the GPU reference.
 
 ## Driving feel
 
@@ -383,4 +393,4 @@ last 34 m, and the graph drives the turn. Proposed instead:
 4. Build and verify the three-level network in Vanta Bay.
 5. Then add more cities and the links between them.
 
-The visual port, first Vanta Bay map, and Street-to-Sky slice are implemented. The slice is awaiting review.
+The mapped tour now covers ten cities and all nine connector types. Every mapped city has all three levels.

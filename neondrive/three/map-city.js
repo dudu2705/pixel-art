@@ -1,7 +1,7 @@
 import * as THREE from './vendor/three.module.js';
 import { City, ROAD_LAYER } from './city.js';
 import { Batch, unitBox, unitCyl, unitSphere, unitPlane, unitPlaneFlat } from './props.js';
-import { VANTA_BAY, frameOn, PLAZA_RADIUS, DECK_COVER, RAMP_BORE_HALF_WIDTH, CROWN_HELIX, BRIDGE, GRID_CITIES, LINKS } from './map.js';
+import { VANTA_BAY, frameOn, PLAZA_RADIUS, deckCoverFor, RAMP_BORE_HALF_WIDTH, CROWN_HELIX, BRIDGE, GRID_CITIES, LINKS } from './map.js';
 import { FONT } from './cockpit.js';
 import { blocks, CITIES, zoneAt, D, SW, SEGL, mulberry, mix } from './world.js';
 
@@ -11,16 +11,35 @@ const { roads, nodes } = VANTA_BAY;
 const district = CITIES.findIndex(city => city.name === 'VANTA BAY');
 const palette = CITIES[district].neon;
 const styles = [D.DOWNTOWN, D.SPIRES, D.ARCADE, D.MARKET, D.STACK];
-const templatesFor = name => { const ci = CITIES.findIndex(c => c.name === name);
-  return styles.map(style => blocks.filter(b => b.style === style && zoneAt(b.start)[3] === ci)); };
-const templates = templatesFor('VANTA BAY'), cityTemplates = new Map();
-const cityLook = name => { if (!cityTemplates.has(name)) cityTemplates.set(name, { set: templatesFor(name), pal: CITIES.find(c => c.name === name).neon }); return cityTemplates.get(name); };
+const cityTemplates = new Map();
+function cityLook(name) {
+  if (!cityTemplates.has(name)) {
+    const index = CITIES.findIndex(city => city.name === name);
+    const all = blocks.filter(b => zoneAt(b.start)[3] === index);
+    const set = styles.map(style => all.filter(b => b.style === style));
+    cityTemplates.set(name, { all, set, pal: CITIES[index].neon });
+  }
+  return cityTemplates.get(name);
+}
 const cellKey = (x, z) => Math.floor(x / CELL) + '/' + Math.floor(z / CELL);
 const BORE_HEIGHT = 6.5;
-const roadSamples = roads.flatMap(road => Array.from({ length: Math.ceil(road.path.length / 4) + 1 }, (_, i) => {
-  const distance = Math.min(i * 4, road.path.length);
-  return { ...frameOn(road.path, distance), road, distance };
-}));
+const sampleCells = new Map();
+for (const road of roads) {
+  for (let d = 0; d < road.path.length + 4; d += 4) {
+    const distance = Math.min(d, road.path.length), f = frameOn(road.path, distance);
+    const key = cellKey(f.x, f.z);
+    if (!sampleCells.has(key)) sampleCells.set(key, []);
+    sampleCells.get(key).push({ ...f, road, distance });
+  }
+}
+function roadNear(x, z, range, overlap) {
+  for (let i = Math.floor((x - range) / CELL); i <= Math.floor((x + range) / CELL); i++) {
+    for (let j = Math.floor((z - range) / CELL); j <= Math.floor((z + range) / CELL); j++) {
+      if (sampleCells.get(i + '/' + j)?.some(overlap)) return true;
+    }
+  }
+  return false;
+}
 const linkTerrain = (district, expression) => LINKS.filter(link => link.district === district).map(link => `
     if (p.x > ${link.x0}.0 && p.x < ${link.x1}.0) {
       vec3 terrain = ${expression};
@@ -31,13 +50,12 @@ const linkTerrain = (district, expression) => LINKS.filter(link => link.district
 function makeBuildings() {
   const random = mulberry(41283);
   const models = [];
-  const lot = (x, z, sx, sz, h, style, rot = 0, cityName = null) => {
-    const { set, pal } = cityName ? cityLook(cityName) : { set: templates, pal: palette };
-    const collection = set[style]?.length ? set[style] : templates[style] ?? templates[0];
-    const fallback = collection.length ? collection : blocks.filter(b => b.style === styles[style]);
-    const source = fallback[Math.floor(random() * fallback.length)];
+  const lot = (x, z, sx, sz, h, style, rot = 0, cityName = 'VANTA BAY') => {
+    const { all, set, pal } = cityLook(cityName);
+    const collection = set[style].length ? set[style] : all;
+    const source = collection[Math.floor(random() * collection.length)];
     const clearance = Math.hypot(sx, sz) / 2;
-    if (roadSamples.some(f => (f.road.bore || f.road.id.startsWith('street-') || f.road.helix || f.road.level === 2 || f.road.city !== 'VANTA BAY') &&
+    if (roadNear(x, z, clearance + 19, f => (f.road.bore || f.road.id.startsWith('street-') || f.road.helix || f.road.level === 2 || f.road.city !== 'VANTA BAY') &&
       Math.hypot(f.x - x, f.z - z) < clearance + f.road.halfWidth + SW + 2)) return;
     const ratio = sz / (source.len * SEGL);
     const bbs = source.bbs.filter(b => b.v1 < h).map(b => ({ ...b, u0: b.u0 * ratio, u1: b.u1 * ratio }));
@@ -104,6 +122,17 @@ function makeBuildings() {
       if (Math.abs(z) < 60 && (x < c.x0 || x > c.x1)) continue;       // keep the roads in and out clear
       lot(x, z, 18 + random() * 16, 18 + random() * 16, 60 + random() * 120, 1, -a, c.name);
     }
+    const { cx, cz } = c.helix;
+    lot(cx, cz, 58, 58, 280, 1, 0, c.name);
+    const crown = roads.find(road => road.id === c.p + '-crown-way');
+    for (let d = 35; d < crown.path.length - 8; d += 33) {
+      const f = frameOn(crown.path, d);
+      for (const side of [-1, 1]) {
+        const lat = side * (34 + random() * 5);
+        lot(f.x + f.rx * lat, f.z + f.rz * lat, 22 + random() * 5, 23 + random() * 5,
+          150 + random() * 100, 1, f.th, c.name);
+      }
+    }
   }
   return models;
 }
@@ -112,6 +141,14 @@ const groundVertex = /* glsl */`
   varying vec3 vWorld;
   void main() {
     vWorld = (modelMatrix * vec4(position, 1.0)).xyz;
+    ${LINKS.filter(link => link.district === D.CLOUDS || link.district === D.VOLCANO).map(link => {
+      const approach = Math.min(link.ascent ?? 350, (link.x1 - link.x0) / 2);
+      const groundHeight = link.height - (link.district === D.CLOUDS ? 4 : 2);
+      return `if (vWorld.x > ${link.x0}.0 && vWorld.x < ${link.x1}.0) {
+        float end = min(vWorld.x - ${link.x0}.0, ${link.x1}.0 - vWorld.x);
+        vWorld.y += ${groundHeight}.0 * smoothstep(0.0, ${approach}.0, end);
+      }`;
+    }).join('')}
     gl_Position = projectionMatrix * viewMatrix * vec4(vWorld, 1.0);
   }`;
 const groundFragment = /* glsl */`
@@ -254,7 +291,7 @@ function addExitSign(f, up, metal, emit) {
 
 // East-side rails and columns stop at the fork and merge openings.
 function rampOpening(road, distance, x) {
-  return x > DECK_COVER.x && distanceToFork(road, distance) < 34;
+  return x > deckCoverFor(road.city)?.x && distanceToFork(road, distance) < 34;
 }
 
 function distanceToFork(road, distance) {
@@ -298,12 +335,13 @@ export class MapCity extends City {
     if (!this.materials.has(key)) {
       const base = road?.level >= 1 ? this.glassMat : this.roadMat;
       const material = base.clone();
+      const deck = deckCoverFor(road?.city);
       material.uniforms = { ...base.uniforms,
         uRW: { value: road?.halfWidth ?? 7 },
         uMapMode: { value: road ? (road.oneWay ? 2 : 1) : 3 },
         uMapLength: { value: road?.path.length ?? 0 },
         uMapDistrict: { value: road?.link?.district ?? -1 },
-        uMapDeck: { value: new THREE.Vector4(DECK_COVER.x, DECK_COVER.halfWidth, DECK_COVER.south, DECK_COVER.north) },
+        uMapDeck: { value: deck ? new THREE.Vector4(deck.x, deck.halfWidth, deck.south, deck.north) : new THREE.Vector4() },
         uMapContinuous: { value: road?.level >= 1 ? 1 : 0 },
         // where each end's zebra starts, measured from the junction centre: just outside its disc
         uMapZebra: { value: new THREE.Vector2(road?.a.discR ? road.a.discR + 0.3 : 8, road?.b.discR ? road.b.discR + 0.3 : 8) },
@@ -328,7 +366,9 @@ export class MapCity extends City {
   buildCell(key) {
     const group = new THREE.Group(), cell = this.cells.get(key);
     const [x, z] = key.split('/').map(Number);
-    const terrain = new THREE.Mesh(new THREE.PlaneGeometry(CELL, CELL).rotateX(-Math.PI / 2), this.groundMat);
+    const uneven = LINKS.some(link => (link.district === D.CLOUDS || link.district === D.VOLCANO) &&
+      x * CELL < link.x1 && (x + 1) * CELL > link.x0);
+    const terrain = new THREE.Mesh(new THREE.PlaneGeometry(CELL, CELL, uneven ? 6 : 1, 1).rotateX(-Math.PI / 2), this.groundMat);
     terrain.position.set((x + 0.5) * CELL, -0.06, (z + 0.5) * CELL);
     group.add(terrain);
     if (cell?.buildings.length) group.add(this.buildingMesh(cell.buildings));
@@ -358,8 +398,8 @@ export class MapCity extends City {
       const metal = new Batch(unitBox), emit = new Batch(unitBox), rails = new Batch(unitPlane);
       const walls = new Batch(unitPlane), ceiling = new Batch(unitPlaneFlat), siding = new Batch(unitPlane);
       for (const { road, from, to } of cell.roads) {
-        if (road.id === 'street-north-approach' || road.id === 'sky-deck') {
-          const up = road.id === 'street-north-approach', d = up ? road.path.length - 43 : 43;
+        if (road.id.endsWith('street-north-approach') || road.id.endsWith('sky-deck')) {
+          const up = road.id.endsWith('street-north-approach'), d = up ? road.path.length - 43 : 43;
           if (d >= from && d < to) {
             const f = frameOn(road.path, d);
             if (!up) {
@@ -419,7 +459,7 @@ export class MapCity extends City {
             put(emit, side * (edge - 2.1), 6.78, [1, 0.22, 0.4], mix(color, [255, 255, 255], 0.5), [0, 0]);
             put(emit, side * (edge - 2.1), 6.78, [0.01, 0.01, 0.01], color, [0, 0.55, 1.8, 28]);
           }
-          if (f.y > 2 && !roadSamples.some(other => other.y < f.y - 1 &&
+          if (f.y > 2 && !roadNear(x, z, 14, other => other.y < f.y - 1 &&
             (other.road !== road || Math.abs(other.distance - d) > 18) &&
             Math.hypot(other.x - x, other.z - z) < other.road.halfWidth + 2)) {
             put(metal, brace, -f.y, [1.2, f.y, 1.2], [34, 32, 44], [0, 0]);
@@ -429,7 +469,7 @@ export class MapCity extends City {
             put(emit, brace * 0.87, -1.1, [0.85, 0.12, 1.7], [188, 167, 236], [0, 0, 0, 0]);
           }
         }
-        if ((road.level >= 1 || road.helix || road.bridge || road.link?.district === D.CLOUDS) && !rampOpening(road, d, DECK_COVER.x + 1))
+        if ((road.level >= 1 || road.helix || road.bridge || road.link?.district === D.CLOUDS) && distanceToFork(road, d) >= 34)
           put(metal, 0, -0.75, [2 * (road.halfWidth + SW), 0.75, 1.25], [28, 25, 39], [0, 0]);
       }
       for (const b of cell.buildings) {
