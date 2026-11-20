@@ -274,7 +274,10 @@ the map in this order, one commit each. Whoever picks this up: tick the box, add
   lit tower tops and bluish fog. Aurora Pass brings back snow, mountains, aurora and garden lights from
   its reference palette. Node out-and-back took 221 s, with the clear link giving way to snow on arrival,
   correct banners, a 14.3 s longest rider stop, and zero crashes.
-- [ ] **18. Monsoon Terraces and the pontoon road.**
+- [x] **18. Monsoon Terraces and the pontoon road.** Repeating 24 m barges with timber edges, dark joints,
+  bollards and lantern boats. The city uses monsoon weather and its teal palette, with stepped cascades and
+  shrine gates. Node out-and-back took 194 s with correct banners and monsoon on arrival, a 14.9 s longest
+  rider stop, and zero crashes.
 - [ ] **19. Mirage Bazaar and the salt flats.**
 - [ ] **20. Sky Avenues and Crown for the grid cities.**
 

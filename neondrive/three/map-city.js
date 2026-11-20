@@ -138,6 +138,7 @@ const groundFragment = /* glsl */`
     }
     float water = sin(p.x * 0.12 + p.y * 0.23 - uTime * 0.9) * sin(p.x * 0.31 - p.y * 0.13 + uTime * 0.6);
     ${linkTerrain(D.FERRY, 'vec3(6, 12, 27) + vec3(17, 23, 39) * smoothstep(0.15, 0.95, water)')}
+    ${linkTerrain(D.PONTOON, 'vec3(7, 20, 24) + vec3(15, 31, 35) * smoothstep(0.12, 0.95, water)')}
     float lava = terrainNoise(p * vec2(0.06, 0.12) - vec2(uTime * 0.15, 0)) * 0.7
       + terrainNoise(p * vec2(0.2, 0.4)) * 0.3;
     ${linkTerrain(D.VOLCANO, 'lava > 0.52 ? vec3(200, 60, 10) + vec3(55, 120, 40) * smoothstep(0.52, 0.75, lava) : vec3(34, 16, 12)')}
@@ -391,7 +392,7 @@ export class MapCity extends City {
       }
       for (const { f, road, d } of cell.lamps) {
         if (road.tube && d > road.tube.from - 8 && d < road.tube.to + 8) continue;   // no street lamps inside the glass
-        if ([D.FERRY, D.VOLCANO].includes(road.link?.district)) continue;
+        if ([D.FERRY, D.VOLCANO, D.PONTOON].includes(road.link?.district)) continue;
         const put = (layer, lat, y, size, color, meta) => layer.add(
           [f.x + f.rx * lat, f.y + y, f.z + f.rz * lat], size, f.th, color, meta);
         const insideBore = road.bore && d >= road.bore.from && d <= road.bore.to;

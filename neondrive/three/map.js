@@ -200,6 +200,9 @@ export const GRID_CITIES = [
   { name: 'AURORA PASS', p: 'ap', gate: 9800, x0: 9950, xm: 10100, x1: 10250, z0: -130, z1: 130,
     avenue: 'Aurora Avenue', rows: ['Snow Row', 'Summit Row'], cols: ['Pine Street', 'Glacier Street', 'Beacon Street'],
     incoming: { id: 'cloud-causeway', district: D.CLOUDS, speed: 180, lanes: 2, height: 42, ascent: 550, bend: -60 } },
+  { name: 'MONSOON TERRACES', p: 'mt', gate: 11150, x0: 11300, xm: 11450, x1: 11600, z0: -130, z1: 130,
+    avenue: 'Terrace Avenue', rows: ['Rain Row', 'Temple Row'], cols: ['Cascade Street', 'Garden Street', 'Spire Street'],
+    incoming: { id: 'pontoon-road', district: D.PONTOON, speed: 120, lanes: 2, height: 2, bend: 32 } },
 ];
 export const AURUM = GRID_CITIES[0];
 export const BRIDGE = { x0: 240, x1: AURUM.gate, top: 22, ramp: 350 };

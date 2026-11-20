@@ -155,6 +155,10 @@ vec3 mapGround(float lx, float w, float pxw, out float reflectivity) {
   bool byFork = uMapFork.x > 0.5 && w < 28.0 || uMapFork.y > 0.5 && uMapLength - w < 28.0;
   bool openEdge = byFork && (ramp || vWorld.x > uMapDeck.x);
   reflectivity = 0.5;
+  if (uMapDistrict == ${D.PONTOON} && mod(w, 24.0) < 0.5) {
+    reflectivity = 0.0;
+    return vec3(8, 8, 12);
+  }
   if (uMapMode < 2.5) {
     if (a < uRW) {
       float zs = w < uMapLength - w ? uMapZebra.x : uMapZebra.y;
@@ -175,6 +179,10 @@ vec3 mapGround(float lx, float w, float pxw, out float reflectivity) {
       if (uMapDistrict == ${D.FERRY}) {
         reflectivity = 0.15;
         return vec3(40, 70, 60);
+      }
+      if (uMapDistrict == ${D.PONTOON}) {
+        reflectivity = 0.1;
+        return mod(w, 0.85) < 0.09 ? vec3(50, 29, 26) : vec3(90, 50, 34);
       }
       if (!ramp && !openEdge && a < uRW + 0.3) { reflectivity = 0.3; return vec3(0, 225, 255); }
       reflectivity = 0.25;

@@ -25,6 +25,7 @@ const GRID_DISTRICTS = {
   'NEON LAGOON': { av: D.CANALS, r0: D.CANALS, r2: D.MARKET, c0: D.CANALS, c1: D.STACK, c2: D.CANALS },
   'EMBER FOUNDRY': { av: D.FORGE, r0: D.STACK, r2: D.DOCKS, c0: D.BUILD, c1: D.FORGE, c2: D.DOCKS },
   'AURORA PASS': { av: D.GARDENS, r0: D.DOWNTOWN, r2: D.BUILD, c0: D.SPIRES, c1: D.TUNNEL, c2: D.GARDENS },
+  'MONSOON TERRACES': { av: D.TERRACE, r0: D.SPIRES, r2: D.SHRINE, c0: D.TERRACE, c1: D.GARDENS, c2: D.TERRACE },
 };
 for (const c of GRID_CITIES) {
   const g = GRID_DISTRICTS[c.name], p = c.p;
@@ -37,7 +38,7 @@ STREET_DISTRICT['mega-highway'] = D.HIGHWAY;
 export function buildMapDressing(mats) {
   const B = { metal: new Batch(unitBox), emit: new Batch(unitBox), cloth: new Batch(unitPlane),
     lamp: new Batch(unitSphere), effect: new Batch(unitPlane), foliage: new Batch(unitPlane), cone: new Batch(unitCone),
-    pole: new Batch(unitCyl) };
+    pole: new Batch(unitCyl), water: new Batch(unitPlane) };
   for (const road of VANTA_BAY.roads) {
     const d = STREET_DISTRICT[road.id], city = CITIES.find(c => c.name === road.city) ?? (road.link && CITIES.find(c => c.name === road.link.b));
     if (d === undefined || road.level !== 0) continue;
@@ -131,6 +132,21 @@ export function buildMapDressing(mats) {
         if (i % 3 === 0) for (let lane = -road.lanes; lane < road.lanes; lane++)
           put((lane + 0.5) * 3.5, 0.062, [1.1, 0.06, 2.4], [255, 110, 30], B.emit, [n, 0.25]);
       }
+      if (d === D.TERRACE && i % 27 === 8) {
+        const lat = (hash(n, 1, 17) < 0.5 ? -1 : 1) * (RW + SW + 5);
+        const height = 26 + hash(n, 2, 17) * 24;
+        put(lat, 0, [6, height, 13], [33, 52, 60], B.metal);
+        for (const h of [height * 0.32, height * 0.64, height - 0.5]) put(lat, h, [7.4, 1.1, 14], [39, 65, 67], B.metal);
+        const fall = lat - Math.sign(lat) * 3.15;
+        put(fall, height / 2, [4.4, height, 1], [150, 210, 230], B.water, [s, 0, height], f.th + Math.PI / 2);
+        steam(fall, 0.5, 6, 3, n, 0.5, [200, 230, 240]);
+      }
+      if (d === D.SHRINE && i % 8 === 3) {
+        const width = RW + SW - 0.6, pink = [255, 70, 115];
+        for (const side of [-1, 1]) put(side * width, 0, [0.5, 6.3, 0.5], [167, 40, 59], B.pole);
+        put(0, 5.65, [width * 2 + 0.8, 0.28, 0.38], [167, 40, 59], B.metal);
+        put(0, 6.3, [width * 2 + 1.6, 0.32, 0.52], pink, B.emit, [n, 0.25]);
+      }
       // ---------- mega-highway: barriers along both edges, an overpass every 280 m ----------
       if (d === D.HIGHWAY) {
         for (const sg of [-1, 1]) put(sg * (RW + SW), 0, [0.3, 1.1, SEGL + 0.05], [56, 54, 70], B.metal);
@@ -174,7 +190,8 @@ export function buildMapDressing(mats) {
     put(0, 6.89, [0.01, 0.01, 0.01], city.neon[0], B.emit, [0, 0.3, 5, 60]);
   }
   const out = [];
-  for (const [b, m] of [[B.metal, mats.metal], [B.emit, mats.emit], [B.cloth, mats.cloth], [B.lamp, mats.emit], [B.effect, mats.effect], [B.foliage, mats.foliage], [B.cone, mats.emit], [B.pole, mats.metal]]) {
+  for (const [b, m] of [[B.metal, mats.metal], [B.emit, mats.emit], [B.cloth, mats.cloth], [B.lamp, mats.emit], [B.effect, mats.effect],
+    [B.foliage, mats.foliage], [B.cone, mats.emit], [B.pole, mats.metal], [B.water, mats.water]]) {
     const mesh = b.build(m); if (mesh) out.push(mesh);
   }
   return out;

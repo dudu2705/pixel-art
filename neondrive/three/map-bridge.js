@@ -74,7 +74,31 @@ export function buildSetPieces(mats, groundMat) {
   for (const ferry of VANTA_BAY.roads.filter(road => road.link?.district === D.FERRY)) out.push(...buildFerry(ferry, mats));
   for (const rim of VANTA_BAY.roads.filter(road => road.link?.district === D.VOLCANO)) out.push(...buildVolcano(rim, mats));
   for (const causeway of VANTA_BAY.roads.filter(road => road.link?.district === D.CLOUDS)) out.push(...buildCloudTowers(causeway, mats));
+  for (const pontoon of VANTA_BAY.roads.filter(road => road.link?.district === D.PONTOON)) out.push(...buildPontoon(pontoon, mats));
   return out;
+}
+
+function buildPontoon(road, mats) {
+  const floats = new Batch(unitBox), lamps = new Batch(unitSphere);
+  const width = road.halfWidth + SW, colors = CITIES.find(city => city.name === road.link.b).neon;
+  for (let d = 12; d + 12 <= road.path.length; d += 24) {
+    const f = frameOn(road.path, d);
+    const put = (batch, lat, y, size, color, meta = [0, 0]) => batch.add(
+      [f.x + f.rx * lat, y, f.z + f.rz * lat], size, f.th, color, meta);
+    for (const side of [-1, 1]) {
+      put(floats, side * (width - 2.5), -0.65, [6, f.y + 0.57, 23.45], [57, 43, 45]);
+      put(floats, side * width, f.y, [0.52, 0.72, 0.52], [43, 39, 42]);
+      const color = colors[(d / 12 + (side + 1) / 2) % colors.length];
+      put(lamps, side * width, f.y + 0.78, [0.32, 0.35, 0.32], color, [d, 0.55, 1.6, 35]);
+    }
+    if (d % 72 === 12) {
+      const lat = (hash(d, 3, 6) < 0.5 ? -1 : 1) * (width + 8 + hash(d, 5, 8) * 33);
+      put(floats, lat, -0.12, [3.2, 0.68, 5.6], [50, 34, 26]);
+      put(floats, lat, 0.5, [0.1, 1.3, 0.1], [30, 24, 20]);
+      put(lamps, lat, 1.95, [0.5, 0.6, 0.5], colors[(d / 12) % colors.length], [d, 0.45, 2, 48]);
+    }
+  }
+  return [floats.build(mats.metal), lamps.build(mats.emit)].filter(Boolean);
 }
 
 function buildCloudTowers(road, mats) {
