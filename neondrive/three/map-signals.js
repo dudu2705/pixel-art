@@ -1,7 +1,7 @@
 // Traffic lights at Vanta Bay's street junctions, on the reference's cycle, drawn like signals.js draws the loop's.
 import * as THREE from './vendor/three.module.js';
 import { VANTA_BAY, frameInLane } from './map.js';
-import { SW, hash } from './world.js';
+import { SW, hash, hsl, NEON } from './world.js';
 import { Batch, unitBox } from './props.js';
 import { EMITTER_LAYER } from './glow.js';
 
@@ -16,6 +16,7 @@ SIGNALLED.forEach((n, i) => { n.signal = { offset: hash(i, 7, 3) * LIGHT_PERIOD 
 
 // each approach belongs to an axis (east-west or north-south by its heading at the stop line); the axes alternate
 const APPROACHES = edges.filter(e => e.to.signal);
+APPROACHES.forEach((e, i) => { e.index = i; });
 for (const e of APPROACHES) {
   const f = frameInLane(e, e.path.length - e.to.trim, 0);
   e.axis = Math.abs(Math.sin(f.th)) > Math.abs(Math.cos(f.th)) ? 0 : 1;
@@ -29,9 +30,42 @@ export function signalState(edge, T) {
   return p < GREEN ? 0 : p < GREEN + AMBER ? 1 : 2;
 }
 
+// people crossing each signalled approach while its traffic is held: they set off in the first seconds of red and
+// walk the full width at their own pace, as crossersRaw does in the reference; late ones finish into the green
+const ZEBRA = 1.6;                                      // the crossing's centre, past the stop line toward the junction
+export function crossers(e, T, out = []) {
+  out.length = 0;
+  const s0 = e.to.signal;
+  if (!s0) return out;
+  const p = ((T + s0.offset + (e.axis ? LIGHT_PERIOD / 2 : 0)) % LIGHT_PERIOD + LIGHT_PERIOD) % LIGHT_PERIOD;
+  const t = p >= GREEN + AMBER ? p - GREEN - AMBER : p + LIGHT_PERIOD - GREEN - AMBER;
+  const id = e.index, n = 3 + Math.floor(hash(id, 9, 9) * 5), L = e.road.halfWidth + SW * 0.6;
+  for (let j = 0; j < n; j++) {
+    const ts = 0.4 + hash(j, id, 71) * 3, v = 2.1 + hash(j, id, 72) * 0.5, dir = hash(j, id, 73) < 0.5 ? 1 : -1;
+    if (t < ts) continue;
+    const x = -dir * L + dir * v * (t - ts);
+    if (Math.abs(x) > L) continue;
+    out.push({ lat: x, s: e.path.length - e.to.trim + ZEBRA + (hash(j, id, 74) - 0.5) * 1.6, dir, ph: j * 1.7,
+      umb: hash(j, id, 75) < 0.6 ? NEON[(hash(j, id, 76) * 6) | 0] : null, coat: hsl(hash(j, id, 77) * 360, 0.25, 0.18) });
+  }
+  return out;
+}
+const scratch = [];
+export function pedsOn(e, T) { return crossers(e, T, scratch).some(c => Math.abs(c.lat) < e.road.halfWidth + 0.6); }
+
+// every crosser in world space, for drawing and for the rider's collisions
+export function allCrossers(T) {
+  const out = [], f = {};
+  for (const e of APPROACHES) for (const c of crossers(e, T, [])) {
+    frameInLane(e, c.s, c.lat, f);
+    out.push({ x: f.x, y: f.y, z: f.z, th: f.th - c.dir * Math.PI / 2, ph: c.ph, umb: c.umb, coat: c.coat });
+  }
+  return out;
+}
+
 // a mast on the kerb at each stop line, its arm over the lanes, plus the far-side pole, as in the loop
 export function buildMapSignals(mats) {
-  const metal = new Batch(unitBox);
+  const metal = new Batch(unitBox), paint = new Batch(unitBox);
   for (const e of APPROACHES) {
     const mast = e.road.halfWidth + SW * 0.4, s = e.path.length - e.to.trim;
     const f = frameInLane(e, s, 0);
@@ -42,14 +76,17 @@ export function buildMapSignals(mats) {
     put((mast + 3) / 2, 5.95, [mast - 3, 0.25, 0.24], pole);
     put(3, 4.55, [0.5, 1.4, 0.34], head);
     put(mast - 0.4, 2.5, [0.44, 0.6, 0.28], [12, 12, 16]);
+    // the zebra: white bars across the full width, between the stop line and the junction
+    const z = frameInLane(e, s + ZEBRA, 0), L = e.road.halfWidth + SW * 0.5;
+    for (let a = -L + 0.5; a < L - 0.2; a += 1.0)
+      paint.add([z.x + z.rx * a, z.y + 0.015, z.z + z.rz * a], [0.55, 0.02, 3.0], z.th, [150, 150, 165], [0, 0, 0, 0]);
   }
-  return metal.build(mats.metal);
+  return [metal.build(mats.metal), paint.build(mats.emit)].filter(Boolean);
 }
 
 export class MapSignals {
   constructor(scene, mats) {
-    const static_ = buildMapSignals(mats);
-    if (static_) scene.add(static_);
+    for (const mesh of buildMapSignals(mats)) scene.add(mesh);
     const g = new THREE.InstancedBufferGeometry();
     g.index = unitBox.index;
     g.attributes.position = unitBox.attributes.position;

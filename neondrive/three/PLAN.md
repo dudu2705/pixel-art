@@ -136,9 +136,18 @@ the map in this order, one commit each. Whoever picks this up: tick the box, add
   from the line, as the reference. Headless 4-min autopilot run: 169 junction entries, 0 on red, autopilot held
   at red 6 times (longest 11.8 s), no gridlock. Masts render over the boulevard with lit heads.
   Next: item 2. Stop lines sit at each node's `trim`; put the zebra between the stop line and the junction disc.
-- [ ] **2. Zebra crossings and pedestrians crossing on red.** Painted crossings on each signalled approach;
+- [x] **2. Zebra crossings and pedestrians crossing on red.** (zebra paint still missing, see below) Painted crossings on each signalled approach;
   people cross while their road is red, as `crossersRaw` does in the reference (umbrellas in rain). Traffic waits
   for them; hitting one stops the rider dead.
+  Done in `map-signals.js` (`crossers`, `pedsOn`, `allCrossers`), `map-drive.js` (traffic waits in `canEnter`, the
+  manual rider stops dead within 0.9 m), `traffic.js` (`updateMap` draws them with the loop's body, head and glowing
+  umbrella). People set off in the first 3.4 s of red and late ones finish into the green, which holds traffic.
+  Headless: 175 junction entries with 0 on red, longest hold 14.3 s, no gridlock, rider hit stops at 0 km/h.
+  **Known gaps:** (a) the zebra bars built in `buildMapSignals` don't show, because map roads are drawn in their own
+  later pass (`renderSurfaces`) over them; paint the zebra in the map road shader instead (the loop does it in
+  `shaders.js` with the `zebra` flag), at `ZEBRA` = 1.6 m past each signalled approach's stop line, full road width.
+  (b) Cars turning in from a green approach drive through people on the crossing of the road they enter; only the
+  manual rider collides. Fix later with a yield check on the exit edge's crossing in `canEnter`.
 - [ ] **3. Sidewalk pedestrians** walking the map's sidewalks and skywalks (the loop's crowd art).
 - [ ] **4. Hover cars and air-lane gates** over the map's main avenues.
 - [ ] **5. Monorail / skytrain** on a fixed loop over Vanta Bay.

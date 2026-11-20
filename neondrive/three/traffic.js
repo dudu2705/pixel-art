@@ -95,7 +95,13 @@ export class Traffic {
     this.pools = [this.car, this.body, this.glow, this.ped, this.umb, this.flyer, this.lamp];
   }
 
-  updateMap(vehicles) {
+  updateMap(vehicles, people = [], time = 0) {
+    for (const c of people) {                         // people on the crossings, as the loop draws its crossers
+      const bob = Math.abs(Math.sin(time * 6 + c.ph)) * 0.09;
+      push(this.ped, [c.x, c.y + bob, c.z], [0.5, 1.5, 0.38], c.th, c.coat, [c.ph]);
+      push(this.ped, [c.x, c.y + bob + 1.5, c.z], [0.3, 0.28, 0.3], c.th, [30, 24, 34], [c.ph]);
+      if (c.umb) push(this.umb, [c.x, c.y + bob + 2.0, c.z], [1.25, 0.16, 1.25], c.th, c.umb, [c.ph, 0.5]);
+    }
     for (const vehicle of vehicles) {
       const { x, y, z, th } = vehicle.pose;
       const style = vehicle.style;

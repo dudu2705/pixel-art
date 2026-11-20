@@ -1,7 +1,7 @@
 import { VANTA_BAY, frameOn, frameInLane, laneOffset, legalTurns, routeTo, turnAngle, turnPath,
   inBore, underSkyDeck, LANE_WIDTH, SURFACES, onSurface } from './map.js';
 import { S, blendTheme, setAuto, updateClimate } from './sim.js';
-import { signalState } from './map-signals.js';
+import { signalState, pedsOn, allCrossers } from './map-signals.js';
 import { CITIES, CRUISE, SEGL, ZONES, cars, clamp, mulberry } from './world.js';
 
 const { nodes, edges } = VANTA_BAY;
@@ -118,6 +118,7 @@ export class MapDrive {
     // traffic lights: stop on red, and on amber unless already at the line
     const light = signalState(current.edge, S.T);
     if (light === 2 || (light === 1 && current.edge.path.length - current.edge.to.trim - current.s > 20)) return false;
+    if (light >= 0 && pedsOn(current.edge, S.T)) return false;             // and wait for people still crossing
     const owner = this.owners.get(current.edge.to);
     if (owner && owner !== current) return false;
     const lane = this.nextLane(current, current.exit);
@@ -258,6 +259,14 @@ export class MapDrive {
     else if (S.auto && this.free) this.leaveFree();
     if (this.free) this.stepFree(dt, keys);
     else this.updateVehicle(p, dt, keys);
+    // people on the crossings: drawn by main.js, and riding into one stops you dead, as in the reference
+    this.crossers = allCrossers(S.T);
+    if (this.free && p.speed > 3) for (const c of this.crossers) {     // the manual rider; autopilot waits at the line
+      if (Math.abs(c.y - p.pose.y) < 2 && (c.x - p.pose.x) ** 2 + (c.z - p.pose.z) ** 2 < 0.9 * 0.9) {
+        p.speed = 0; S.shake = 0.8; S.crashFlash = 0.5; S.lastHit = S.T;
+        break;
+      }
+    }
     S.shake *= Math.exp(-dt * 4);
     S.crashFlash *= Math.exp(-dt * 5);
     S.z = p.traveled;

@@ -310,7 +310,7 @@ function frame(now) {
     focal, f.elev, crown, [lightGrade / tint.x, lightGrade / tint.y, lightGrade / tint.z]);
 
   city.update(bike.dist, camera.position, T);
-  if (mapDrive) { traffic.updateMap(mapDrive.traffic); signals.update(S.T); }
+  if (mapDrive) { traffic.updateMap(mapDrive.traffic, mapDrive.crossers, T); signals.update(S.T); }
   else {
     traffic.update(bike.dist, dt, T);
     signals.update(bike.dist);
