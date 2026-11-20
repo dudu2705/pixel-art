@@ -26,7 +26,7 @@ const KOI_EXCLUDED = new Set([D.TUNNEL, D.BRIDGE, D.TUBE, D.RAMP]);
 export function buildDressing(n0, n1, mats) {
   const B = {
     metal: new Batch(unitBox), emit: new Batch(unitBox), cloth: new Batch(unitPlane),
-    foliage: new Batch(unitSphere), pole: new Batch(unitCyl), cone: new Batch(unitCone),
+    foliage: new Batch(unitPlane), pole: new Batch(unitCyl), cone: new Batch(unitCone),
     ring: new Batch(unitTorus), tunnel: new Batch(unitPlane), glass: new Batch(unitPlane),
     tunnelCeil: new Batch(unitPlaneFlat), glassCeil: new Batch(unitPlaneFlat),
     rail: new Batch(unitPlane), below: new Batch(unitPlaneFlat),
@@ -353,7 +353,8 @@ export function buildDressing(n0, n1, mats) {
       if (every < 1 && hash(n, sg + (pal === RUINLEAF ? 11 : 13), pal === RUINLEAF ? 33 : 35) >= every) continue;
       const c = pal[(hash(n, sg + 3, 71) * 4) | 0], lat = sg * (RW + 0.9);
       put(lat, 0, [0.32, 3.2, 0.32], [36, 26, 40], B.metal);
-      put(lat, 4.3, [3.0, 2.5, 3.0], c, B.foliage, [n * 7 + sg, 0]);
+      put(lat, 4.3, [3, 2.5, 1], c, B.foliage, [n, 0]);
+      put(lat, 4.3, [0.01, 0.01, 0.01], c, B.emit, [n, 0.4, 2.6, 60]);
     }
 
     // ---------- docklands containers and cranes ----------

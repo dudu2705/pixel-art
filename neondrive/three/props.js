@@ -120,16 +120,40 @@ const RAIL_FRAG = /* glsl */`
 `;
 
 // speckled foliage: the holo trees, sakura, ruin canopy and coral
+const FOLIAGE_VERT = /* glsl */`
+  attribute vec3 iPos, iSize, iCol;
+  attribute vec4 iMeta;
+  varying vec3 vColor;
+  varying vec2 vUv;
+  flat out int vSeed;
+  varying float vDepth;
+  void main() {
+    vec4 view = viewMatrix * vec4(iPos, 1.0);
+    vColor = iCol;
+    vUv = uv;
+    vSeed = int(iMeta.x);
+    vDepth = -view.z;
+    gl_Position = projectionMatrix * (view + vec4(position.xy * iSize.xy, 0.0, 0.0));
+  }
+`;
 const FOLIAGE_FRAG = /* glsl */`
   precision highp float;
-  ${COMMON}
-  varying vec3 vCol; varying vec4 vMeta; varying vec2 vUv; varying vec3 vWorld; varying vec3 vNL;
-  uniform vec3 uFog, uCam; uniform float uFogNear, uFogFar, uTime;
+  precision highp int;
+  ${integerHash}
+  varying vec3 vColor;
+  varying vec2 vUv;
+  flat in int vSeed;
+  varying float vDepth;
+  uniform vec3 uFog;
+  uniform float uFogNear, uFogFar;
+  out vec4 fragColor;
   void main() {
-    float lit = step(0.25, h21(floor(vUv * 9.0), vMeta.x)) ;
-    float up = smoothstep(-0.2, 0.6, normalize(vNL).y);
-    vec3 col = mix(vCol * 0.32, vCol * 1.5, max(up, 1.0 - lit));
-    ${fogTail}
+    vec2 uv = vUv * 2.0 - 1.0;
+    ivec2 pixel = ivec2(gl_FragCoord.xy);
+    if (vDepth > 260.0 || dot(uv, uv) > 1.0 + (hsh(pixel.x, pixel.y, 72) - 0.5) * 0.3) discard;
+    bool lit = uv.y > 0.2 || hsh(pixel.x / 2, pixel.y / 2, vSeed) < 0.25;
+    vec3 color = lit ? vColor : mix(vColor, vec3(10, 10, 20) / 255.0, 0.55);
+    fragColor = vec4(mix(color, uFog, smoothstep(uFogNear, uFogFar, vDepth) * 0.97), 1.0);
   }
 `;
 
@@ -205,7 +229,9 @@ const TUNNEL_FRAG = /* glsl */`
 // the aqua tube: sea outside the glass, ribs, and fish going past
 const GLASS_FRAG = /* glsl */`
   precision highp float;
-  ${COMMON}
+  precision highp int;
+  ${integerHash}
+  out vec4 fragColor;
   varying vec3 vCol; varying vec4 vMeta; varying vec2 vUv; varying vec3 vWorld; varying vec3 vNL;
   uniform vec3 uFog, uCam; uniform float uFogNear, uFogFar, uTime;
   void main() {
@@ -213,16 +239,22 @@ const GLASS_FRAG = /* glsl */`
     float u = vMeta.z + (1.0 - (ceiling ? vUv.y : vUv.x)) * ${SEGL}.0, v = vUv.y * 6.5;
     vec3 col;
     if (mod(u, 6.0) < 0.35) col = vec3(0.27, 0.33, 0.39);               // steel ribs
-    else if (v > 4.4 && v < 4.65) col = vec3(0.0, 0.86, 1.0) * 1.3;
+    else if (ceiling) {
+      float x = (vUv.x - 0.5) * ${2 * (RW + 1.2)};
+      float caustic = 0.5 + 0.5 * sin(x * 1.7 + u * 0.6 + uTime * 2.0) * sin(x * 0.7 - u * 0.3 + uTime);
+      col = (vec3(20, 90, 120) + caustic * vec3(30, 60, 50)) / 255.0;
+    }
+    else if (v > 4.4 && v < 4.65) col = vec3(0.0, 220.0, 255.0) / 255.0;
     else {
       float depth = v / 6.5;
       float wave = 0.5 + 0.5 * sin(u * 0.4 + uTime * 1.5 + v);
-      float fish = step(h21(vec2(floor((u + uTime * 3.0) / 1.4), floor(v * 1.6)), 5.0), 0.035);
-      col = fish > 0.5 ? vec3(1.0, 0.67 + v * 0.04, 0.35)
+      bool fish = hsh(int(floor((u + uTime * 3.0) / 1.4)), int(floor(v * 1.6)), 5) < 0.035;
+      col = fish ? vec3(1.0, 0.67 + v * 0.04, 0.35)
                        : vec3(0.024 + 0.04 * depth, 0.157 + 0.157 * depth + 0.047 * wave,
                               0.275 + 0.196 * depth + 0.039 * wave);
     }
-    ${fogTail}
+    float d = max(0.0, -(viewMatrix * vec4(vWorld, 1.0)).z);
+    fragColor = vec4(mix(col, uFog, smoothstep(uFogNear, uFogFar, d) * 0.97), 1.0);
   }
 `;
 
@@ -369,8 +401,13 @@ export function makeMaterials(uniforms) {
   return {
     sign: new THREE.ShaderMaterial({ vertexShader: PROP_VERT, fragmentShader: SIGN_FRAG, uniforms, glslVersion: THREE.GLSL3 }),
     emit: two(EMIT_FRAG), metal: mk(METAL_FRAG), car: mk(CAR_FRAG),
-    foliage: mk(FOLIAGE_FRAG), cloth: two(CLOTH_FRAG), water: two(WATER_FRAG),
-    tunnel: two(TUNNEL_FRAG, TUNNEL_VERT), glass: two(GLASS_FRAG, TUNNEL_VERT), rail: two(RAIL_FRAG),
+    foliage: new THREE.ShaderMaterial({
+      vertexShader: FOLIAGE_VERT, fragmentShader: FOLIAGE_FRAG, uniforms, glslVersion: THREE.GLSL3,
+    }),
+    cloth: two(CLOTH_FRAG), water: two(WATER_FRAG),
+    tunnel: two(TUNNEL_FRAG, TUNNEL_VERT), glass: new THREE.ShaderMaterial({
+      vertexShader: TUNNEL_VERT, fragmentShader: GLASS_FRAG, uniforms, side: THREE.DoubleSide, glslVersion: THREE.GLSL3,
+    }), rail: two(RAIL_FRAG),
     effect: makeEffectMaterial(uniforms),
     track: two(METAL_FRAG, TUNNEL_VERT),
     wheel: new THREE.ShaderMaterial({

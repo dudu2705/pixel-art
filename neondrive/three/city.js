@@ -93,7 +93,7 @@ export class City {
     }
     const isElev = n => {
       const i = n % NSEG, transition = TRANS[TRANS_AT[i]];
-      return LAYERED[i] && ELEV[i] > 0.4 && !SOLID_DECK.has(district(i))
+      return LAYERED[i] !== 0 && ELEV[i] > 0.4 && !SOLID_DECK.has(district(i))
         && !(transition && i >= transition.s && i < transition.e);
     };
     const pos = [], uv = [], lat = [], idx = [];
