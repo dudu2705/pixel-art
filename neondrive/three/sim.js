@@ -118,6 +118,7 @@ export function blendTheme(seg) {
   if (z[4]) { b = CITIES[(z[3] + 1) % CITIES.length]; t = smooth(0.25, 0.85, (seg - z[0]) / (z[1] - z[0])); }
   let FOG = mix(a.fog, b.fog, t);
   let SKY = [0, 1, 2].map(i => mix(a.sky[i], b.sky[i], t));
+  const TWC = [0, 1].map(i => mix(a.tw[i], b.tw[i], t));
   const TH = {};
   for (const k of ['aurora', 'mountains', 'elevator', 'fireworks', 'dark', 'deep', 'kites', 'shimmer'])
     TH[k] = (a[k] || 0) * (1 - t) + (b[k] || 0) * t;
@@ -147,7 +148,7 @@ export function blendTheme(seg) {
   FOG = mix(FOG, [FOG[0] * 0.5, FOG[1] * 0.5, FOG[2] * 0.6], nk);
   FOG = mix(FOG, [110, 100, 140], dawn * 0.2 * sea);
   TH.night = night * sea;
-  return { a, b, t, z, FOG, SKY, TH, wx };
+  return { a, b, t, z, FOG, SKY, TWC, TH, wx };
 }
 
 export function setCruise(i) { S.cruise = ((i % CRUISE.length) + CRUISE.length) % CRUISE.length; }
@@ -275,7 +276,9 @@ export function update(dt, keys) {
 
   // ---------- theme, weather and the level system ----------
   const th = blendTheme(Math.floor(S.z / SEGL));
-  S.FOG = th.FOG; S.SKY = th.SKY; S.TH = th.TH; S.wx = th.wx; S.night = th.TH.night;
+  S.FOG = th.FOG; S.SKY = th.SKY; S.TWC = th.TWC;
+  S.neon = (th.t > 0.5 ? th.b : th.a).neon;
+  S.TH = th.TH; S.wx = th.wx; S.night = th.TH.night;
 
   // under a roof nothing falls, but the road outside stays wet
   const trw = TRANS_AT[n];

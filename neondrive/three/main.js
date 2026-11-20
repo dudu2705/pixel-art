@@ -1,15 +1,16 @@
 import * as THREE from './vendor/three.module.js';
-import { SEGL, NSEG, LEN, RW, SW, CITIES, ZONE_NAMES, LINK_NAMES, LH, LAYER, ELEV,
+import { SEGL, DRAW, NSEG, CITIES, ZONE_NAMES, LINK_NAMES, LH,
          zoneAt, district, setTime, D } from './world.js';
 import { frameAt } from './road.js';
 import { City, ROAD_LAYER } from './city.js';
 import { Traffic } from './traffic.js';
 import { Weather } from './weather.js';
+import { Sky } from './sky.js';
 import { ArtOverlay } from './overlay.js';
 import { drawCockpit } from './cockpit.js';
 import { makeLightCycle } from './cycle.js';
 import { Signals } from './signals.js';
-import { S, update as simUpdate, setAuto, setCruise, cruiseKmh, CARS } from './sim.js';
+import { S, update as simUpdate, setAuto, setCruise, cruiseKmh } from './sim.js';
 import { Rig, MODES } from './camera.js';
 import { Glow } from './glow.js';
 
@@ -32,6 +33,7 @@ const rt = new THREE.WebGLRenderTarget(1, 1, {
 });
 const surfaces = new THREE.WebGLRenderTarget(1, 1, nearest);
 const overlay = new ArtOverlay();
+const sky = new Sky(scene);
 const quadScene = new THREE.Scene();
 const quadCam = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
 const quadMat = new THREE.ShaderMaterial({
@@ -103,6 +105,7 @@ function resize() {
   rt.setSize(pw, ph);
   surfaces.setSize(pw, ph);
   overlay.resize(artWidth, artHeight);
+  sky.resize(pw / CITY_SCALE, ph / CITY_SCALE, artWidth, artHeight);
   quadMat.uniforms.uOverlayAdd.value = overlay.additive;
   quadMat.uniforms.uOverlayMultiply.value = overlay.multiplier;
   weather.reset();
@@ -124,159 +127,6 @@ function renderSurfaces() {
 }
 
 addEventListener('resize', resize);
-
-// ---------- sky ----------
-const skyUniforms = {
-  uLow: { value: new THREE.Color() }, uMid: { value: new THREE.Color() }, uHigh: { value: new THREE.Color() },
-  uTime: { value: 0 }, uAurora: { value: 0 }, uStars: { value: 0 }, uShimmer: { value: 0 },
-};
-const sky = new THREE.Mesh(
-  new THREE.SphereGeometry(4000, 24, 16),
-  new THREE.ShaderMaterial({
-    side: THREE.BackSide, depthWrite: false, uniforms: skyUniforms,
-    vertexShader: `varying vec3 vP; void main(){ vP = position; gl_Position = projectionMatrix * modelViewMatrix * vec4(position,1.0); }`,
-    fragmentShader: `
-      precision highp float; varying vec3 vP;
-      uniform vec3 uLow, uMid, uHigh;
-      uniform float uTime, uAurora, uStars, uShimmer;
-      float h21(vec2 p, float s) {
-        p = fract(p * vec2(123.34, 456.21) + s * 0.017);
-        p += dot(p, p + 45.32);
-        return fract(p.x * p.y);
-      }
-      void main(){
-        // uLow is the horizon glow, uHigh the zenith: bright low, dark up top
-        float t = clamp(vP.y / 2200.0, -1.0, 1.0);
-        float a = clamp(t, 0.0, 1.0);
-        vec3 c = a < 0.5 ? mix(uLow, uMid, a * 2.0) : mix(uMid, uHigh, (a - 0.5) * 2.0);
-        if (t < 0.0) c = mix(uLow, uHigh * 0.6, clamp(-t * 1.6, 0.0, 1.0));
-        c = mix(c, uLow * 1.2, exp(-abs(vP.y) / 220.0) * 0.6);
-
-        vec3 dir = normalize(vP);
-        float az = atan(dir.z, dir.x);
-
-        // stars, thicker the higher you ride
-        if (uStars > 0.01 && dir.y > 0.0) {
-          vec2 cell = floor(vec2(az * 60.0, dir.y * 140.0));
-          float r = h21(cell, 3.0);
-          if (r > 0.993) {
-            float tw = 0.55 + 0.45 * sin(uTime * 2.0 + r * 90.0);
-            c += vec3(0.75, 0.82, 1.0) * tw * uStars * smoothstep(0.0, 0.35, dir.y);
-          }
-        }
-
-        // aurora: slow curtains hanging above the horizon
-        if (uAurora > 0.01) {
-          float band = sin(az * 3.0 + uTime * 0.12) * 0.1 + 0.22;
-          float d = abs(dir.y - band);
-          float curtain = exp(-d * 11.0);
-          float ripple = 0.55 + 0.45 * sin(az * 22.0 + uTime * 0.5 + dir.y * 18.0);
-          vec3 ac = mix(vec3(0.35, 1.0, 0.65), vec3(0.55, 0.45, 1.0), 0.5 + 0.5 * sin(az * 2.0 + uTime * 0.2));
-          c += ac * curtain * ripple * 0.5 * uAurora;
-        }
-
-        // heat shimmer over the bazaar
-        if (uShimmer > 0.01 && dir.y < 0.12)
-          c *= 1.0 + 0.05 * uShimmer * sin(az * 90.0 + uTime * 3.0);
-
-        gl_FragColor = vec4(c, 1.0);
-      }`,
-  })
-);
-sky.frustumCulled = false;
-scene.add(sky);
-
-// ---------- distant mountains, for the cities that have them ----------
-const mtnUniforms = { uCol: { value: new THREE.Color(0.06, 0.08, 0.14) }, uFade: { value: 0 } };
-const mountains = (() => {
-  const N = 220, R = 3200;
-  const pos = [], idx = [];
-  for (let i = 0; i < N; i++) {
-    const a = i / N * Math.PI * 2;
-    const u = i / N * 40;
-    // the original's ridge profile, same noise mix
-    const h = 240 * (0.18 + 0.45 * Math.abs(nz(u, 0.5) * 2 - 1) * 0.6 + 0.35 * nz(u * 3, 1.5) * 0.5
-            + 0.2 * (1 - Math.abs(nz(u * 0.7, 3) * 2 - 1)));
-    pos.push(Math.cos(a) * R, -60, Math.sin(a) * R);
-    pos.push(Math.cos(a) * R, h, Math.sin(a) * R);
-  }
-  for (let i = 0; i < N; i++) {
-    const a = i * 2, b = ((i + 1) % N) * 2;
-    idx.push(a, a + 1, b, b, a + 1, b + 1);
-  }
-  const g = new THREE.BufferGeometry();
-  g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
-  g.setIndex(idx);
-  const m = new THREE.Mesh(g, new THREE.ShaderMaterial({
-    uniforms: mtnUniforms, transparent: true, depthWrite: false, side: THREE.DoubleSide,
-    vertexShader: `varying float vY; void main(){ vY = position.y; gl_Position = projectionMatrix * modelViewMatrix * vec4(position,1.0); }`,
-    fragmentShader: `precision highp float; varying float vY; uniform vec3 uCol; uniform float uFade;
-      void main(){ if (uFade < 0.01) discard; gl_FragColor = vec4(uCol * (0.6 + vY / 500.0), uFade); }`,
-  }));
-  m.frustumCulled = false;
-  m.renderOrder = -1;
-  return m;
-})();
-function nz(x, y) {   // the generator's value noise, inlined
-  const ix = Math.floor(x), iy = Math.floor(y), fx = x - ix, fy = y - iy;
-  const hh = (a, b) => { let h = (a * 374761393 + b * 668265263 + 11 * 1442695041) | 0;
-    h = Math.imul(h ^ (h >>> 13), 1274126177); h ^= h >>> 16; return (h >>> 0) / 4294967296; };
-  const a = hh(ix, iy), b = hh(ix + 1, iy), c = hh(ix, iy + 1), d = hh(ix + 1, iy + 1);
-  const ux = fx * fx * (3 - 2 * fx), uy = fy * fy * (3 - 2 * fy);
-  return a + (b - a) * ux + (c - a) * uy + (a - b - c + d) * ux * uy;
-}
-scene.add(mountains);
-
-// ---------- fireworks over the festival cities ----------
-const fw = (() => {
-  const CAP = 700;
-  const g = new THREE.BufferGeometry();
-  const pos = new Float32Array(CAP * 3), col = new Float32Array(CAP * 3);
-  g.setAttribute('position', new THREE.BufferAttribute(pos, 3).setUsage(THREE.DynamicDrawUsage));
-  g.setAttribute('color', new THREE.BufferAttribute(col, 3).setUsage(THREE.DynamicDrawUsage));
-  g.setDrawRange(0, 0);
-  const pts = new THREE.Points(g, new THREE.PointsMaterial({
-    size: 2.6, vertexColors: true, transparent: true, opacity: 0.95, depthWrite: false,
-    blending: THREE.AdditiveBlending, sizeAttenuation: false,
-  }));
-  pts.frustumCulled = false;
-  scene.add(pts);
-  return { g, pos, col, parts: [], next: 0, CAP };
-})();
-function fireworks(dt, time, on, camPos) {
-  if (on && time > fw.next && fw.parts.length < fw.CAP - 90) {
-    fw.next = time + 0.8 + Math.random() * 2.4;
-    const a = Math.random() * Math.PI * 2, R = 260 + Math.random() * 420;
-    const ox = camPos.x + Math.cos(a) * R, oz = camPos.z + Math.sin(a) * R;
-    const oy = 120 + Math.random() * 180;
-    const c = NEONJS[(Math.random() * 6) | 0];
-    for (let i = 0; i < 80; i++) {
-      const th = Math.random() * Math.PI * 2, ph = Math.acos(2 * Math.random() - 1), sp = 14 + Math.random() * 22;
-      fw.parts.push({ x: ox, y: oy, z: oz,
-        vx: Math.sin(ph) * Math.cos(th) * sp, vy: Math.cos(ph) * sp, vz: Math.sin(ph) * Math.sin(th) * sp,
-        life: 1.6 + Math.random() * 1.2, age: 0, c });
-    }
-  }
-  let k = 0;
-  for (let i = fw.parts.length - 1; i >= 0; i--) {
-    const p = fw.parts[i];
-    p.age += dt;
-    if (p.age > p.life) { fw.parts.splice(i, 1); continue; }
-    p.vy -= 16 * dt; p.x += p.vx * dt; p.y += p.vy * dt; p.z += p.vz * dt;
-    p.vx *= 0.985; p.vz *= 0.985;
-  }
-  for (const p of fw.parts) {
-    if (k >= fw.CAP) break;
-    const f = 1 - p.age / p.life;
-    fw.pos[k * 3] = p.x; fw.pos[k * 3 + 1] = p.y; fw.pos[k * 3 + 2] = p.z;
-    fw.col[k * 3] = p.c[0] / 255 * f; fw.col[k * 3 + 1] = p.c[1] / 255 * f; fw.col[k * 3 + 2] = p.c[2] / 255 * f;
-    k++;
-  }
-  fw.g.setDrawRange(0, k);
-  fw.g.attributes.position.needsUpdate = true;
-  fw.g.attributes.color.needsUpdate = true;
-}
-const NEONJS = [[255, 46, 170], [0, 234, 255], [255, 214, 64], [170, 90, 255], [70, 255, 150], [255, 110, 50]];
 
 // ---------- world streaming ----------
 const city = new City(scene);
@@ -325,23 +175,10 @@ function drive(dt) {
 
 // ---------- theme ----------
 let themeCity = -1;
-function theme(dt) {
+function theme() {
   const z = zoneAt(Math.floor(S.z / SEGL) % NSEG);
   // fog, sky and the hour all come from the simulation's blendTheme
-  city.setFog(S.FOG, 40 * S.fogK, 1500 * (0.42 + 0.58 * S.fogK));
-  skyUniforms.uLow.value.setRGB(S.SKY[2][0] / 255, S.SKY[2][1] / 255, S.SKY[2][2] / 255);
-  skyUniforms.uMid.value.setRGB(S.SKY[1][0] / 255, S.SKY[1][1] / 255, S.SKY[1][2] / 255);
-  skyUniforms.uHigh.value.setRGB(S.SKY[0][0] / 255, S.SKY[0][1] / 255, S.SKY[0][2] / 255);
-
-  const f2 = frameAt(S.z, {});
-  const high = Math.max(0, Math.min(1, (f2.y - 20) / 80));
-  skyUniforms.uTime.value = S.T;
-  skyUniforms.uStars.value = (0.3 + 0.7 * high) * (0.35 + 0.65 * S.night);
-  skyUniforms.uAurora.value += ((S.TH.aurora || 0) - skyUniforms.uAurora.value) * Math.min(1, dt);
-  skyUniforms.uShimmer.value += ((S.TH.shimmer || 0) - skyUniforms.uShimmer.value) * Math.min(1, dt);
-  mtnUniforms.uFade.value += ((S.TH.mountains || 0) - mtnUniforms.uFade.value) * Math.min(1, dt);
-  mtnUniforms.uCol.value.setRGB(S.FOG[0] / 420, S.FOG[1] / 420, S.FOG[2] / 420);
-  fireworks(dt, S.T, (S.TH.fireworks || 0) > 0.3, camera.position);
+  city.setFog(S.FOG, 50 * S.fogK, DRAW * SEGL * (0.42 + 0.4 * S.fogK));
 
   city.uniforms.uWet.value = S.rainOn ? S.wet : 0;
   city.uniforms.uFlash.value = S.flash;
@@ -372,7 +209,7 @@ function frame(now) {
   T += dt; setTime(T);
 
   drive(dt);
-  theme(dt);
+  theme();
   rig.update(bike, dt);
 
   const f = frameAt(bike.dist, {});
@@ -383,22 +220,30 @@ function frame(now) {
   cycle.visible = !cockpit;
   const spin = bike.dist / 0.5 % (2 * Math.PI);
   cycle.material.uniforms.uSpin.value.set(Math.cos(spin), Math.sin(spin));
-  cycle.material.uniforms.uSky.value.copy(skyUniforms.uMid.value).lerp(skyUniforms.uLow.value, 0.5);
+  const [r, g, b] = S.SKY[1].map((value, i) => (value + S.SKY[2][i]) / 510);
+  cycle.material.uniforms.uSky.value.setRGB(r, g, b);
   cycle.material.uniforms.uViewportHeight.value = rt.height;
   const lean = cockpit ? bike.roll : 0;
   quadMat.uniforms.uRotation.value.set(Math.cos(lean), Math.sin(lean));
 
   const crown = THREE.MathUtils.smoothstep(f.elev, LH[1] + 15, LH[2]);
   const dim = 1 - 0.38 * S.night;
-  quadMat.uniforms.uTint.value.set(dim * (1 - 0.07 * crown), dim, dim * (1 + 0.08 * crown));
+  const tint = quadMat.uniforms.uTint.value.set(dim * (1 - 0.07 * crown), dim, dim * (1 + 0.08 * crown));
+  const lightGrade = BLOOM ? (1 + 0.35 * S.night) * (1 - 0.25 * crown) : 0;
   quadMat.uniforms.uFlash.value.set(1, 0.3, 0.4).multiplyScalar(S.crashFlash * 120 / 255);
   const roadUniforms = city.uniforms;
   roadUniforms.uBike.value.set(bx, bz);
   roadUniforms.uBikeForward.value.set(Math.sin(f.th), Math.cos(f.th));
-  roadUniforms.uHeadlight.value = lightOn ? 0.14 + 0.22 * (S.TH.dark || 0) + 0.08 * S.night : 0;
+  roadUniforms.uHeadlight.value = lightOn && cockpit ? 0.14 + 0.22 * (S.TH.dark || 0) + 0.08 * S.night : 0;
 
-  sky.position.copy(camera.position);
-  mountains.position.set(camera.position.x, 0, camera.position.z);
+  camera.getWorldDirection(forward);
+  horizon.set(forward.x, 0, forward.z, 0).applyMatrix4(camera.matrixWorldInverse).applyMatrix4(camera.projectionMatrix);
+  const horizonPixel = (horizon.y / horizon.w * 0.5 + 0.5) * rt.height;
+  quadMat.uniforms.uHorizon.value = Math.round(horizonPixel);
+  const focal = camera.projectionMatrix.elements[5] * rt.height / (2 * CITY_SCALE);
+  sky.update(dt, S, Math.atan2(forward.x, forward.z), (rt.height - horizonPixel) / CITY_SCALE,
+    focal, f.elev, crown, [lightGrade / tint.x, lightGrade / tint.y, lightGrade / tint.z]);
+
   city.update(bike.dist, camera.position, T);
   traffic.update(bike.dist, dt, T);
   signals.update(bike.dist);
@@ -407,12 +252,9 @@ function frame(now) {
   renderer.setRenderTarget(rt);
   renderer.render(scene, camera);
   renderSurfaces();
-  camera.getWorldDirection(forward);
-  horizon.set(forward.x, 0, forward.z, 0).applyMatrix4(camera.matrixWorldInverse).applyMatrix4(camera.projectionMatrix);
-  quadMat.uniforms.uHorizon.value = Math.round((horizon.y / horizon.w * 0.5 + 0.5) * rt.height);
   quadMat.uniforms.uGlow.value = glow.render(scene, camera, rt.depthTexture,
     roadUniforms.uFogNear.value, roadUniforms.uFogFar.value);
-  quadMat.uniforms.uGlowAmt.value = BLOOM ? (1 + 0.35 * S.night) * (1 - 0.25 * crown) : 0;
+  quadMat.uniforms.uGlowAmt.value = lightGrade;
   overlay.clear();
   weather.draw(overlay, S, cockpit);
   if (cockpit) drawCockpit(overlay, S);
