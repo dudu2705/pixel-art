@@ -12,6 +12,8 @@ The glass Sky Avenues deck runs above a busy street at 35 metres. Two one-way
 spiral ramps connect the levels through lit bores. A two-way helix climbs to
 Crown Way at 100 metres. The fourteen cities east of Vanta Bay share this three-level
 layout, with their own districts, weather, palettes, and connectors.
+Pedestrian footbridges join the elevated decks to tower entrances. In Vanta Bay,
+the 40 m Skytrain runs southwest of the plaza above the downtown monorail.
 
 Autopilot visits all three levels in each city, goes as far as Storm Citadel,
 then returns to Vanta Bay. In manual mode, follow the signed road branches to
@@ -34,7 +36,7 @@ Use `index.html?loop` to revisit the 30-district visual comparison route.
 | `facade.glsl.js`, `shaders.js` | Paint the building walls, billboards, roofs, street surfaces, and glass decks |
 | `dressing.js`, `props.js`, `effects.js` | Place and shade district landmarks, structures, lights, and animated props |
 | `sim.js`, `traffic.js`, `signals.js` | Update driving, weather state, traffic, pedestrians, and signals |
-| `camera.js`, `cycle.js`, `cockpit.js` | Render the reference shots, exterior rider, and cockpit artwork |
+| `camera.js`, `cycle.js`, `cockpit.js`, `cycle-design.js` | Frame the shots and render the light cycle, rider, and cockpit with a shared palette and instrument layout |
 | `sky.js`, `weather.js`, `overlay.js` | Draw the panorama, sky effects, and weather on the art grid |
 | `main.js`, `glow.js` | Render the city and the depth-aware road surface and glow passes, then compose the banked scene and foreground |
 
@@ -96,8 +98,9 @@ droplets are drawn over the banked scene.
 **Wet road** — the finish pass mirrors the combined scene and glow across the
 horizon, using the road mask, wetness, and brightness to weight the result.
 
-**Cockpit** — the light cycle’s handlebars, dome rim, smoked glass, floating
-ring, and projected readout on camera 1.
+**Cockpit** — in the mapped game, camera 1 shows the light cycle's graphite cowl,
+cyan edge lighting, armored gloves, and built-in instruments. The comparison
+loop retains the reference dome rim, smoked glass, and floating readout.
 
 ## The comparison loop
 

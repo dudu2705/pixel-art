@@ -97,6 +97,18 @@ export class Traffic {
 
   updateMap(vehicles, people = [], time = 0, flyers = [], rail = []) {
     for (const c of rail) {                           // the monorail train's cars, as the loop draws them
+      if (c.sky) {
+        push(this.flyer, [c.x, c.y, c.z], [2.6, 3, 6.8], c.th, [215, 220, 235], [c.i]);
+        const rx = -Math.cos(c.th), rz = Math.sin(c.th);
+        for (const side of [-1, 1]) {
+          for (const d of [-1.95, 0, 1.95]) push(this.glow,
+            [c.x + rx * side * 1.31 + Math.sin(c.th) * d, c.y + 1.38, c.z + rz * side * 1.31 + Math.cos(c.th) * d],
+            [0.08, 0.76, 1.42], c.th, [255, 222, 174], [0, 0.28]);
+          push(this.glow, [c.x + rx * side * 1.32, c.y + 0.47, c.z + rz * side * 1.32],
+            [0.05, 0.13, 6.77], c.th, [0, 220, 255], [0, 0.22]);
+        }
+        continue;
+      }
       push(this.flyer, [c.x, c.y, c.z], [2.4, 3.0, 6.0], c.th, [60, 64, 86], [c.i]);
       push(this.glow, [c.x, c.y + 1.7, c.z], [2.5, 0.8, 5.0], c.th, [255, 200, 140], [0, 0.5]);
     }

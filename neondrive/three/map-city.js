@@ -4,6 +4,8 @@ import { Batch, unitBox, unitCyl, unitSphere, unitPlane, unitPlaneFlat } from '.
 import { VANTA_BAY, frameOn, PLAZA_RADIUS, deckCoverFor, RAMP_BORE_HALF_WIDTH, CROWN_HELIX, GRID_CITIES, LINKS } from './map.js';
 import { FONT } from './cockpit.js';
 import { buildTowerLift } from './map-lift-view.js';
+import { skytrainClearsLot } from './map-rail.js';
+import { atWalkway, addWalkway, LOBBY_SIZE, WALKWAYS } from './map-walkways.js';
 import { blocks, CITIES, zoneAt, D, SW, SEGL, mulberry, mix } from './world.js';
 
 const CELL = 96;
@@ -52,11 +54,15 @@ const linkTerrain = (district, expression) => LINKS.filter(link => link.district
 function makeBuildings() {
   const random = mulberry(41283);
   const models = [];
-  const lot = (x, z, sx, sz, h, style, rot = 0, cityName = 'VANTA BAY') => {
+  const lot = (x, z, sx, sz, h, style, rot = 0, cityName = 'VANTA BAY', lobby = false) => {
     const { all, set, pal } = cityLook(cityName);
     const collection = set[style].length ? set[style] : all;
     const source = collection[Math.floor(random() * collection.length)];
     const clearance = Math.hypot(sx, sz) / 2;
+    if (!lobby && WALKWAYS.some(w => w.road.city === cityName &&
+      (Math.hypot(x - w.tower.x, z - w.tower.z) < clearance + LOBBY_SIZE * 0.72 ||
+        (h > w.frame.y - 2 && Math.hypot(x - (w.entry.x + w.door.x) / 2, z - (w.entry.z + w.door.z) / 2) < clearance + 5)))) return;
+    if (cityName === 'VANTA BAY' && !skytrainClearsLot(x, z, clearance, h)) return;
     if (roadNear(x, z, clearance + 19, f => (f.road.bore || f.road.liftApproach || f.road.id.startsWith('street-') || f.road.helix || f.road.level === 2 || f.road.city !== 'VANTA BAY') &&
       Math.hypot(f.x - x, f.z - z) < clearance + f.road.halfWidth + SW + 2)) return;
     const ratio = sz / (source.len * SEGL);
@@ -137,6 +143,8 @@ function makeBuildings() {
       }
     }
   }
+  for (const w of WALKWAYS)
+    lot(w.tower.x, w.tower.z, LOBBY_SIZE, LOBBY_SIZE, w.height, 1, w.frame.th, w.road.city, true);
   return models;
 }
 
@@ -312,6 +320,7 @@ export class MapCity extends City {
     this.liftView = buildTowerLift(this.mats);
     scene.add(this.liftView.group);
     for (const building of buildings) this.cell(building.x, building.z).buildings.push(building);
+    for (const walkway of WALKWAYS) this.cell(walkway.frame.x, walkway.frame.z).walkways.push(walkway);
     for (const road of roads) {
       if (road.lift) continue;
       for (let d = 0; d < road.path.length; d += 32) {
@@ -330,7 +339,7 @@ export class MapCity extends City {
 
   cell(x, z) {
     const key = cellKey(x, z);
-    if (!this.cells.has(key)) this.cells.set(key, { roads: [], buildings: [], lamps: [], junctions: [], plaza: false });
+    if (!this.cells.has(key)) this.cells.set(key, { roads: [], buildings: [], lamps: [], junctions: [], walkways: [], plaza: false });
     return this.cells.get(key);
   }
 
@@ -402,6 +411,7 @@ export class MapCity extends City {
       const metal = new Batch(unitBox), emit = new Batch(unitBox), rails = new Batch(unitPlane);
       const walls = new Batch(unitPlane), ceiling = new Batch(unitPlaneFlat), siding = new Batch(unitPlane);
       const coils = new Batch(unitSphere), arcs = new Batch(unitPlane);
+      for (const walkway of cell.walkways) addWalkway(walkway, metal, emit);
       for (const { road, from, to } of cell.roads) {
         if (road.id.endsWith('street-north-approach') || road.id.endsWith('sky-deck')) {
           const up = road.id.endsWith('street-north-approach'), d = up ? road.path.length - 43 : 43;
@@ -427,6 +437,7 @@ export class MapCity extends City {
         for (let i = 0; i < rows; i++) {
           const a = from + i / rows * (to - from), b = from + (i + 1) / rows * (to - from);
           const mid = (a + b) / 2;
+          if (atWalkway(road, mid)) continue;
           if (road.bore && mid >= road.bore.from && mid <= road.bore.to) continue;
           const first = frameOn(road.path, a), last = frameOn(road.path, b);
           for (const sign of [-1, 1]) {

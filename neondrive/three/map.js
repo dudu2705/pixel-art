@@ -34,7 +34,7 @@ const nodes = Object.fromEntries([
   node('lift-sky', TOWER_LIFT.x - TOWER_LIFT.halfLength, TOWER_LIFT.z, 1),
 ].map(n => [n.id, n]));
 
-function path(points) {
+export function path(points) {
   let length = 0;
   const segments = [];
   points.slice(1).forEach((end, i) => {

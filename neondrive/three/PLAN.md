@@ -60,7 +60,7 @@ The two spiral ramps are 572 m each, with a 6.82% peak grade. Manual driving, tr
 completed both ramp merges in simulation. The guided route covered at least 2.3 km between level arrivals.
 Five-second Chrome samples at 1100 × 720, 1×, on Apple M1 with Metal averaged 60 fps from the street,
 59 fps from Sky Avenues with the street visible, and 60 fps in the bore. The 95th percentile frame time
-was at most 16.8 ms in those samples. The three-level target remains to be tested.
+was at most 16.8 ms in those samples. The three-level frame-rate target is deferred at the user's request.
 
 ### What the comparison showed
 
@@ -155,19 +155,18 @@ The comparison loop (`?loop`) is the street-life reference. Record each map port
   70% umbrellas). Each wraps along its own stretch between the junction trims. `map-drive.js` adds those within
   180 m of the rider to the people list (~230-340, inside the 450-body pool); the manual rider riding the sidewalk
   stops dead on hitting one. Headless: hit confirmed; chase-view screenshot shows the crowd and umbrellas.
-  Gap: walkers pop at the ends of their stretch (junction corners) instead of turning the corner.
+  Item 23 replaces the original per-stretch wrapping with continuous routes.
 - [x] **4. Hover cars and air-lane gates** over the map's main avenues.
   Done in `map-air.js`: two straight air lanes, Vanta Boulevard (x -330..250, z 0) and Sky Avenue Street
   (x 128, z -300..320), 36 hover cars each at the loop's two heights (17 m, 57 m), both directions, drawn by
   `traffic.updateMap` exactly as the loop's flyers. Low traffic over the boulevard climbs 22 m over Prism Plaza's
   fountain. Gate rings every 60 m at both heights in Vanta Bay's neon (`buildGates`). Screenshot: drone view shows
-  the gates over the boulevard. Gap: hover cars wrap from one end of their lane to the other (pop at the far ends).
+  the gates over the boulevard. Item 23 closes both lanes into continuous circuits.
 - [x] **5. Monorail** on a fixed loop over Vanta Bay.
   Done in `map-rail.js`: a rounded rectangle over the inner sidewalk of the downtown ring streets (x ±128,
   z ±109; the east side sits further in because Sky Avenue Street is two lanes each way), beam at 12.6 m, pylons
   every 26 m except within a junction disc + 3 m, one ten-car train at 26 m/s drawn as the loop's monorail.
-  Free-flight screenshot shows beam, pylons and the lit train. Not done: the 40 m skytrain (it would need a route
-  clear of the 35 m Sky Avenue deck); pylons are not walls for the free rider.
+  Free-flight screenshot shows the beam, pylons and lit train. Item 22 adds the separate 40 m Skytrain.
 - [x] **6. Crown level.** `map.js`: `LEVEL_Y` [0, 35, 100] and `LEVEL_NAMES`; `crown-helix`, a two-way road
   winding 3 turns (r 70 m) round a 280 m tower from the north end of the Sky Avenues (`sky-north`) up to
   `crown-arrival` directly above it: 1,321 m for the 65 m climb, 5.7% peak grade (~20 m of road per metre), open to
@@ -309,14 +308,32 @@ The comparison loop (`?loop`) is the street-life reference. Record each map port
   waits over 20 s, with maxima of 9.2 s, 6.0 s and 11.0 s. Chrome rendered all five cities and connectors.
   The complete default tour visited all fifteen cities and every level, then returned to Vanta Bay
   in 2 h 44 min 53 s of simulated time. The longest rider stop was 18.2 s, with zero crashes.
+- [x] **22. Vanta Bay Skytrain.** A 12-car train runs on a continuous 40 m circuit southwest of Prism Plaza.
+  It has a magenta guide rail and lit silver carriages, with clearance from tall buildings and the Sky Avenues deck.
+  Chrome rendered the train in motion. Node sampled the full rail loop and measured at least 5.79 m of
+  horizontal clearance from the centreline to the nearest building facade at train height.
+- [x] **23. Tower walkways and continuous street life.** All fifteen cities have a pair of tower entrances on
+  their Sky Avenues and Crown levels, with lit footbridges and pedestrians walking to the doors. Ground
+  sidewalk routes turn around block corners where they can stay clear of the road. Hover cars loop at both
+  ends of their lanes. Crosswalk groups leave the curb early in the red phase, alternating sides by cycle.
+  Three 10-minute Node runs had 0/0/0 rider waits over 20 s and zero crashes. The longest rider waits were
+  12.25/8.23/12.10 s. NPC waits over 20 s dropped from 18/29/10 to 7/5/3 across the same starts.
+  Node verified all 60 footbridges reach generated tower doors and have walker paths. Chrome rendered the
+  pair at Vanta Bay's Sky Avenues.
+  The full autopilot tour visited all fifteen cities and returned in 2 h 42 min 20 s simulated time,
+  with zero crashes and a longest rider stop of 15.02 s.
+- [x] **24. Shared light-cycle, rider, and cockpit art.** The mapped game shares the same graphite, cyan, and
+  ice-white palette, angular instrument housing, and grip placement across the exterior and cockpit.
+  Chrome captured both cameras in the plaza curve and the Sky Avenue spiral after manual runs of roughly 20°
+  of lean without a crash. The `?loop` route still uses its reference artwork for comparison.
 
 ## Driving feel
 
 Done first, without a structural change:
 
-- **Red lights.** Vanta Bay has no traffic signals, so the cockpit no longer shows `RED`. A manual rider ignores
-  junction reservations and blocked-exit holds and rides straight in; it still stops behind a real vehicle in its
-  lane. Traffic and autopilot keep reserving junctions, and a rider who takes a junction is never overwritten.
+- **Red lights.** A manual rider can cross on red and continues to collide with traffic and pedestrians.
+  Traffic and autopilot obey signals and reserve junction space. The cockpit's red-light hold indicator applies
+  to autopilot.
 - **Smooth curves and lean.** `frameOn` turns the heading continuously through path joints instead of jumping
   per segment. The lean uses a smoothed turn rate (sideways acceleration over gravity) plus the rider's own
   steering in manual mode, eased in. Exits are chosen early enough to brake to the turn speed at any cruise
@@ -331,7 +348,7 @@ levels apart. Hands off the arrows, the heading settles into the road's directio
 ride without constant tapping. Verified headlessly: boulevard into the plaza and around the ring, out along Arcade
 and Foundry streets, U-turns at a junction and a dead end, the full run under the Sky Avenue deck staying at street
 level, peeling onto Sky Ramp Up and climbing it, and handing back to autopilot mid-street and mid-ramp (autopilot
-then reaches the Sky Avenues with the level banner). Not yet checked by eye in cockpit and chase view.
+then reaches the Sky Avenues with the level banner). See item 24 for the cockpit and chase checks.
 
 The design as reviewed:
 

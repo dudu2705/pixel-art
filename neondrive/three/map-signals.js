@@ -42,12 +42,18 @@ export function crossers(e, T, out = []) {
   out.length = 0;
   const s0 = e.to.signal;
   if (!s0) return out;
-  const p = ((T + s0.offset + (e.axis ? LIGHT_PERIOD / 2 : 0)) % LIGHT_PERIOD + LIGHT_PERIOD) % LIGHT_PERIOD;
+  const clock = T + s0.offset + (e.axis ? LIGHT_PERIOD / 2 : 0);
+  const p = ((clock % LIGHT_PERIOD) + LIGHT_PERIOD) % LIGHT_PERIOD;
   const t = p >= GREEN + AMBER ? p - GREEN - AMBER : p + LIGHT_PERIOD - GREEN - AMBER;
   const id = e.index, n = 3 + Math.floor(hash(id, 9, 9) * 5), L = e.road.halfWidth + SW * 0.6;
+  // A group leaves one curb at a time. Clearing one side together gives turning
+  // traffic a usable gap, even at the wide crossings.
+  const wave = Math.floor((clock - GREEN - AMBER) / LIGHT_PERIOD);
+  const dir = (wave + id) % 2 === 0 ? 1 : -1;
+  const spread = Math.min(2.5, Math.max(0.25, LIGHT_PERIOD - GREEN - AMBER - 2 * L / 2.1 - 2.6));
   for (let j = 0; j < n; j++) {
     // off the kerb once the junction has had a moment to clear
-    const ts = 1.5 + hash(j, id, 71) * 3, v = 2.1 + hash(j, id, 72) * 0.5, dir = hash(j, id, 73) < 0.5 ? 1 : -1;
+    const ts = 1.6 + hash(j, id, 71) * spread, v = 2.1 + hash(j, id, 72) * 0.5;
     if (t < ts) continue;
     const x = -dir * L + dir * v * (t - ts);
     if (Math.abs(x) > L) continue;

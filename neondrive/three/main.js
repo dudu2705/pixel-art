@@ -148,7 +148,7 @@ scene.add(cycle);
 const traffic = new Traffic(scene, city.mats);
 const weather = new Weather();
 const signals = comparisonLoop ? new Signals(scene, city.mats) : new MapSignals(scene, city.mats);
-if (!comparisonLoop) for (const mesh of [buildGates(city.mats), buildRail(city.mats), ...buildMapDressing(city.mats), ...buildSetPieces(city.mats, city.groundMat)]) if (mesh) scene.add(mesh);
+if (!comparisonLoop) for (const mesh of [buildGates(city.mats), ...buildRail(city.mats), ...buildMapDressing(city.mats), ...buildSetPieces(city.mats, city.groundMat)]) if (mesh) scene.add(mesh);
 const mapFlyers = [], mapTrain = [];
 const rig = new Rig(camera, canvas, mapDrive ? {
   frameAt: sampleFrame, enclosed: mapDrive.enclosed.bind(mapDrive), boreHalfWidth: RAMP_BORE_HALF_WIDTH,
