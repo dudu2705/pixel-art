@@ -7,17 +7,14 @@ import { walkersNear } from './map-people.js';
 import { CRUISE, D, cars, clamp, mulberry, smooth } from './world.js';
 
 const { nodes, edges } = VANTA_BAY;
-const groundStops = ['plaza-east', 'street-north', 'street-south'];
-const skyStops = ['sky-north', 'sky-south', 'sky-north'];
+// the tour: every city in one pass, no dead ends and nothing twice. Up the spiral ramp to Sky Avenues, up the helix,
+// round the Crown ring, back down the helix, along the deck, down the other ramp, and on to the next city
+const climb = p => ['sky-arrival', 'crown-outlook', 'crown-arrival', 'sky-departure', 'street-south'].map(id => ({ id: p + id, level: null }));
 const itinerary = [
-  ...groundStops.map(id => ({ id, level: 0 })),
-  { id: 'sky-north', level: null },
-  ...skyStops.slice(1).map(id => ({ id, level: 1 })),
-  { id: 'crown-outlook', level: null },               // up the helix to the Crown, then back down
-  { id: 'sky-south', level: null },
-  { id: 'street-south', level: null },
-  ...GRID_CITIES.flatMap(({ p, tourExit = '00' }) => ['22', 'sky-south', 'crown-outlook', 'street-south', tourExit]
-    .map(stop => ({ id: p + '-' + stop, level: null }))),
+  { id: 'plaza-east', level: 0 },
+  ...climb(''),
+  { id: 'east-end', level: 0 },
+  ...GRID_CITIES.flatMap(({ p }) => [...climb(p + '-'), { id: p + '-21', level: 0 }]),
 ];
 const rng = mulberry(2048);
 

@@ -83,7 +83,8 @@ function road(id, name, start, end, lanes, options = {}) {
     path: path(points), edges: [],
   };
   const addEdge = (from, to, center) => {
-    const edge = { id: from.id + '/' + to.id, from, to, road: r, path: center };
+    const base = from.id + '/' + to.id;               // two roads between the same nodes (Crown Way and the ring) get distinct ids
+    const edge = { id: edges.some(e => e.id === base) ? base + '@' + r.id : base, from, to, road: r, path: center };
     edges.push(edge);
     r.edges.push(edge);
     from.exits.push(edge);
@@ -337,6 +338,58 @@ for (const city of GRID_CITIES) {
     if (link.district === D.VAC) r.tube = { from: 32, to: r.path.length - 32, mode: 3 };
   }
 }
+// ---------- no dead ends: the Crown Way rings back to the helix, and the street below the down ramp runs on ----------
+// a polyline of straights and arcs, sampled every few metres
+function course(start, steps, y) {
+  const pts = []; let { x, z, th } = start;
+  for (const [kind, a, b] of steps) {
+    if (kind === 'line') {
+      const n = Math.max(1, Math.round(a / 6));
+      for (let i = 1; i <= n; i++) pts.push({ x: x + Math.sin(th) * a * i / n, y, z: z + Math.cos(th) * a * i / n });
+      x += Math.sin(th) * a; z += Math.cos(th) * a;
+    } else {                                          // arc: radius a, turn b radians (heading += b: north to east is +)
+      const n = Math.max(2, Math.round(Math.abs(b) * a / 6)), side = Math.sign(b);
+      const cx = x + Math.cos(th) * a * side, cz = z - Math.sin(th) * a * side;   // the centre on the side it turns to
+      const a0 = Math.atan2(x - cx, z - cz);
+      for (let i = 1; i <= n; i++) { const t = a0 + b * i / n; pts.push({ x: cx + Math.sin(t) * a, y, z: cz + Math.cos(t) * a }); }
+      x = cx + Math.sin(a0 + b) * a; z = cz + Math.cos(a0 + b) * a; th += b;
+    }
+  }
+  return pts;
+}
+// the Crown ring: on west past the outlook, round to the north, back east above the towers, south, and west into the top
+// of the helix, so the way down is ahead (one way)
+function crownRing(id, outlook, arrival, city) {
+  const o = nodes[outlook], a = nodes[arrival], R = 60, east = a.x + 100;
+  const pts = course({ x: o.x, z: o.z, th: -Math.PI / 2 }, [
+    ['arc', R, Math.PI],                                // west, then round to the north and back heading east
+    ['line', east - R - o.x],
+    ['arc', R, Math.PI / 2],                            // turn south
+    ['line', (o.z + 2 * R - R) - (a.z + R)],
+    ['arc', R, Math.PI / 2],                            // turn west, towards the helix
+  ], LEVEL_Y[2]);                                     // (ends 40 m short of the node: the road runs straight in)
+  const r = road(id, 'Crown Ring', outlook, arrival, 1, { interior: pts, oneWay: true, speed: 110, city });
+  r.ring = true;
+}
+// below the down ramp: on south, then east and north up the city's far column to the avenue (or, in Vanta Bay, to the
+// skybridge), instead of a stub to turn round in
+function streetRunOn(id, stub, to, city) {
+  const s = nodes[stub], t = nodes[to], R = 40, down = 35;
+  const pts = course({ x: s.x, z: s.z, th: Math.PI }, [
+    ['line', down], ['arc', R, -Math.PI / 2],           // south, then turn east (a left turn heading south)
+    ['line', t.x - s.x - 2 * R], ['arc', R, -Math.PI / 2],
+    ['line', t.z - (s.z - down - R + R)],
+  ], 0);
+  pts.pop();
+  road(id, 'Harbour Loop', stub, to, 2, { interior: pts, speed: 70, city });
+}
+crownRing('crown-ring', 'crown-outlook', 'crown-arrival', 'VANTA BAY');
+streetRunOn('street-south-run', 'street-south', 'east-end', 'VANTA BAY');
+for (const c of GRID_CITIES) {
+  crownRing(c.p + '-crown-ring', c.p + '-crown-outlook', c.p + '-crown-arrival', c.name);
+  streetRunOn(c.p + '-street-south-run', c.p + '-street-south', c.p + '-20', c.name);
+}
+
 export function inTube(road, distance) { return Boolean(road.tube && distance >= road.tube.from && distance <= road.tube.to); }
 
 for (const n of Object.values(nodes)) {

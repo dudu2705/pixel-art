@@ -15,8 +15,13 @@ layout, with their own districts, weather, palettes, and connectors.
 Pedestrian footbridges join the elevated decks to tower entrances. In Vanta Bay,
 the 40 m Skytrain runs southwest of the plaza above the downtown monorail.
 
-Autopilot visits all three levels in each city, goes as far as Storm Citadel,
-then returns to Vanta Bay. In manual mode, follow the signed road branches to
+Autopilot rides each city in one continuous pass, with no dead ends and no
+turning back: up the spiral ramp to Sky Avenues, up the helix, once round the
+Crown Ring (a one-way loop that carries Crown Way back to the top of the helix),
+down the helix and along the deck, down the other ramp, and out along the
+Harbour Loop (which carries the street below the down ramp on to the city's far
+column and the road to the next city). It goes as far as Storm Citadel, then
+cruises back along the avenues to Vanta Bay. In manual mode, follow the signed road branches to
 climb from Street or descend from Sky Avenues. The helix runs both ways.
 In Vanta Bay, the signed Tower Lift branches off the south end of Street and
 Sky Avenues. Drive to the gate to call it and roll aboard. With autopilot on,
