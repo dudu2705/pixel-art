@@ -31,6 +31,7 @@
   #br2 { top: 72px; } #bs { top: 126px; } #bv { top: 180px; } #bh { top: 234px; } #bc { top: 288px; }
   #fps { display: none; }
   body.showfps #fps { display: block; }
+  body.noui #pad { display: none; }                 /* a tap on the picture hides the touch buttons (H does the same for the key help) */
   #fpsz { position: fixed; left: 0; top: 0; width: 64px; height: 64px; touch-action: none; -webkit-tap-highlight-color: transparent; }
   #fps { left: 12px; top: 12px; font-size: 11px; padding: 3px 7px; color: #9ff4ff; border-color: #1d4f5a; }
   #zone { left: 50%; top: 58px; transform: translateX(-50%); font-size: 16px; letter-spacing: 6px; color: #9ff4ff;
@@ -4803,6 +4804,8 @@ async function requestWake() { if (wakeLock || !navigator.wakeLock) return; try 
 requestWake();
 document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') requestWake(); });
 addEventListener('keydown', requestWake); addEventListener('pointerdown', requestWake);
+// tap the picture itself (not a button) to hide or bring back the touch buttons
+addEventListener('pointerdown', e => { if (e.target && e.target.tagName === 'CANVAS') document.body.classList.toggle('noui'); });
 
 requestAnimationFrame(frame);
 </script>
