@@ -187,14 +187,19 @@ export class Rig {
     if (this.mode === 0) {
       this.bank = bike.roll;
       if (this.smoothCockpit) {
-        // look into the turn as a rider does: the eyes lead the bike towards where the road goes a few metres on,
-        // so a junction's yaw starts early and spreads out instead of all landing mid-turn; then the head follows
-        // smoothly, about a fifth of a second behind
-        const ahead = this.frameAt(bike.dist + clamp(5 + bike.speed * 0.5, 7, 18), {});
-        const aim = Math.hypot(ahead.x - f.x, ahead.z - f.z) > 2 ? Math.atan2(ahead.x - f.x, ahead.z - f.z) : f.th;
-        const into = f.th + 0.7 * Math.atan2(Math.sin(aim - f.th), Math.cos(aim - f.th));
-        heading = settle(this.cockpitYaw, into, 5.5, dt, changed);
-        this.bank = settle(this.cockpitBank, bike.roll, 7, dt, changed);
+        // look into the turn as a rider does: the gaze is the road's direction averaged over the next stretch
+        // (and a little behind), so a junction's 90 degrees spread over the whole approach and exit instead of all
+        // landing mid-turn; then the head follows softly
+        const reach = clamp(12 + bike.speed * 0.6, 16, 34), g = this.gaze ??= {};
+        let sx = 0, sz = 0;
+        for (let i = 0; i <= 8; i++) {
+          const w = i === 0 || i === 8 ? 0.5 : 1;
+          this.frameAt(bike.dist - reach * 0.25 + reach * 1.25 * i / 8, g);
+          sx += Math.sin(g.th) * w; sz += Math.cos(g.th) * w;
+        }
+        heading = settle(this.cockpitYaw, Math.hypot(sx, sz) > 0.5 ? Math.atan2(sx, sz) : f.th, 4, dt, changed);
+        // a rider's head stays nearer level than the bike: only part of the lean tilts the view
+        this.bank = settle(this.cockpitBank, bike.roll * 0.45, 5, dt, changed);
       }
     }
     this.look.set(this.cam.position.x + Math.sin(heading), this.cam.position.y - pitch, this.cam.position.z + Math.cos(heading));

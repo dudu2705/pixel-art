@@ -53,10 +53,30 @@ function buildTour() {
   return { edges: tour, at };
 }
 export const TOUR = buildTour();
-const rng = mulberry(2048);
+const rng = mulberry(2048), waveRng = mulberry(4417);
 
 function vehicle(edge, s, lane, speed) {
   return { edge, s, lane, lat: laneOffset(edge, lane), speed, traveled: 0, turn: null, exit: null, pose: {} };
+}
+
+// The rider's speed is the cruise speed, held down only by the bends ahead: the fastest a bend of curvature k can
+// be taken at CURVE_GRIP m/s² sideways (a sport bike's ~0.8 g lean), and braking at CURVE_BRAKE to reach it.
+const CURVE_GRIP = 8, CURVE_BRAKE = 7, _cf = {};
+function curveCap(path, from, dir, speed, offset = 0, cap = Infinity) {
+  const reach = Math.min(320, speed * speed / (2 * CURVE_BRAKE) + 40), step = 5;
+  let prev = null;
+  for (let x = 0; offset + x <= reach; x += step) {
+    const s = from + dir * x;
+    if (s < 0 || s > path.length) break;
+    frameOn(path, s, _cf);
+    const th = dir > 0 ? _cf.th : _cf.th + Math.PI;
+    if (prev !== null) {
+      const k = Math.abs(Math.atan2(Math.sin(th - prev), Math.cos(th - prev))) / step;
+      if (k > 2e-4) cap = Math.min(cap, Math.sqrt(CURVE_GRIP / k + 2 * CURVE_BRAKE * Math.max(0, offset + x - step)));
+    }
+    prev = th;
+  }
+  return cap;
 }
 
 function sample(vehicle, out = {}) {
@@ -198,9 +218,11 @@ export class MapDrive {
   }
 
   leadDistance(current, edge = current.edge, start = current.s, lane = current.lane) {
+    if (current === this.player && this.filtering && edge === current.edge) return Infinity;   // on the lane line, past them
     let gap = Infinity;
     for (const other of this.onEdges.get(edge) ?? []) {
       if (other === current || other.turn || other.edge !== edge || other.lane !== lane || other.s < start) continue;
+      if (other === this.player && this.filtering) continue;   // a bike on the lane line isn't in the lane
       if (other.s === start && edge === current.edge && this.vehicles.indexOf(other) > this.vehicles.indexOf(current)) continue;   // a tie: one goes first
       gap = Math.min(gap, other.s - start);
     }
@@ -350,11 +372,11 @@ export class MapDrive {
         }
       }
     }
+    if (isPlayer) { if (S.auto && !current.turn) this.filter(current, dt); else if (current.turn) this.filtering = false; }
     if (!current.turn && remaining < Math.max(64, current.speed ** 2 / 14 + 20)) current.exit ??= this.selectExit(current, isPlayer);
 
     const boost = current.edge.road.link?.district === D.VAC ? 1.6 : 1;
-    let limit = Math.min(current.edge.road.speed, isPlayer ? CRUISE[S.cruise] * boost : current.limit);
-    if (isPlayer && !S.auto) limit = current.edge.road.speed;
+    let limit = isPlayer ? Math.min(CRUISE[S.cruise] * boost, this.playerCap(current)) : Math.min(current.edge.road.speed, current.limit);
     if (current.turn) limit = Math.min(limit, current.turn.speed);
     else {
       const lead = this.leadDistance(current);
@@ -386,6 +408,36 @@ export class MapDrive {
     }
   }
 
+  // the player ignores the posted limits (they are for traffic) except on the lift's slow approaches, and slows for
+  // the bends on its own road, through the junction turn and on the road after it
+  playerCap(current) {
+    const e = current.turn ? current.turn.edge : current.edge, road = e.road;
+    if (road.liftApproach || road.lift) return road.speed;
+    if (current.turn) return curveCap(e.path, e.from.trim, 1, current.speed, current.turn.path.length - current.turn.s);
+    let cap = curveCap(e.path, current.s, 1, current.speed);
+    const x = current.exit;
+    if (x && !x.road.lift) cap = curveCap(x.path, x.from.trim, 1, current.speed, e.path.length - e.to.trim - current.s + 8, cap);
+    return cap;
+  }
+
+  // filtering, as a rider does: a slower car ahead in the lane, and the autopilot moves onto the lane line (the
+  // centre line of a two-way street, or the line to the next lane) and rides past it, then back into the lane once
+  // nothing is alongside; the 3.5 m lanes leave ~0.4 m either side between the bike and the cars
+  filter(p, dt) {
+    const e = p.edge, road = e.road, centre = laneOffset(e, p.lane), half = LANE_WIDTH / 2;
+    const line = !road.oneWay || p.lane > 0 ? centre - half : road.lanes > 1 ? centre + half : null;
+    let slowAhead = false, beside = false;
+    if (line !== null && !road.liftApproach) for (const o of this.onEdges.get(e) ?? []) {
+      if (o === p || o.turn || o.lane !== p.lane) continue;
+      const gap = o.s - p.s;
+      if (gap > -7 && gap < 7) beside = true;
+      if (gap > 0 && gap < 80 && o.speed < CRUISE[S.cruise] - 2) slowAhead = true;
+    }
+    const target = slowAhead || (beside && Math.abs(p.lat - centre) > 0.3) ? line : centre;
+    p.lat += clamp(target - p.lat, -2.4 * dt, 2.4 * dt);
+    this.filtering = Math.abs(p.lat - centre) > 1.0;
+  }
+
   // the next planned edge after e on the autopilot's tour
   planNext(e) {
     const p = this.player, here = p.plan?.at.get(e);
@@ -406,9 +458,9 @@ export class MapDrive {
       const hold = e.holdBack ?? 0;
       if (e.to.signal && d - hold > -0.5 && !(k === 0 && !p.turn && p.s > e.path.length - e.to.trim - hold + 0.01)) {
         const node = e.to, P = LIGHT_PERIOD;
-        if (this.wave?.node !== node || this.wave.edge !== e) this.wave = { node, edge: e, favour: Math.random() > 0.14 };
+        if (this.wave?.node !== node || this.wave.edge !== e) this.wave = { node, edge: e, favour: waveRng() > 0.14 };
         if (!this.wave.favour) return;
-        const v = Math.max(p.speed, Math.min(e.road.speed, CRUISE[S.cruise]) * 0.7, 4), eta = Math.max(0, d - hold) / v;
+        const v = Math.max(p.speed, Math.min(e.road.speed * 1.5, CRUISE[S.cruise]) * 0.7, 4), eta = Math.max(0, d - hold) / v;
         const sig = node.signal, phase = ((S.T + eta + sig.offset + (e.axis ? P / 2 : 0)) % P + P) % P;
         if (phase > 0.3 && phase < GREEN - 2) return;
         const need = ((2.5 - phase) % P + P) % P;
@@ -609,8 +661,16 @@ export class MapDrive {
   stepFree(dt, keys) {
     const p = this.player, f = this.free;
     const oldTh = f.th, wasSpeed = p.speed;
-    // speed: as before, the road's own limit by hand
-    const limit = f.surface.speed;
+    // speed: the cruise speed by hand too, slowed only for the bends of the road you're on
+    let limit = CRUISE[S.cruise] * (f.surface.road?.link?.district === D.VAC ? 1.6 : 1);
+    if (f.surface.kind === 'road') {
+      const road = f.surface.road, o = onSurface(f.surface, f.x, f.z, {}, f.y);
+      if (road.liftApproach || road.lift) limit = road.speed;
+      else if (o) {
+        const back = Math.abs(Math.atan2(Math.sin(o.th - f.th), Math.cos(o.th - f.th))) > Math.PI / 2;
+        limit = Math.min(limit, curveCap(road.path, o.s, back ? -1 : 1, p.speed));
+      }
+    }
     const target = keys.brake ? 0 : keys.gas ? limit : Math.min(limit, Math.max(0, p.speed - 0.7 * dt));
     p.speed = Math.max(0, p.speed + clamp(target - p.speed, -(keys.brake ? 18 : 12) * dt, 13 * dt));
     if (f.wall > 0) p.speed *= Math.exp(-dt * 2.5);
@@ -722,7 +782,7 @@ export class MapDrive {
 
   turnSpeed(current) {
     const angle = Math.abs(turnAngle(current.edge, current.exit));
-    const speed = Math.min(current.edge.road.speed, current.exit.road.speed);
+    const speed = current === this.player ? CRUISE[S.cruise] : Math.min(current.edge.road.speed, current.exit.road.speed);
     return angle < 0.12 ? speed : current.edge.to.ramp ? Math.min(speed, 18) : angle < 0.8 ? 12 : angle < 1.2 ? 8.5 : 6.5;
   }
 
