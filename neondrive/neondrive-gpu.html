@@ -171,7 +171,7 @@ const TH = { aurora: 0, mountains: 0, elevator: 0, fireworks: 0, dark: 0, water:
 let fogK = 1;
 const RW = 7, SW = 3.2, NEAR = 0.7;
 let roll = 0;
-const BIKE_NAMES = ['LIGHT CYCLE', 'NO BIKE'];
+const BIKE_NAMES = ['LIGHT CYCLE', 'CLASSIC CYCLE', 'NO BIKE'];
 const CRUISE = [22.2, 38.9, 55.6, 83.3], CRUISE_KMH = [80, 140, 200, 300];   // autopilot cruise speeds, V cycles them
 let cruise = 2, wakeLock = null, lightOn = true;
 const DAY = 3600, DAY0 = rng() * DAY;                  // one slow day-night cycle per hour, starting anywhere in it
@@ -2964,7 +2964,7 @@ function buildBike() {
       }
   };
 
-  if (s === 0) {                                     // light cycle: a dome of smoked glass with a glowing ring floating inside, no dash
+  if (s === 1) {                                     // classic cycle: a dome of smoked glass with a glowing ring floating inside, no dash
     ell(cx, H * 1.04, W * 0.13, H * 0.24, (x, y, nx, ny, e) => {
       if (e > 0.9) setB(x, y, [92, 98, 122]);                                             // the dome's rim
       else if (nx < -0.25 && nx > -0.55 && ny < -0.35 && ny > -0.8 && Math.abs(nx + 0.4 - (ny + 0.6) * 0.3) < 0.07) setB(x, y, [46, 52, 68], 3);   // a highlight on the glass
@@ -3043,7 +3043,8 @@ function drawBike() {
   const I = hudInfo(), sc = H > 200 ? 2 : 1, g = bikeGeo, s = bikeStyle, cx = W / 2;
   const r = Math.max(1, Math.round(H * 0.008)), spd = String(I.kmh).padStart(3, ' ');
 
-  if (s === 0) {                                     // light cycle: low bars, hologram over the tank
+  if (s === 0) { drawCycleCockpit(I); return; }      // light cycle: the enclosed cockpit from the 3D version
+  if (s === 1) {                                     // classic cycle: low bars, hologram over the tank
     barSet(H * 0.9, [[0.03, -0.03], [0.17, -0.05], [0.27, -0.15], [0.29, -0.22]], r);
     {                                                 // the ring floating under the glass, breathing slowly
       const [rx0, ry0] = g.ring, rx = W * 0.045, ry = Math.max(3, H * 0.018), p = 0.65 + 0.35 * Math.sin(T * 1.8), steps = Math.ceil(rx * 7);
@@ -3075,6 +3076,62 @@ function drawBike() {
   }
   // helmet visor or canopy frame, over everything
   for (let i = 0; i < N; i++) if (vmask[i]) { const j = i * 3; col[j] = vcol[j]; col[j + 1] = vcol[j + 1]; col[j + 2] = vcol[j + 2]; }
+}
+
+// the light cycle's enclosed cockpit, as the 3D version draws it: carbon fairing and bevelled side panels, the
+// rider's arms and gloves on short grips (they swing a little with the steering), and a glass dash with the speed
+const CYCLE_INK = {
+  carbon: [10, 14, 20], shell: [22, 31, 42], bevel: [48, 62, 74], grip: [16, 20, 27], suit: [22, 27, 35],
+  armour: [44, 52, 64], glass: [14, 28, 41], cyan: [80, 239, 255], channel: [0, 166, 196], dim: [0, 68, 90],
+};
+const CYCLE_DASH_SIDE = 0.34 / (0.30 * 2) * 0.54;
+function fillPoly(points, c) {
+  const min = Math.max(0, Math.ceil(Math.min(...points.map(p => p[1])))), max = Math.min(H - 1, Math.floor(Math.max(...points.map(p => p[1]))));
+  for (let y = min; y <= max; y++) {
+    const xs = [];
+    for (let i = 0, j = points.length - 1; i < points.length; j = i++) {
+      const a = points[j], b = points[i];
+      if ((a[1] > y) !== (b[1] > y)) xs.push(a[0] + (y - a[1]) * (b[0] - a[0]) / (b[1] - a[1]));
+    }
+    xs.sort((a, b) => a - b);
+    for (let i = 0; i + 1 < xs.length; i += 2) for (let x = Math.max(0, Math.ceil(xs[i])); x <= Math.min(W - 1, xs[i + 1]); x++) putc(x, y, c);
+  }
+}
+function drawCycleCockpit(I) {
+  const sx = Math.min(W * 0.42, H * 0.62), sy = H * 0.28, top = H * 0.72 + vib, center = W / 2;
+  const P = (x, y) => [center + x * sx, top + y * sy];
+  const fill = (points, c) => fillPoly(points.map(([x, y]) => P(x, y)), c);
+  const trace = (points, c, r = 1) => { for (let i = 1; i < points.length; i++) thick(...P(...points[i - 1]), ...P(...points[i]), r, c, c); };
+  const { carbon, shell, bevel, grip, suit, armour, glass, cyan, channel, dim } = CYCLE_INK, d = CYCLE_DASH_SIDE;
+  const fork = Math.max(-1, Math.min(1, steer || 0)) * 0.055;
+  fill([[-0.53, 1.12], [-0.46, 0.61], [-0.31, 0.38], [-0.25, 0.19], [0.25, 0.19], [0.31, 0.38], [0.46, 0.61], [0.53, 1.12]], carbon);
+  fill([[-0.28, 1.12], [-0.34, 0.62], [-0.17, 0.40], [0.17, 0.40], [0.34, 0.62], [0.28, 1.12]], shell);
+  for (const side of [-1, 1]) {
+    const mirror = points => points.map(([x, y]) => [x * side, y]);
+    fill(mirror([[0.26, 0.44], [0.44, 0.54], [0.52, 1.12], [0.37, 1.12], [0.32, 0.67]]), bevel);
+    trace(mirror([[0.44, 0.57], [0.35, 0.70], [0.40, 1.09]]), channel);
+    trace(mirror([[0.37, 0.78], [0.40, 0.96]]), cyan);
+    const move = (x, y) => [side * x + fork * (0.4 + x), y + side * fork * 0.95];
+    const shape = (v, c) => fill(v.map(([x, y]) => move(x, y)), c), seam = (v, c) => trace(v.map(([x, y]) => move(x, y)), c);
+    shape([[0.23, 0.52], [0.48, 0.40], [0.67, 0.14], [0.86, 0.13], [0.91, 0.29], [0.76, 0.40], [0.59, 0.51], [0.45, 0.62], [0.26, 0.63]], carbon);
+    shape([[0.24, 0.53], [0.48, 0.44], [0.68, 0.17], [0.85, 0.17], [0.83, 0.30], [0.65, 0.40], [0.47, 0.57]], shell);
+    seam([[0.32, 0.55], [0.49, 0.46], [0.68, 0.20]], channel);
+    shape([[0.68, 0.17], [0.85, 0.16], [0.91, 0.23], [0.90, 0.33], [0.77, 0.37], [0.66, 0.30]], grip);
+    shape([[0.73, 0.13], [0.84, 0.14], [0.91, 0.28], [0.92, 0.41], [1.02, 0.65], [1.00, 0.87], [0.85, 0.68], [0.72, 0.40], [0.66, 0.27]], suit);
+    shape([[0.70, 0.20], [0.75, 0.15], [0.83, 0.17], [0.87, 0.26], [0.84, 0.33], [0.74, 0.31]], armour);
+    seam([[0.74, 0.20], [0.83, 0.22], [0.86, 0.31]], cyan);
+    seam([[0.85, 0.43], [0.95, 0.64], [0.98, 0.74]], channel);
+  }
+  fill([[-d * 0.76, 0.08], [d * 0.76, 0.08], [d, 0.21], [d * 0.86, 0.54], [d * 0.44, 0.63], [-d * 0.44, 0.63], [-d * 0.86, 0.54], [-d, 0.21]], bevel);
+  fill([[-d * 0.72, 0.12], [d * 0.72, 0.12], [d * 0.92, 0.23], [d * 0.78, 0.51], [d * 0.42, 0.58], [-d * 0.42, 0.58], [-d * 0.78, 0.51], [-d * 0.92, 0.23]], glass);
+  trace([[-d * 0.9, 0.24], [-d * 0.68, 0.12], [d * 0.68, 0.12], [d * 0.9, 0.24]], cyan);
+  trace([[-0.085, 0.71], [-0.065, 0.80], [0.065, 0.80], [0.085, 0.71], [-0.085, 0.71]], channel);
+  trace([[-0.039, 0.86], [0.039, 0.86]], dim);
+  const scale = sy >= 64 && sx >= 120 ? 2 : 1;
+  const say = (str, y, c, sc = 1) => htext(str, Math.round(center - (str.length * 4 - 1) * sc / 2), Math.round(top + y * sy), c, sc, 0.9);
+  const stC = waitLight ? [255, 70, 70] : auto ? [104, 255, 179] : [255, 189, 108];
+  say(String(I.kmh), 0.22, cyan, scale);
+  say('L' + (I.lv + 1) + ' ' + I.st, 0.41, stC);
 }
 
 // the bike's own headlight: a soft pool stretched along the road ahead, brighter in dark cities and late at night
@@ -3338,7 +3395,7 @@ function renderScene(realZ, realPx) {
     buckets.get(k).push({ p, r });
   }
 
-  if (outside() && bikeStyle === 0) { const rb = rel(realZ); put_(Math.floor(rb / SEGL + frac), { bk: 1, r: rb }); }   // the cycle, seen from outside
+  if (outside() && bikeStyle < 2) { const rb = rel(realZ); put_(Math.floor(rb / SEGL + frac), { bk: 1, r: rb }); }   // the cycle, seen from outside
   for (const f of flyers) {
     const r = rel(f.z), k = Math.floor(r / SEGL + frac);
     if (k < 0 || k >= DRAW || r < NEAR || !airOk(Math.floor(f.z / SEGL) % NSEG)) continue;
