@@ -175,7 +175,7 @@ const BIKE_NAMES = ['LIGHT CYCLE', 'CLASSIC CYCLE', 'NO BIKE'];
 const CRUISE = [22.2, 38.9, 55.6, 83.3], CRUISE_KMH = [80, 140, 200, 300];   // autopilot cruise speeds, V cycles them
 let cruise = 2, wakeLock = null, lightOn = true;
 const DAY = 3600, DAY0 = rng() * DAY;                  // one slow day-night cycle per hour, starting anywhere in it
-let bikeStyle = 0, bikeGeo = {}, horizY = 0, crownK = 0;   // crownK: 0 below level 3, 1 riding the crown          // the chopper is the default ride
+let bikeStyle = 0, bikeGeo = {}, horizY = 0, crownK = 0, rampPitch = 0;   // crownK: 0 below level 3, 1 riding the crown          // the chopper is the default ride
 const maxV = () => district(Math.floor(camZ / SEGL) % NSEG) === D.VAC ? 125 : 83.4;   // 300 km/h, and 450 in the vactrain
 // the camera: 0 back/up/lat is the cockpit; fixed pins it beside the road (trackside); pitch tips the view down
 const CAM = { back: 0, up: 0, lat: 0, pitch: 0, fixed: null };
@@ -3332,7 +3332,14 @@ function renderScene(realZ, realPx) {
   // the higher you ride, the more the camera tilts down to show the layers below
   const raise = (hill[b0] - BASE[b0]) + ((hill[b1] - BASE[b1]) - (hill[b0] - BASE[b0])) * frac;
   crownK = smooth(LH[1] + 15, LH[2], raise);
-  const sh = shake * 3; let hy = HOR - OH * CAM.pitch + OH * (0.14 * smooth(0, 35, raise) - 0.16 * crownK) + (Math.random() - 0.5) * sh;   // the crown tips the view down over the roofs
+  // on a level-change ramp the rider pitches with the bike: the view tips down the slope going down (else the bore's
+  // ceiling slides into the middle of the view, as if about to hit it) and up it, more gently, going up; only the
+  // layer climb counts, not the ordinary hills, and the gaze leads a little into the ramp
+  const rAt = z => { const q = z / SEGL, n = Math.floor(q), f = q - n, i0 = ((n % NSEG) + NSEG) % NSEG, i1 = (i0 + 1) % NSEG;
+    return (hill[i0] - BASE[i0]) + ((hill[i1] - BASE[i1]) - (hill[i0] - BASE[i0])) * f; };
+  const grade = CAM.fixed ? 0 : (rAt(camZ + 16) - rAt(camZ - 4)) / 20;
+  rampPitch += ((grade < 0 ? 1 : 0.5) * grade - rampPitch) * 0.2;
+  const sh = shake * 3; let hy = HOR - OH * CAM.pitch + F * rampPitch + OH * (0.14 * smooth(0, 35, raise) - 0.16 * crownK) + (Math.random() - 0.5) * sh;   // the crown tips the view down over the roofs
   starK = smooth(10, LH[2], raise);
   horizY = hy;
   const camX = (CAM.fixed ? CAM.fixed.x : realPx) + CAM.lat + (Math.random() - 0.5) * shake * 0.4;
