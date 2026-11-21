@@ -15,13 +15,22 @@ layout, with their own districts, weather, palettes, and connectors.
 Pedestrian footbridges join the elevated decks to tower entrances. In Vanta Bay,
 the 40 m Skytrain runs southwest of the plaza above the downtown monorail.
 
-Autopilot rides each city in one continuous pass, with no dead ends and no
-turning back: up the spiral ramp to Sky Avenues, up the helix, once round the
-Crown Ring (a one-way loop that carries Crown Way back to the top of the helix),
-down the helix and along the deck, down the other ramp, and out along the
-Harbour Loop (which carries the street below the down ramp on to the city's far
-column and the road to the next city). It goes as far as Storm Citadel, then
-cruises back along the avenues to Vanta Bay. In manual mode, follow the signed road branches to
+Autopilot explores every road of every city as one continuous ride: no dead
+ends and never turning back along the road it is on. The tour is planned road
+by road on the lane graph (`map-drive.js`, `buildTour`). In each city it takes
+every street, row, avenue, ramp, the Sky Avenues deck, the helix and the whole
+Crown, then rides on to the next city. After Storm Citadel it heads home to
+Vanta Bay and starts again. Switching autopilot back on after driving by hand
+rejoins the tour by the shortest legal way. Five roads per city replace the
+old dead ends:
+
+- **Crown Ring**: carries Crown Way past the outlook round a one-way loop
+  back to the top of the helix.
+- **Sky Loops**: one at each tip of the Sky Avenues deck, turning the deck
+  round in a smooth curve.
+- **Lantern Loop**: carries the street past the up ramp back into the grid.
+- **Harbour Loop**: carries the street below the down ramp on to the far
+  column and the road out. In manual mode, follow the signed road branches to
 climb from Street or descend from Sky Avenues. The helix runs both ways.
 In Vanta Bay, the signed Tower Lift branches off the south end of Street and
 Sky Avenues. Drive to the gate to call it and roll aboard. With autopilot on,

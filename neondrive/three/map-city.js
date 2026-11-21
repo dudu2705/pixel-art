@@ -63,7 +63,7 @@ function makeBuildings() {
       (Math.hypot(x - w.tower.x, z - w.tower.z) < clearance + LOBBY_SIZE * 0.72 ||
         (h > w.frame.y - 2 && Math.hypot(x - (w.entry.x + w.door.x) / 2, z - (w.entry.z + w.door.z) / 2) < clearance + 5)))) return;
     if (cityName === 'VANTA BAY' && !skytrainClearsLot(x, z, clearance, h)) return;
-    if (roadNear(x, z, clearance + 19, f => (f.road.bore || f.road.liftApproach || f.road.id.startsWith('street-') || f.road.helix || f.road.level === 2 || f.road.city !== 'VANTA BAY') &&
+    if (roadNear(x, z, clearance + 19, f => (f.road.bore || f.road.liftApproach || f.road.added || f.road.id.startsWith('street-') || f.road.helix || f.road.level === 2 || f.road.city !== 'VANTA BAY') &&
       Math.hypot(f.x - x, f.z - z) < clearance + f.road.halfWidth + SW + 2)) return;
     const ratio = sz / (source.len * SEGL);
     const bbs = source.bbs.filter(b => b.v1 < h).map(b => ({ ...b, u0: b.u0 * ratio, u1: b.u1 * ratio }));

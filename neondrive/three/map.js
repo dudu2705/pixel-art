@@ -369,7 +369,7 @@ function crownRing(id, outlook, arrival, city) {
     ['arc', R, Math.PI / 2],                            // turn west, towards the helix
   ], LEVEL_Y[2]);                                     // (ends 40 m short of the node: the road runs straight in)
   const r = road(id, 'Crown Ring', outlook, arrival, 1, { interior: pts, oneWay: true, speed: 110, city });
-  r.ring = true;
+  r.ring = true; r.added = true;
 }
 // below the down ramp: on south, then east and north up the city's far column to the avenue (or, in Vanta Bay, to the
 // skybridge), instead of a stub to turn round in
@@ -381,13 +381,45 @@ function streetRunOn(id, stub, to, city) {
     ['line', t.z - (s.z - down - R + R)],
   ], 0);
   pts.pop();
-  road(id, 'Harbour Loop', stub, to, 2, { interior: pts, speed: 70, city });
+  road(id, 'Harbour Loop', stub, to, 2, { interior: pts, speed: 70, city }).added = true;
 }
+// past the up ramp the street ran on to a stub: it now bends round and back into the grid (in Vanta Bay, down the
+// line of Lantern Street to the plaza's north corner)
+function northLoop(id, stub, to, city, down = 35, R = 40) {
+  const s = nodes[stub], t = nodes[to];
+  const pts = course({ x: s.x, z: s.z, th: 0 }, [
+    ['line', down], ['arc', R, -Math.PI / 2],           // north, then turn west
+    ['line', s.x - t.x - 2 * R], ['arc', R, -Math.PI / 2],
+    ['line', s.z + down - t.z],
+  ], 0);
+  pts.pop();
+  road(id, 'Lantern Loop', stub, to, 1, { interior: pts, speed: 60, city }).added = true;
+}
+// the south tip of the Sky Avenues: a balloon loop at deck height, out on one side, round, and back up the other,
+// so a car heading south carries on round and comes back north without stopping (one way)
+function skyLoop(id, tip, city, axis = Math.PI) {   // axis: the heading it swings out along (south at the south tip)
+  const s = nodes[tip], R1 = 25, a = 0.7, L = 40;
+  const p = course({ x: s.x, z: s.z, th: axis }, [['arc', R1, a], ['line', L]], s.y).at(-1), h = axis + a;
+  // the big circle is centred on the axis, so the way back mirrors the way out
+  const d = { x: Math.sin(axis), z: Math.cos(axis) }, n = { x: -Math.cos(h), z: Math.sin(h) };
+  const cross = (u, v) => u.x * v.z - u.z * v.x, R2 = -cross({ x: p.x - s.x, z: p.z - s.z }, d) / cross(n, d);
+  const pts = course({ x: s.x, z: s.z, th: axis }, [['arc', R1, a], ['line', L], ['arc', R2, -(Math.PI + 2 * a)], ['line', L], ['arc', R1, a]], s.y);
+  pts.pop();
+  const r = road(id, 'Sky Loop', tip, tip, 1, { interior: pts, oneWay: true, speed: 60, city });
+  r.added = true;
+}
+
 crownRing('crown-ring', 'crown-outlook', 'crown-arrival', 'VANTA BAY');
+northLoop('street-north-run', 'street-north', 'north', 'VANTA BAY', 45, 60);
+skyLoop('sky-south-loop', 'sky-south', 'VANTA BAY');
+skyLoop('sky-north-loop', 'sky-north', 'VANTA BAY', 0.6);   // north-east, clear of the helix curling up to the west
 streetRunOn('street-south-run', 'street-south', 'east-end', 'VANTA BAY');
 for (const c of GRID_CITIES) {
   crownRing(c.p + '-crown-ring', c.p + '-crown-outlook', c.p + '-crown-arrival', c.name);
   streetRunOn(c.p + '-street-south-run', c.p + '-street-south', c.p + '-20', c.name);
+  northLoop(c.p + '-street-north-run', c.p + '-street-north', c.p + '-02', c.name);
+  skyLoop(c.p + '-sky-south-loop', c.p + '-sky-south', c.name);
+  skyLoop(c.p + '-sky-north-loop', c.p + '-sky-north', c.name, 0.6);
 }
 
 export function inTube(road, distance) { return Boolean(road.tube && distance >= road.tube.from && distance <= road.tube.to); }

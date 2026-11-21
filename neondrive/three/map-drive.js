@@ -7,15 +7,52 @@ import { walkersNear } from './map-people.js';
 import { CRUISE, D, cars, clamp, mulberry, smooth } from './world.js';
 
 const { nodes, edges } = VANTA_BAY;
-// the tour: every city in one pass, no dead ends and nothing twice. Up the spiral ramp to Sky Avenues, up the helix,
-// round the Crown ring, back down the helix, along the deck, down the other ramp, and on to the next city
-const climb = p => ['sky-arrival', 'crown-outlook', 'crown-arrival', 'sky-departure', 'street-south'].map(id => ({ id: p + id, level: null }));
-const itinerary = [
-  { id: 'plaza-east', level: 0 },
-  ...climb(''),
-  { id: 'east-end', level: 0 },
-  ...GRID_CITIES.flatMap(({ p }) => [...climb(p + '-'), { id: p + '-21', level: 0 }]),
-];
+// ---------- the tour: every road of every city, as one continuous ride ----------
+// City by city, a walk over the lane graph that takes each of the city's roads at least once (either way on a two-way
+// road), only ever turns legally and never back along the road it is on. At each junction it takes an untaken road,
+// the straightest one; with none at hand, the shortest legal way to the nearest untaken road. Then on to the next
+// city, and after the last one back to Vanta Bay to begin again.
+// the legal turns that don't double back on themselves (nothing sharper than about 110°), if there are any
+function flowing(e) {
+  const turns = legalTurns(e), gentle = turns.filter(x => Math.abs(turnAngle(e, x)) < 1.9);
+  return gentle.length ? gentle : turns;
+}
+function edgeRoute(from, wanted, allowed = () => true) {   // the shortest legal run of edges after `from` to a wanted one
+  const prev = new Map([[from, null]]), queue = [from];
+  for (let qi = 0; qi < queue.length; qi++) {
+    const e = queue[qi];
+    for (const x of flowing(e)) {
+      if (prev.has(x) || !allowed(x)) continue;
+      prev.set(x, e);
+      if (wanted(x)) { const out = [x]; for (let q = e; q !== from; q = prev.get(q)) out.unshift(q); return out; }
+      queue.push(x);
+    }
+  }
+  return null;
+}
+function buildTour() {
+  const tour = [edges.find(edge => edge.from === nodes.gateway)];
+  const cities = ['VANTA BAY', ...GRID_CITIES.map(c => c.name)];
+  for (const [ci, name] of cities.entries()) {
+    const inCity = x => x.road.city === name;
+    const todo = new Set(VANTA_BAY.roads.filter(r => r.city === name && !r.lift && !r.liftApproach && r.id !== 'gateway'));
+    todo.delete(tour.at(-1).road);
+    while (todo.size) {
+      const e = tour.at(-1), here = flowing(e).filter(x => todo.has(x.road));
+      const step = here.length ? [here.sort((a, b) => Math.abs(turnAngle(e, a)) - Math.abs(turnAngle(e, b)))[0]]
+        : edgeRoute(e, x => todo.has(x.road), inCity);
+      if (!step) break;
+      for (const x of step) { tour.push(x); todo.delete(x.road); }
+    }
+    const next = cities[ci + 1];
+    if (next) tour.push(...edgeRoute(tour.at(-1), x => x.road.link?.b === next, x => inCity(x) || x.road.link?.b === next));
+  }
+  tour.push(...edgeRoute(tour.at(-1), x => x === tour[1]).slice(0, -1));   // home, and round again from the start
+  const at = new Map();
+  tour.forEach((e, i) => { if (!at.has(e)) at.set(e, []); at.get(e).push(i); });
+  return { edges: tour, at };
+}
+export const TOUR = buildTour();
 const rng = mulberry(2048);
 
 function vehicle(edge, s, lane, speed) {
@@ -30,7 +67,8 @@ function sample(vehicle, out = {}) {
 export class MapDrive {
   constructor() {
     this.player = vehicle(edges.find(edge => edge.from === nodes.gateway), 18, 1, 30);
-    this.player.itinerary = itinerary;
+    this.player.plan = TOUR;
+    this.player.planAt = 0;
     this.intent = 0;
     this.owners = new Map();
     this.waiting = new Map();
@@ -111,6 +149,7 @@ export class MapDrive {
       const towardLift = routeTo(node, current.liftStop, current.edge, level, true)[0];
       if (towardLift) return towardLift;
     }
+    if (current.plan) return this.planExit(current);
     const stops = current.itinerary;
     let index = current.stopIndex ?? 0;
     while (node === nodes[stops[index].id] || (stops[index].level != null && stops[index].level !== node.level)) {
@@ -122,6 +161,15 @@ export class MapDrive {
     return routeTo(node, nodes[id], current.edge, level)[0]
       ?? (level != null ? node.exits.find(x => x.road.level === level) : null)
       ?? legalTurns(current.edge)[0];
+  }
+
+  // the next road of the tour; off it (after driving by hand, or the lift), the shortest legal way back onto it
+  planExit(current) {
+    const { edges: P, at } = current.plan, e = current.edge, here = at.get(e);
+    if (!here) return edgeRoute(e, x => at.has(x))?.[0] ?? legalTurns(e)[0];
+    const i = here.find(j => j >= current.planAt) ?? here[0];
+    current.planAt = i;
+    return i + 1 < P.length ? P[i + 1] : P[1];
   }
 
   manualExit(current) {
