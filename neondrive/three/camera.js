@@ -187,8 +187,14 @@ export class Rig {
     if (this.mode === 0) {
       this.bank = bike.roll;
       if (this.smoothCockpit) {
-        heading = settle(this.cockpitYaw, heading, 18, dt, changed);
-        this.bank = settle(this.cockpitBank, bike.roll, 16, dt, changed);
+        // look into the turn as a rider does: the eyes lead the bike towards where the road goes a few metres on,
+        // so a junction's yaw starts early and spreads out instead of all landing mid-turn; then the head follows
+        // smoothly, about a fifth of a second behind
+        const ahead = this.frameAt(bike.dist + clamp(5 + bike.speed * 0.5, 7, 18), {});
+        const aim = Math.hypot(ahead.x - f.x, ahead.z - f.z) > 2 ? Math.atan2(ahead.x - f.x, ahead.z - f.z) : f.th;
+        const into = f.th + 0.7 * Math.atan2(Math.sin(aim - f.th), Math.cos(aim - f.th));
+        heading = settle(this.cockpitYaw, into, 5.5, dt, changed);
+        this.bank = settle(this.cockpitBank, bike.roll, 7, dt, changed);
       }
     }
     this.look.set(this.cam.position.x + Math.sin(heading), this.cam.position.y - pitch, this.cam.position.z + Math.cos(heading));

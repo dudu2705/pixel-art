@@ -2,7 +2,7 @@ import { VANTA_BAY, frameOn, frameInLane, laneOffset, legalTurns, routeTo, turnA
   inBore, inTube, underSkyDeck, LANE_WIDTH, SURFACES, onSurface, LEVEL_NAMES, LINKS, AURUM, GRID_CITIES, TOWER_LIFT } from './map.js';
 import { TowerLift } from './map-lift.js';
 import { S, blendCities, setAuto, updateClimate } from './sim.js';
-import { signalState, pedsOn, pedsOnOutbound, allCrossers } from './map-signals.js';
+import { signalState, pedsOn, pedsOnOutbound, allCrossers, LIGHT_PERIOD, GREEN } from './map-signals.js';
 import { walkersNear } from './map-people.js';
 import { CRUISE, D, cars, clamp, mulberry, smooth } from './world.js';
 
@@ -386,6 +386,43 @@ export class MapDrive {
     }
   }
 
+  // the next planned edge after e on the autopilot's tour
+  planNext(e) {
+    const p = this.player, here = p.plan?.at.get(e);
+    if (!here) return null;
+    const i = here.find(j => j >= p.planAt) ?? here[0];
+    return p.plan.edges[i + 1] ?? p.plan.edges[1];
+  }
+
+  // Lights that detect you, as many real ones do: the autopilot's next signalled junction sees it coming and runs
+  // its cycle on to green in time (up to 4x fast, never backwards), so a red stop happens only now and then:
+  // when the junction decides not to (about 1 in 7), or when the rider is too close for the cycle to catch up.
+  greenWave(dt) {
+    const p = this.player;
+    if (!S.auto || this.free || this.lift.holds(p) || !p.plan) return;
+    let e = p.turn ? p.turn.edge : p.edge, next = p.turn ? null : p.exit;
+    let d = p.turn ? p.turn.path.length - p.turn.s + e.path.length - e.to.trim - e.from.trim : e.path.length - e.to.trim - p.s;
+    for (let k = 0; k < 4 && d < 260; k++) {
+      const hold = e.holdBack ?? 0;
+      if (e.to.signal && d - hold > -0.5 && !(k === 0 && !p.turn && p.s > e.path.length - e.to.trim - hold + 0.01)) {
+        const node = e.to, P = LIGHT_PERIOD;
+        if (this.wave?.node !== node || this.wave.edge !== e) this.wave = { node, edge: e, favour: Math.random() > 0.14 };
+        if (!this.wave.favour) return;
+        const v = Math.max(p.speed, Math.min(e.road.speed, CRUISE[S.cruise]) * 0.7, 4), eta = Math.max(0, d - hold) / v;
+        const sig = node.signal, phase = ((S.T + eta + sig.offset + (e.axis ? P / 2 : 0)) % P + P) % P;
+        if (phase > 0.3 && phase < GREEN - 2) return;
+        const need = ((2.5 - phase) % P + P) % P;
+        sig.offset = (sig.offset + Math.min(need, dt * 3 * Math.min(1, need / 3 / Math.max(0.3, eta)))) % P;
+        return;
+      }
+      const after = next ?? this.planNext(e);
+      if (!after || after.road.lift) return;
+      next = null;
+      d += after.path.length - after.from.trim - after.to.trim;
+      e = after;
+    }
+  }
+
   routeViaLift() {
     const p = this.player;
     if (!S.auto || p.edge.road.city !== 'VANTA BAY' || this.lift.holds(p)) return false;
@@ -436,6 +473,7 @@ export class MapDrive {
     const released = this.lift.step(dt, ({ vehicle, to }) =>
       this.leadDistance(vehicle, TOWER_LIFT.approaches[to].edges[1], 0, 0) > TOWER_LIFT.exitClearance + 6);
     if (released) this.releaseLift(released);
+    this.greenWave(dt);
     for (const current of this.traffic) if (!this.lift.holds(current)) this.updateVehicle(current, dt, keys);
     // by hand the rider is a free body on the road surfaces; autopilot drives the lane graph
     if (!this.lift.holds(p)) {
@@ -685,7 +723,7 @@ export class MapDrive {
   turnSpeed(current) {
     const angle = Math.abs(turnAngle(current.edge, current.exit));
     const speed = Math.min(current.edge.road.speed, current.exit.road.speed);
-    return angle < 0.12 ? speed : current.edge.to.ramp ? Math.min(speed, 18) : angle < 0.8 ? 12 : 8.5;
+    return angle < 0.12 ? speed : current.edge.to.ramp ? Math.min(speed, 18) : angle < 0.8 ? 12 : angle < 1.2 ? 8.5 : 6.5;
   }
 
   enclosed(distance) {
